@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloudforge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cloudforge
+      POSTGRES_USER: cloudforge
+      POSTGRES_PASSWORD: cloudforge_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudforge -d cloudforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  project-service:
+    build:
+      context: ./services/project-service
+      dockerfile: Dockerfile
+    image: cloudforge-project-service:local
+    container_name: cloudforge-project-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      SERVER_PORT: "8080"
+      DATABASE_URL: postgres://cloudforge:cloudforge_password@postgres:5432/cloudforge?sslmode=disable
+      SHUTDOWN_TIMEOUT_SECONDS: "10"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:

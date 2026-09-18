@@ -1,0 +1,112 @@
+name: CloudForge AI CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  project-service-ci:
+    name: Project Service CI
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cloudforge
+          POSTGRES_USER: cloudforge
+          POSTGRES_PASSWORD: cloudforge_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudforge -d cloudforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: services/project-service
+
+    env:
+      TEST_DATABASE_URL: postgres://cloudforge:cloudforge_password@localhost:5432/cloudforge_test?sslmode=disable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/project-service/go.mod
+          cache-dependency-path: services/project-service/go.sum
+
+      - name: Display tool versions
+        run: |
+          go version
+          git --version
+          docker --version
+
+      - name: Verify Go formatting
+        run: |
+          unformatted_files=$(gofmt -l .)
+
+          if [ -n "$unformatted_files" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted_files"
+            exit 1
+          fi
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Install PostgreSQL client
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Create test database
+        working-directory: .
+        run: |
+          PGPASSWORD=cloudforge_password psql \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge \
+            -c "CREATE DATABASE cloudforge_test;"
+
+      - name: Apply database schema
+        working-directory: .
+        run: |
+          PGPASSWORD=cloudforge_password psql \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge_test \
+            -f services/project-service/migrations/001_create_projects_table.sql
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build application
+        run: go build ./...
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Build Docker image
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-project-service:ci \
+            ./services/project-service
