@@ -33,7 +33,7 @@ The platform is designed with security, automation, reliability, and operational
                                       ▼
                          ┌─────────────────────────┐
                          │    CloudForge Frontend  │
-                         │    Next.js + TypeScript  │
+                         │    Next.js + TypeScript │
                          └────────────┬────────────┘
                                       │
                                       ▼
@@ -90,7 +90,7 @@ The platform is designed with security, automation, reliability, and operational
    Observability
         ┌─────────────────────────────────────┐
         │ Prometheus │ Grafana │ Loki         │
-        │ OpenTelemetry │ SLOs │ Error Budget  │
+        │ OpenTelemetry │ SLOs │ Error Budget │
         └─────────────────────────────────────┘
 
    AI Operations
@@ -98,5 +98,5 @@ The platform is designed with security, automation, reliability, and operational
         │ Python + FastAPI                    │
         │ Incident Investigation              │
         │ Telemetry Analysis                  │
-        │ Human-validated Recommendations      │
+        │ Human-validated Recommendations     │
         └─────────────────────────────────────┘
