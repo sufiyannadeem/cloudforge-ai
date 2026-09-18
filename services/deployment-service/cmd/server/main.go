@@ -1,0 +1,122 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"syscall"
+	"time"
+
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/config"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/database"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/handler"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/migration"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
+)
+
+func main() {
+	logger := slog.New(
+		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}),
+	)
+
+	slog.SetDefault(logger)
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		logger.Error("failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	migrationRunner := migration.NewRunner(pool)
+
+	if err := migrationRunner.Run(ctx); err != nil {
+		logger.Error("failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
+
+	deploymentRepository := repository.NewDeploymentRepository(pool)
+
+	deploymentService := service.NewDeploymentService(
+		deploymentRepository,
+	)
+
+	deploymentHandler := handler.NewDeploymentHandler(
+		deploymentService,
+	)
+
+	router := handler.NewRouter(deploymentHandler)
+
+	server := &http.Server{
+		Addr:              ":" + strconv.Itoa(cfg.ServerPort),
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	shutdownContext, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		logger.Info(
+			"deployment service started",
+			"port",
+			cfg.ServerPort,
+			"environment",
+			cfg.AppEnv,
+		)
+
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server failed", "error", err)
+			os.Exit(1)
+		}
+
+	case <-shutdownContext.Done():
+		logger.Info("shutdown signal received")
+	}
+
+	shutdownTimeout := time.Duration(
+		cfg.ShutdownTimeoutSeconds,
+	) * time.Second
+
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		shutdownTimeout,
+	)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("graceful shutdown failed", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("deployment service stopped successfully")
+}
