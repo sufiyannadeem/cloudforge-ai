@@ -16,7 +16,10 @@ import (
 )
 
 type mockResourceManager struct {
-	resource model.InfrastructureResource
+	resource      model.InfrastructureResource
+	listLimit     int
+	listOffset    int
+	listCallCount int
 }
 
 func (m *mockResourceManager) Create(
@@ -50,6 +53,10 @@ func (m *mockResourceManager) List(
 	limit int,
 	offset int,
 ) ([]model.InfrastructureResource, error) {
+	m.listLimit = limit
+	m.listOffset = offset
+	m.listCallCount++
+
 	return []model.InfrastructureResource{m.resource}, nil
 }
 
@@ -165,7 +172,7 @@ func TestGetByIDHandlerInvalidUUID(t *testing.T) {
 	}
 }
 
-func TestListHandler(t *testing.T) {
+func TestListHandlerDefaultPagination(t *testing.T) {
 	manager := &mockResourceManager{
 		resource: model.InfrastructureResource{
 			ID:       uuid.New(),
@@ -188,6 +195,154 @@ func TestListHandler(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", recorder.Code)
 	}
+
+	if manager.listCallCount != 1 {
+		t.Fatalf("expected one list call, got %d", manager.listCallCount)
+	}
+
+	if manager.listLimit != 20 {
+		t.Fatalf("expected default limit 20, got %d", manager.listLimit)
+	}
+
+	if manager.listOffset != 0 {
+		t.Fatalf("expected default offset 0, got %d", manager.listOffset)
+	}
+}
+
+func TestListHandlerValidPagination(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?limit=10&offset=5",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	if manager.listLimit != 10 {
+		t.Fatalf("expected limit 10, got %d", manager.listLimit)
+	}
+
+	if manager.listOffset != 5 {
+		t.Fatalf("expected offset 5, got %d", manager.listOffset)
+	}
+}
+
+func TestListHandlerInvalidLimit(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?limit=abc",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if manager.listCallCount != 0 {
+		t.Fatal("service should not be called for invalid limit")
+	}
+}
+
+func TestListHandlerLimitBelowMinimum(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?limit=0",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if manager.listCallCount != 0 {
+		t.Fatal("service should not be called for invalid limit")
+	}
+}
+
+func TestListHandlerLimitAboveMaximum(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?limit=101",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if manager.listCallCount != 0 {
+		t.Fatal("service should not be called for invalid limit")
+	}
+}
+
+func TestListHandlerInvalidOffset(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?offset=abc",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if manager.listCallCount != 0 {
+		t.Fatal("service should not be called for invalid offset")
+	}
+}
+
+func TestListHandlerNegativeOffset(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources?offset=-1",
+		nil,
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if manager.listCallCount != 0 {
+		t.Fatal("service should not be called for invalid offset")
+	}
 }
 
 func TestDeleteHandlerNotFound(t *testing.T) {
@@ -199,23 +354,76 @@ func TestDeleteHandlerNotFound(t *testing.T) {
 
 	handler := NewResourceHandler(manager)
 
+	unknownID := uuid.New().String()
+
 	request := httptest.NewRequest(
 		http.MethodDelete,
-		"/api/v1/resources/"+uuid.New().String(),
+		"/api/v1/resources/"+unknownID,
 		nil,
 	)
 
-	request.SetPathValue("id", uuid.New().String())
+	request.SetPathValue("id", unknownID)
 
 	recorder := httptest.NewRecorder()
 
 	handler.Delete(recorder, request)
 
-	if !errors.Is(repository.ErrResourceNotFound, repository.ErrResourceNotFound) {
-		t.Fatal("unexpected repository error")
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", recorder.Code)
 	}
+}
+
+func TestDeleteHandlerInvalidUUID(t *testing.T) {
+	manager := &mockResourceManager{}
+	handler := NewResourceHandler(manager)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/v1/resources/invalid-id",
+		nil,
+	)
+
+	request.SetPathValue("id", "invalid-id")
+
+	recorder := httptest.NewRecorder()
+
+	handler.Delete(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+}
+
+func TestGetByIDHandlerNotFound(t *testing.T) {
+	manager := &mockResourceManager{
+		resource: model.InfrastructureResource{
+			ID: uuid.New(),
+		},
+	}
+
+	handler := NewResourceHandler(manager)
+
+	unknownID := uuid.New().String()
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources/"+unknownID,
+		nil,
+	)
+
+	request.SetPathValue("id", unknownID)
+
+	recorder := httptest.NewRecorder()
+
+	handler.GetByID(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", recorder.Code)
+	}
+}
+
+func TestHandlerUsesRepositoryNotFoundError(t *testing.T) {
+	if !errors.Is(repository.ErrResourceNotFound, repository.ErrResourceNotFound) {
+		t.Fatal("repository not-found error is not comparable with itself")
 	}
 }

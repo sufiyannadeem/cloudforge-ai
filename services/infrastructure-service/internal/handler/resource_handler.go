@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,8 +52,17 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
-	limit := parseQueryInt(r, "limit", 20)
-	offset := parseQueryInt(r, "offset", 0)
+	limit, err := parsePaginationValue(r, "limit", 20, 1, 100)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	offset, err := parsePaginationValue(r, "offset", 0, 0, 1000000)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	resources, err := h.resourceManager.List(
 		r.Context(),
@@ -157,6 +167,12 @@ func decodeJSON(r *http.Request, destination interface{}) error {
 		return errors.New("invalid JSON request body")
 	}
 
+	var extra interface{}
+
+	if err := decoder.Decode(&extra); err == nil {
+		return errors.New("request body must contain a single JSON object")
+	}
+
 	return nil
 }
 
@@ -175,23 +191,34 @@ func parseResourceID(r *http.Request) (uuid.UUID, error) {
 	return parsedID, nil
 }
 
-func parseQueryInt(
+func parsePaginationValue(
 	r *http.Request,
 	key string,
 	defaultValue int,
-) int {
+	minimum int,
+	maximum int,
+) (int, error) {
 	value := r.URL.Query().Get(key)
 
 	if value == "" {
-		return defaultValue
+		return defaultValue, nil
 	}
 
 	parsedValue, err := strconv.Atoi(value)
 	if err != nil {
-		return defaultValue
+		return 0, fmt.Errorf("%s must be a valid integer", key)
 	}
 
-	return parsedValue
+	if parsedValue < minimum || parsedValue > maximum {
+		return 0, fmt.Errorf(
+			"%s must be between %d and %d",
+			key,
+			minimum,
+			maximum,
+		)
+	}
+
+	return parsedValue, nil
 }
 
 func writeJSON(
