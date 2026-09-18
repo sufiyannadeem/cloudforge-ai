@@ -73,5 +73,34 @@ services:
       retries: 5
       start_period: 10s
 
+
+  deployment-service:
+    build:
+      context: ./services/deployment-service
+      dockerfile: Dockerfile
+    image: cloudforge-deployment-service:local
+    container_name: cloudforge-deployment-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      SERVER_PORT: "8082"
+      DATABASE_URL: postgres://cloudforge:cloudforge_password@postgres:5432/cloudforge?sslmode=disable
+      SHUTDOWN_TIMEOUT_SECONDS: "10"
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8082/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres_data:
