@@ -7,7 +7,10 @@ import (
 	"sync"
 )
 
-var ErrQueueClosed = errors.New("worker queue is closed")
+var (
+	ErrQueueClosed = errors.New("worker queue is closed")
+	ErrQueueFull   = errors.New("worker queue is full")
+)
 
 type Handler func(context.Context, Job) error
 
@@ -63,6 +66,7 @@ func (w *Worker) Start() {
 	}
 }
 
+// Submit adds a job without blocking when the queue is full.
 func (w *Worker) Submit(job Job) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
@@ -71,8 +75,12 @@ func (w *Worker) Submit(job Job) error {
 		return ErrQueueClosed
 	}
 
-	w.jobs <- job
-	return nil
+	select {
+	case w.jobs <- job:
+		return nil
+	default:
+		return ErrQueueFull
+	}
 }
 
 func (w *Worker) Shutdown() {

@@ -7,6 +7,13 @@ import (
 )
 
 func NewRouter(h *DeploymentHandler) http.Handler {
+	return NewRouterWithQueue(h, nil)
+}
+
+func NewRouterWithQueue(
+	h *DeploymentHandler,
+	queuedHandler *QueuedDeploymentHandler,
+) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health endpoint.
@@ -18,6 +25,11 @@ func NewRouter(h *DeploymentHandler) http.Handler {
 	mux.HandleFunc("GET /api/v1/deployments/{id}", h.GetByID)
 	mux.HandleFunc("PATCH /api/v1/deployments/{id}", h.Update)
 	mux.HandleFunc("DELETE /api/v1/deployments/{id}", h.Delete)
+
+	// Deployment execution endpoint.
+	if queuedHandler != nil {
+		RegisterDeploymentRunRoute(mux, queuedHandler)
+	}
 
 	// Swagger UI.
 	mux.HandleFunc("GET /docs", func(

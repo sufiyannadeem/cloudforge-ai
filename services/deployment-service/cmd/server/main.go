@@ -13,10 +13,17 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/config"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/database"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/executor"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/handler"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
+)
+
+const (
+	workerCount = 2
+	queueSize   = 100
 )
 
 func main() {
@@ -30,15 +37,26 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("failed to load configuration", "error", err)
+		logger.Error(
+			"failed to load configuration",
+			"error",
+			err,
+		)
 		os.Exit(1)
 	}
 
 	ctx := context.Background()
 
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := database.NewPool(
+		ctx,
+		cfg.DatabaseURL,
+	)
 	if err != nil {
-		logger.Error("failed to connect to database", "error", err)
+		logger.Error(
+			"failed to connect to database",
+			"error",
+			err,
+		)
 		os.Exit(1)
 	}
 	defer pool.Close()
@@ -46,7 +64,11 @@ func main() {
 	migrationRunner := migration.NewRunner(pool)
 
 	if err := migrationRunner.Run(ctx); err != nil {
-		logger.Error("failed to run database migrations", "error", err)
+		logger.Error(
+			"failed to run database migrations",
+			"error",
+			err,
+		)
 		os.Exit(1)
 	}
 
@@ -56,11 +78,64 @@ func main() {
 		deploymentRepository,
 	)
 
+	deploymentExecutor := executor.SimulatedExecutor{
+		ExecutionDelay: 2 * time.Second,
+		ShouldFail:     false,
+	}
+
+	deploymentRunner, err := service.NewDeploymentRunner(
+		deploymentService,
+		deploymentExecutor,
+		logger,
+	)
+	if err != nil {
+		logger.Error(
+			"failed to create deployment runner",
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+
+	deploymentWorker, err := worker.New(worker.Config{
+		QueueSize: queueSize,
+		Workers:   workerCount,
+		Handler: func(
+			ctx context.Context,
+			job worker.Job,
+		) error {
+			return deploymentRunner.Run(
+				ctx,
+				job.DeploymentID,
+			)
+		},
+		Logger: logger,
+	})
+	if err != nil {
+		logger.Error(
+			"failed to create deployment worker",
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+
+	deploymentWorker.Start()
+	defer deploymentWorker.Shutdown()
+
 	deploymentHandler := handler.NewDeploymentHandler(
 		deploymentService,
 	)
 
-	router := handler.NewRouter(deploymentHandler)
+	queuedDeploymentHandler := handler.NewQueuedDeploymentHandler(
+		deploymentService,
+		deploymentWorker,
+	)
+
+	router := handler.NewRouterWithQueue(
+		deploymentHandler,
+		queuedDeploymentHandler,
+	)
 
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.ServerPort),
@@ -87,6 +162,10 @@ func main() {
 			cfg.ServerPort,
 			"environment",
 			cfg.AppEnv,
+			"worker_count",
+			workerCount,
+			"queue_size",
+			queueSize,
 		)
 
 		serverErrors <- server.ListenAndServe()
@@ -95,7 +174,11 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("HTTP server failed", "error", err)
+			logger.Error(
+				"HTTP server failed",
+				"error",
+				err,
+			)
 			os.Exit(1)
 		}
 
@@ -114,7 +197,11 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("graceful shutdown failed", "error", err)
+		logger.Error(
+			"graceful shutdown failed",
+			"error",
+			err,
+		)
 		os.Exit(1)
 	}
 

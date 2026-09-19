@@ -64,14 +64,6 @@ func (r *DeploymentRunner) Run(
 	if err := r.updateStatus(
 		ctx,
 		deploymentID,
-		model.DeploymentStatusQueued,
-	); err != nil {
-		return fmt.Errorf("mark deployment as queued: %w", err)
-	}
-
-	if err := r.updateStatus(
-		ctx,
-		deploymentID,
 		model.DeploymentStatusRunning,
 	); err != nil {
 		return fmt.Errorf("mark deployment as running: %w", err)
@@ -116,11 +108,13 @@ func (r *DeploymentRunner) Run(
 	r.logger.Info(
 		"deployment completed",
 		"deployment_id",
-		deploymentID,
+		result.DeploymentID,
 		"status",
 		result.Status,
 		"message",
 		result.Message,
+		"duration",
+		result.Duration,
 	)
 
 	return nil
