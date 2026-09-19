@@ -7,36 +7,55 @@ import (
 )
 
 func NewRouter(h *DeploymentHandler) http.Handler {
-	return NewRouterWithQueue(h, nil)
+	return NewRouterWithDependencies(h, nil, nil)
 }
 
 func NewRouterWithQueue(
 	h *DeploymentHandler,
 	queuedHandler *QueuedDeploymentHandler,
 ) http.Handler {
+	return NewRouterWithDependencies(
+		h,
+		queuedHandler,
+		nil,
+	)
+}
+
+func NewRouterWithDependencies(
+	h *DeploymentHandler,
+	queuedHandler *QueuedDeploymentHandler,
+	attemptHandler *DeploymentAttemptHandler,
+) http.Handler {
 	mux := http.NewServeMux()
 
-	// Health endpoint.
 	mux.HandleFunc("GET /health", h.Health)
-
-	// Deployment API endpoints.
 	mux.HandleFunc("POST /api/v1/deployments", h.Create)
 	mux.HandleFunc("GET /api/v1/deployments", h.List)
 	mux.HandleFunc("GET /api/v1/deployments/{id}", h.GetByID)
 	mux.HandleFunc("PATCH /api/v1/deployments/{id}", h.Update)
 	mux.HandleFunc("DELETE /api/v1/deployments/{id}", h.Delete)
 
-	// Deployment execution endpoint.
 	if queuedHandler != nil {
 		RegisterDeploymentRunRoute(mux, queuedHandler)
 	}
 
-	// Swagger UI.
+	if attemptHandler != nil {
+		mux.HandleFunc(
+			"GET /api/v1/deployments/{id}/attempts",
+			attemptHandler.ListByDeploymentID,
+		)
+	}
+
 	mux.HandleFunc("GET /docs", func(
 		w http.ResponseWriter,
 		r *http.Request,
 	) {
-		http.Redirect(w, r, "/docs/", http.StatusPermanentRedirect)
+		http.Redirect(
+			w,
+			r,
+			"/docs/",
+			http.StatusPermanentRedirect,
+		)
 	})
 
 	mux.Handle(
@@ -47,12 +66,14 @@ func NewRouterWithQueue(
 		),
 	)
 
-	// OpenAPI specification.
 	mux.HandleFunc("GET /openapi.yaml", func(
 		w http.ResponseWriter,
 		r *http.Request,
 	) {
-		w.Header().Set("Content-Type", "application/yaml")
+		w.Header().Set(
+			"Content-Type",
+			"application/yaml",
+		)
 
 		http.ServeFileFS(
 			w,

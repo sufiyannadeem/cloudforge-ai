@@ -28,9 +28,12 @@ const (
 
 func main() {
 	logger := slog.New(
-		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		}),
+		slog.NewJSONHandler(
+			os.Stdout,
+			&slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			},
+		),
 	)
 
 	slog.SetDefault(logger)
@@ -74,6 +77,17 @@ func main() {
 
 	deploymentRepository := repository.NewDeploymentRepository(pool)
 
+	deploymentAttemptRepository, err :=
+		repository.NewDeploymentAttemptRepository(pool)
+	if err != nil {
+		logger.Error(
+			"failed to create deployment attempt repository",
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+
 	deploymentService := service.NewDeploymentService(
 		deploymentRepository,
 	)
@@ -83,11 +97,13 @@ func main() {
 		ShouldFail:     false,
 	}
 
-	deploymentRunner, err := service.NewDeploymentRunner(
-		deploymentService,
-		deploymentExecutor,
-		logger,
-	)
+	deploymentRunner, err :=
+		service.NewDeploymentRunnerWithAttempts(
+			deploymentService,
+			deploymentAttemptRepository,
+			deploymentExecutor,
+			logger,
+		)
 	if err != nil {
 		logger.Error(
 			"failed to create deployment runner",
@@ -132,9 +148,15 @@ func main() {
 		deploymentWorker,
 	)
 
-	router := handler.NewRouterWithQueue(
+	deploymentAttemptHandler := handler.NewDeploymentAttemptHandler(
+		deploymentService,
+		deploymentAttemptRepository,
+	)
+
+	router := handler.NewRouterWithDependencies(
 		deploymentHandler,
 		queuedDeploymentHandler,
+		deploymentAttemptHandler,
 	)
 
 	server := &http.Server{
@@ -166,6 +188,8 @@ func main() {
 			workerCount,
 			"queue_size",
 			queueSize,
+			"attempt_history",
+			true,
 		)
 
 		serverErrors <- server.ListenAndServe()

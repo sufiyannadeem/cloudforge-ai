@@ -1,0 +1,23 @@
+# Compiled binaries
+server
+bin/
+*.exe
+*.out
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

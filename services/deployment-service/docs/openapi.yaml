@@ -7,7 +7,8 @@ info:
 
     The service manages deployment records, environments,
     container images, Git commit references, namespaces,
-    and deployment lifecycle statuses.
+    deployment lifecycle statuses, deployment execution,
+    and deployment attempt history.
   version: 1.0.0
   contact:
     name: CloudForge AI
@@ -21,7 +22,7 @@ tags:
   - name: Health
     description: Service health endpoints
   - name: Deployments
-    description: Deployment management endpoints
+    description: Deployment management and execution endpoints
 
 paths:
   /health:
@@ -138,6 +139,12 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          description: Invalid deployment status transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           $ref: "#/components/responses/InternalServerError"
 
@@ -149,6 +156,74 @@ paths:
       responses:
         "204":
           description: Deployment deleted successfully
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/deployments/{id}/run:
+    parameters:
+      - $ref: "#/components/parameters/DeploymentID"
+
+    post:
+      tags:
+        - Deployments
+      summary: Queue a deployment for execution
+      operationId: runDeployment
+      responses:
+        "202":
+          description: Deployment queued successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentQueuedResponse"
+              example:
+                message: deployment queued successfully
+                deployment_id: bddaa0eb-466c-4a08-aa11-87dadb422275
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Deployment cannot be queued in its current status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: only pending deployments can be queued
+        "503":
+          description: Deployment queue unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: deployment queue is full
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/deployments/{id}/attempts:
+    parameters:
+      - $ref: "#/components/parameters/DeploymentID"
+
+    get:
+      tags:
+        - Deployments
+      summary: List deployment execution attempts
+      operationId: listDeploymentAttempts
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Deployment attempts retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentAttemptListResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -172,7 +247,7 @@ components:
       name: limit
       in: query
       required: false
-      description: Number of deployments to return
+      description: Number of records to return
       schema:
         type: integer
         minimum: 1
@@ -184,7 +259,7 @@ components:
       name: offset
       in: query
       required: false
-      description: Number of deployments to skip
+      description: Number of records to skip
       schema:
         type: integer
         minimum: 0
@@ -337,6 +412,90 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Deployment"
+        limit:
+          type: integer
+          example: 20
+        offset:
+          type: integer
+          example: 0
+
+    DeploymentQueuedResponse:
+      type: object
+      required:
+        - message
+        - deployment_id
+      properties:
+        message:
+          type: string
+          example: deployment queued successfully
+        deployment_id:
+          type: string
+          format: uuid
+          example: bddaa0eb-466c-4a08-aa11-87dadb422275
+
+    DeploymentAttempt:
+      type: object
+      required:
+        - id
+        - deployment_id
+        - attempt_number
+        - status
+        - started_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        deployment_id:
+          type: string
+          format: uuid
+        attempt_number:
+          type: integer
+          minimum: 1
+          example: 1
+        status:
+          type: string
+          enum:
+            - running
+            - succeeded
+            - failed
+            - cancelled
+        error_message:
+          type: string
+          nullable: true
+          example: null
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          format: int64
+          nullable: true
+          example: 2009
+        created_at:
+          type: string
+          format: date-time
+
+    DeploymentAttemptListResponse:
+      type: object
+      required:
+        - deployment_id
+        - attempts
+        - limit
+        - offset
+      properties:
+        deployment_id:
+          type: string
+          format: uuid
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeploymentAttempt"
         limit:
           type: integer
           example: 20
