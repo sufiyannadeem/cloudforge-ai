@@ -82,3 +82,69 @@ groups:
           summary: "No recent traffic to deployment service"
           description: "The deployment-service has received no HTTP traffic during the last ten minutes."
           runbook: "Confirm whether the service is expected to receive traffic."
+
+
+      - alert: CloudForgeDeploymentFailureRateHigh
+        expr: |
+          (
+            sum(rate(cloudforge_deployments_total{
+              job="deployment-service",
+              status="failed"
+            }[10m]))
+          /
+            clamp_min(
+              sum(rate(cloudforge_deployments_total{
+                job="deployment-service"
+              }[10m])),
+              0.001
+            )
+          ) > 0.10
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "Deployment failure rate is high"
+          description: "More than 10 percent of deployment executions have failed during the last ten minutes."
+          runbook: "Inspect deployment logs and executor errors."
+
+      - alert: CloudForgeRepeatedDeploymentFailures
+        expr: |
+          increase(cloudforge_deployments_total{
+            job="deployment-service",
+            status="failed"
+          }[15m]) >= 3
+        for: 1m
+
+        labels:
+          severity: critical
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "Repeated deployment failures detected"
+          description: "At least three deployment executions have failed during the last fifteen minutes."
+          runbook: "Inspect deployment attempt history and executor failures."
+
+      - alert: CloudForgeHighDeploymentP95Duration
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (environment, le) (
+              rate(cloudforge_deployment_duration_seconds_bucket[10m])
+            )
+          ) > 5
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "Deployment P95 duration is high"
+          description: "The P95 deployment execution duration has exceeded five seconds for five minutes."
+          runbook: "Inspect executor latency and worker behavior."
