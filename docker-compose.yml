@@ -102,5 +102,61 @@ services:
       retries: 5
       start_period: 10s
 
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: cloudforge-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      deployment-service:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: cloudforge-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+
+    environment:
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: "smtp.gmail.com:587"
+      GF_SMTP_USER: "sufiyanmohammed098@gmail.com"
+      GF_SMTP_PASSWORD: "kvycgmauzlehovyh"
+      GF_SMTP_FROM_ADDRESS: "sufiyanmohammed098@gmail.com"
+      GF_SMTP_FROM_NAME: "CloudForge AI Grafana"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: cloudforge-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    depends_on:
+      - prometheus
 volumes:
   postgres_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:

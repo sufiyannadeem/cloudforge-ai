@@ -1,0 +1,84 @@
+groups:
+  - name: cloudforge-deployment-service-alerts
+    interval: 30s
+
+    rules:
+      - alert: DeploymentServiceDown
+        expr: up{job="deployment-service"} == 0
+        for: 1m
+
+        labels:
+          severity: critical
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "Deployment service is down"
+          description: "The deployment-service target has been unavailable for more than one minute."
+          runbook: "Check deployment-service container logs and container health."
+
+      - alert: DeploymentServiceHighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{
+              job="deployment-service",
+              status=~"5.."
+            }[5m]))
+          /
+            clamp_min(
+              sum(rate(http_requests_total{
+                job="deployment-service"
+              }[5m])),
+              0.001
+            )
+          ) > 0.05
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "High HTTP 5xx error rate"
+          description: "More than 5 percent of deployment-service HTTP requests are returning 5xx responses."
+          runbook: "Inspect application logs, dependencies, and recent deployments."
+
+      - alert: DeploymentServiceHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{
+                job="deployment-service"
+              }[5m])
+            )
+          ) > 1
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "High deployment service request latency"
+          description: "The deployment-service P95 HTTP latency has exceeded one second for five minutes."
+          runbook: "Inspect slow endpoints, database calls, and resource utilization."
+
+      - alert: DeploymentServiceNoRecentTraffic
+        expr: |
+          sum(rate(http_requests_total{
+            job="deployment-service"
+          }[10m])) == 0
+        for: 10m
+
+        labels:
+          severity: info
+          service: deployment-service
+          team: platform
+
+        annotations:
+          summary: "No recent traffic to deployment service"
+          description: "The deployment-service has received no HTTP traffic during the last ten minutes."
+          runbook: "Confirm whether the service is expected to receive traffic."

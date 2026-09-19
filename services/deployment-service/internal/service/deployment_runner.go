@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/executor"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/metrics"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 )
 
@@ -35,6 +36,7 @@ type DeploymentRunner struct {
 	attemptManager    DeploymentAttemptManager
 	executor          executor.Executor
 	logger            *slog.Logger
+	metrics           *metrics.DeploymentMetrics
 }
 
 func NewDeploymentRunner(
@@ -42,11 +44,12 @@ func NewDeploymentRunner(
 	deploymentExecutor executor.Executor,
 	logger *slog.Logger,
 ) (*DeploymentRunner, error) {
-	return NewDeploymentRunnerWithAttempts(
+	return NewDeploymentRunnerWithAttemptsAndMetrics(
 		deploymentService,
 		nil,
 		deploymentExecutor,
 		logger,
+		nil,
 	)
 }
 
@@ -55,6 +58,22 @@ func NewDeploymentRunnerWithAttempts(
 	attemptManager DeploymentAttemptManager,
 	deploymentExecutor executor.Executor,
 	logger *slog.Logger,
+) (*DeploymentRunner, error) {
+	return NewDeploymentRunnerWithAttemptsAndMetrics(
+		deploymentService,
+		attemptManager,
+		deploymentExecutor,
+		logger,
+		nil,
+	)
+}
+
+func NewDeploymentRunnerWithAttemptsAndMetrics(
+	deploymentService *DeploymentService,
+	attemptManager DeploymentAttemptManager,
+	deploymentExecutor executor.Executor,
+	logger *slog.Logger,
+	deploymentMetrics *metrics.DeploymentMetrics,
 ) (*DeploymentRunner, error) {
 	if deploymentService == nil {
 		return nil, errors.New("deployment service is required")
@@ -73,6 +92,7 @@ func NewDeploymentRunnerWithAttempts(
 		attemptManager:    attemptManager,
 		executor:          deploymentExecutor,
 		logger:            logger,
+		metrics:           deploymentMetrics,
 	}, nil
 }
 
@@ -84,12 +104,42 @@ func (r *DeploymentRunner) Run(
 		return ErrInvalidDeploymentID
 	}
 
+	deployment, err := r.deploymentService.GetByID(
+		ctx,
+		deploymentID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"get deployment before execution: %w",
+			err,
+		)
+	}
+
 	attempt, err := r.startAttempt(ctx, deploymentID)
 	if err != nil {
-		return fmt.Errorf("start deployment attempt: %w", err)
+		return fmt.Errorf(
+			"start deployment attempt: %w",
+			err,
+		)
 	}
 
 	startTime := time.Now()
+
+	if r.metrics != nil {
+		r.metrics.DeploymentStarted()
+	}
+
+	metricsCompleted := false
+
+	defer func() {
+		if !metricsCompleted && r.metrics != nil {
+			r.metrics.DeploymentCompleted(
+				deployment.Environment,
+				"failed",
+				time.Since(startTime),
+			)
+		}
+	}()
 
 	if err := r.updateStatus(
 		ctx,
@@ -104,7 +154,10 @@ func (r *DeploymentRunner) Run(
 			startTime,
 		)
 
-		return fmt.Errorf("mark deployment as queued: %w", err)
+		return fmt.Errorf(
+			"mark deployment as queued: %w",
+			err,
+		)
 	}
 
 	if err := r.updateStatus(
@@ -120,7 +173,10 @@ func (r *DeploymentRunner) Run(
 			startTime,
 		)
 
-		return fmt.Errorf("mark deployment as running: %w", err)
+		return fmt.Errorf(
+			"mark deployment as running: %w",
+			err,
+		)
 	}
 
 	result, executionErr := r.executor.Execute(
@@ -139,9 +195,12 @@ func (r *DeploymentRunner) Run(
 
 		attemptStatus := model.AttemptStatusFailed
 
+		metricStatus := "failed"
+
 		if errors.Is(ctx.Err(), context.Canceled) ||
 			errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			attemptStatus = model.AttemptStatusCancelled
+			metricStatus = "cancelled"
 		}
 
 		r.completeAttempt(
@@ -157,6 +216,16 @@ func (r *DeploymentRunner) Run(
 			deploymentID,
 			model.DeploymentStatusFailed,
 		)
+
+		if r.metrics != nil {
+			r.metrics.DeploymentCompleted(
+				deployment.Environment,
+				metricStatus,
+				time.Since(startTime),
+			)
+
+			metricsCompleted = true
+		}
 
 		if statusErr != nil {
 			return fmt.Errorf(
@@ -182,6 +251,16 @@ func (r *DeploymentRunner) Run(
 			startTime,
 		)
 
+		if r.metrics != nil {
+			r.metrics.DeploymentCompleted(
+				deployment.Environment,
+				"failed",
+				time.Since(startTime),
+			)
+
+			metricsCompleted = true
+		}
+
 		return fmt.Errorf(
 			"mark deployment as succeeded: %w",
 			err,
@@ -195,6 +274,16 @@ func (r *DeploymentRunner) Run(
 		nil,
 		startTime,
 	)
+
+	if r.metrics != nil {
+		r.metrics.DeploymentCompleted(
+			deployment.Environment,
+			"succeeded",
+			time.Since(startTime),
+		)
+
+		metricsCompleted = true
+	}
 
 	r.logger.Info(
 		"deployment completed",
@@ -223,7 +312,6 @@ func (r *DeploymentRunner) startAttempt(
 		ctx,
 		deploymentID,
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +327,10 @@ func (r *DeploymentRunner) startAttempt(
 		CreatedAt:     now,
 	}
 
-	if err := r.attemptManager.Create(ctx, *attempt); err != nil {
+	if err := r.attemptManager.Create(
+		ctx,
+		*attempt,
+	); err != nil {
 		return nil, err
 	}
 
@@ -269,7 +360,10 @@ func (r *DeploymentRunner) completeAttempt(
 		attempt.ErrorMessage = &message
 	}
 
-	if err := r.attemptManager.Update(ctx, *attempt); err != nil {
+	if err := r.attemptManager.Update(
+		ctx,
+		*attempt,
+	); err != nil {
 		r.logger.Error(
 			"failed to update deployment attempt",
 			"attempt_id",

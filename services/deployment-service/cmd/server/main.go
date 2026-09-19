@@ -11,19 +11,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/config"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/database"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/executor"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/handler"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/metrics"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
-)
-
-const (
-	workerCount = 2
-	queueSize   = 100
 )
 
 func main() {
@@ -77,8 +76,7 @@ func main() {
 
 	deploymentRepository := repository.NewDeploymentRepository(pool)
 
-	deploymentAttemptRepository, err :=
-		repository.NewDeploymentAttemptRepository(pool)
+	attemptRepository, err := repository.NewDeploymentAttemptRepository(pool)
 	if err != nil {
 		logger.Error(
 			"failed to create deployment attempt repository",
@@ -92,18 +90,51 @@ func main() {
 		deploymentRepository,
 	)
 
-	deploymentExecutor := executor.SimulatedExecutor{
+	metricsRegistry := prometheus.NewRegistry()
+
+	serviceMetrics := metrics.New()
+
+	if err := serviceMetrics.Register(
+		metricsRegistry,
+	); err != nil {
+		logger.Error(
+			"failed to register HTTP metrics",
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+
+	deploymentMetrics := metrics.NewDeploymentMetrics()
+
+	if err := deploymentMetrics.Register(
+		metricsRegistry,
+	); err != nil {
+		logger.Error(
+			"failed to register deployment metrics",
+			"error",
+			err,
+		)
+		os.Exit(1)
+	}
+
+	metricsHandler := promhttp.HandlerFor(
+		metricsRegistry,
+		promhttp.HandlerOpts{},
+	)
+
+	simulatedExecutor := executor.SimulatedExecutor{
 		ExecutionDelay: 2 * time.Second,
 		ShouldFail:     false,
 	}
 
-	deploymentRunner, err :=
-		service.NewDeploymentRunnerWithAttempts(
-			deploymentService,
-			deploymentAttemptRepository,
-			deploymentExecutor,
-			logger,
-		)
+	deploymentRunner, err := service.NewDeploymentRunnerWithAttemptsAndMetrics(
+		deploymentService,
+		attemptRepository,
+		simulatedExecutor,
+		logger,
+		deploymentMetrics,
+	)
 	if err != nil {
 		logger.Error(
 			"failed to create deployment runner",
@@ -113,20 +144,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	deploymentWorker, err := worker.New(worker.Config{
-		QueueSize: queueSize,
-		Workers:   workerCount,
-		Handler: func(
-			ctx context.Context,
-			job worker.Job,
-		) error {
-			return deploymentRunner.Run(
-				ctx,
-				job.DeploymentID,
-			)
+	deploymentWorker, err := worker.New(
+		worker.Config{
+			QueueSize: 100,
+			Workers:   2,
+			Handler: func(
+				ctx context.Context,
+				job worker.Job,
+			) error {
+				return deploymentRunner.Run(
+					ctx,
+					job.DeploymentID,
+				)
+			},
+			Logger: logger,
 		},
-		Logger: logger,
-	})
+	)
 	if err != nil {
 		logger.Error(
 			"failed to create deployment worker",
@@ -137,7 +170,6 @@ func main() {
 	}
 
 	deploymentWorker.Start()
-	defer deploymentWorker.Shutdown()
 
 	deploymentHandler := handler.NewDeploymentHandler(
 		deploymentService,
@@ -150,18 +182,25 @@ func main() {
 
 	deploymentAttemptHandler := handler.NewDeploymentAttemptHandler(
 		deploymentService,
-		deploymentAttemptRepository,
+		attemptRepository,
 	)
 
-	router := handler.NewRouterWithDependencies(
+	router := handler.NewRouterWithDependenciesAndMetrics(
 		deploymentHandler,
 		queuedDeploymentHandler,
 		deploymentAttemptHandler,
+		metricsHandler,
 	)
 
+	instrumentedRouter := metrics.Middleware(
+		serviceMetrics,
+	)(router)
+
 	server := &http.Server{
-		Addr:              ":" + strconv.Itoa(cfg.ServerPort),
-		Handler:           router,
+		Addr: ":" + strconv.Itoa(cfg.ServerPort),
+
+		Handler: instrumentedRouter,
+
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -184,12 +223,12 @@ func main() {
 			cfg.ServerPort,
 			"environment",
 			cfg.AppEnv,
-			"worker_count",
-			workerCount,
-			"queue_size",
-			queueSize,
-			"attempt_history",
+			"prometheus_metrics",
 			true,
+			"worker_count",
+			2,
+			"queue_size",
+			100,
 		)
 
 		serverErrors <- server.ListenAndServe()
@@ -197,17 +236,25 @@ func main() {
 
 	select {
 	case err := <-serverErrors:
-		if !errors.Is(err, http.ErrServerClosed) {
+		if !errors.Is(
+			err,
+			http.ErrServerClosed,
+		) {
 			logger.Error(
 				"HTTP server failed",
 				"error",
 				err,
 			)
+
+			deploymentWorker.Shutdown()
+
 			os.Exit(1)
 		}
 
 	case <-shutdownContext.Done():
-		logger.Info("shutdown signal received")
+		logger.Info(
+			"shutdown signal received",
+		)
 	}
 
 	shutdownTimeout := time.Duration(
@@ -220,14 +267,23 @@ func main() {
 	)
 	defer cancel()
 
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err := server.Shutdown(
+		shutdownCtx,
+	); err != nil {
 		logger.Error(
-			"graceful shutdown failed",
+			"graceful HTTP server shutdown failed",
 			"error",
 			err,
 		)
+
+		deploymentWorker.Shutdown()
+
 		os.Exit(1)
 	}
 
-	logger.Info("deployment service stopped successfully")
+	deploymentWorker.Shutdown()
+
+	logger.Info(
+		"deployment service stopped successfully",
+	)
 }
