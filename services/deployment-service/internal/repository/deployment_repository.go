@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,7 +13,15 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 )
 
-var ErrDeploymentNotFound = errors.New("deployment not found")
+var (
+	ErrDeploymentNotFound = errors.New(
+		"deployment not found",
+	)
+
+	ErrDeploymentNotPending = errors.New(
+		"deployment is not pending",
+	)
+)
 
 type DeploymentRepository struct {
 	pool *pgxpool.Pool
@@ -270,4 +279,106 @@ func (r *DeploymentRepository) Delete(
 	}
 
 	return nil
+}
+func (r *DeploymentRepository) ClaimPendingDeployment(
+	ctx context.Context,
+	id uuid.UUID,
+	updatedAt time.Time,
+) error {
+	if r.pool == nil {
+		return errors.New("database pool is nil")
+	}
+
+	const query = `
+		UPDATE deployments
+		SET
+			status = 'queued',
+			updated_at = $2
+		WHERE id = $1
+		  AND status = 'pending'
+	`
+
+	result, err := r.pool.Exec(
+		ctx,
+		query,
+		id,
+		updatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf(
+			"claim pending deployment: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+
+	var exists bool
+
+	const existsQuery = `
+		SELECT EXISTS (
+			SELECT 1
+			FROM deployments
+			WHERE id = $1
+		)
+	`
+
+	if err := r.pool.QueryRow(
+		ctx,
+		existsQuery,
+		id,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf(
+			"check deployment existence: %w",
+			err,
+		)
+	}
+
+	if !exists {
+		return ErrDeploymentNotFound
+	}
+
+	return ErrDeploymentNotPending
+}
+
+func (r *DeploymentRepository) ReleaseQueuedDeployment(
+	ctx context.Context,
+	id uuid.UUID,
+	updatedAt time.Time,
+) error {
+	if r.pool == nil {
+		return errors.New("database pool is nil")
+	}
+
+	const query = `
+		UPDATE deployments
+		SET
+			status = 'pending',
+			updated_at = $2
+		WHERE id = $1
+		  AND status = 'queued'
+	`
+
+	result, err := r.pool.Exec(
+		ctx,
+		query,
+		id,
+		updatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf(
+			"release queued deployment: %w",
+			err,
+		)
+	}
+
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+
+	return ErrDeploymentNotFound
 }

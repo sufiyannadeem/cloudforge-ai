@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -34,5 +35,31 @@ type DeploymentManager interface {
 	Delete(
 		ctx context.Context,
 		id uuid.UUID,
+	) error
+}
+
+type DeploymentQueueManager interface {
+	QueuePendingDeployment(
+		ctx context.Context,
+		id uuid.UUID,
+	) error
+
+	ReleaseQueuedDeployment(
+		ctx context.Context,
+		id uuid.UUID,
+	) error
+}
+
+type deploymentQueueStore interface {
+	ClaimPendingDeployment(
+		ctx context.Context,
+		id uuid.UUID,
+		updatedAt time.Time,
+	) error
+
+	ReleaseQueuedDeployment(
+		ctx context.Context,
+		id uuid.UUID,
+		updatedAt time.Time,
 	) error
 }

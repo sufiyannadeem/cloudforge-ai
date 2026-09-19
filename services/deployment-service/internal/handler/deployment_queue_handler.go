@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
 )
@@ -16,17 +16,17 @@ type DeploymentJobSubmitter interface {
 }
 
 type QueuedDeploymentHandler struct {
-	service   service.DeploymentManager
-	submitter DeploymentJobSubmitter
+	queueManager service.DeploymentQueueManager
+	submitter    DeploymentJobSubmitter
 }
 
 func NewQueuedDeploymentHandler(
-	deploymentService service.DeploymentManager,
+	queueManager service.DeploymentQueueManager,
 	submitter DeploymentJobSubmitter,
 ) *QueuedDeploymentHandler {
 	return &QueuedDeploymentHandler{
-		service:   deploymentService,
-		submitter: submitter,
+		queueManager: queueManager,
+		submitter:    submitter,
 	}
 }
 
@@ -34,7 +34,10 @@ func (h *QueuedDeploymentHandler) Run(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	deploymentID, err := uuid.Parse(r.PathValue("id"))
+	deploymentID, err := uuid.Parse(
+		r.PathValue("id"),
+	)
+
 	if err != nil {
 		writeError(
 			w,
@@ -44,29 +47,80 @@ func (h *QueuedDeploymentHandler) Run(
 		return
 	}
 
-	deployment, err := h.service.GetByID(
+	err = h.queueManager.QueuePendingDeployment(
 		r.Context(),
 		deploymentID,
 	)
+
 	if err != nil {
-		writeServiceError(w, err)
+		switch {
+		case errors.Is(
+			err,
+			service.ErrInvalidDeploymentID,
+		):
+			writeError(
+				w,
+				http.StatusBadRequest,
+				"invalid deployment ID",
+			)
+
+		case errors.Is(
+			err,
+			repository.ErrDeploymentNotFound,
+		):
+			writeError(
+				w,
+				http.StatusNotFound,
+				"deployment not found",
+			)
+
+		case errors.Is(
+			err,
+			service.ErrDeploymentNotPending,
+		),
+			errors.Is(
+				err,
+				repository.ErrDeploymentNotPending,
+			):
+			writeError(
+				w,
+				http.StatusConflict,
+				"only pending deployments can be queued",
+			)
+
+		default:
+			writeError(
+				w,
+				http.StatusInternalServerError,
+				"failed to claim deployment",
+			)
+		}
+
 		return
 	}
 
-	if deployment.Status != model.DeploymentStatusPending {
-		writeError(
-			w,
-			http.StatusConflict,
-			"only pending deployments can be queued",
+	err = h.submitter.Submit(
+		worker.Job{
+			ID:           uuid.New(),
+			DeploymentID: deploymentID,
+		},
+	)
+
+	if err != nil {
+		rollbackErr := h.queueManager.ReleaseQueuedDeployment(
+			r.Context(),
+			deploymentID,
 		)
-		return
-	}
 
-	err = h.submitter.Submit(worker.Job{
-		ID:           uuid.New(),
-		DeploymentID: deploymentID,
-	})
-	if err != nil {
+		if rollbackErr != nil {
+			writeError(
+				w,
+				http.StatusInternalServerError,
+				"deployment claimed but rollback failed",
+			)
+			return
+		}
+
 		switch {
 		case errors.Is(err, worker.ErrQueueFull):
 			writeError(

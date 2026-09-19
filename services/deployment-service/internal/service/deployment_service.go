@@ -43,6 +43,10 @@ var (
 		"deployment ID is required",
 	)
 
+	ErrDeploymentNotPending = errors.New(
+		"deployment is not pending",
+	)
+
 	ErrInvalidDeploymentTransition = errors.New(
 		"invalid deployment status transition",
 	)
@@ -290,4 +294,61 @@ func isValidEnvironment(
 	default:
 		return false
 	}
+}
+func (s *DeploymentService) QueuePendingDeployment(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	if id == uuid.Nil {
+		return ErrInvalidDeploymentID
+	}
+
+	queueStore, ok := s.store.(deploymentQueueStore)
+	if !ok {
+		return errors.New(
+			"deployment store does not support queue operations",
+		)
+	}
+
+	if err := queueStore.ClaimPendingDeployment(
+		ctx,
+		id,
+		time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf(
+			"queue pending deployment: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+func (s *DeploymentService) ReleaseQueuedDeployment(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	if id == uuid.Nil {
+		return ErrInvalidDeploymentID
+	}
+
+	queueStore, ok := s.store.(deploymentQueueStore)
+	if !ok {
+		return errors.New(
+			"deployment store does not support queue operations",
+		)
+	}
+
+	if err := queueStore.ReleaseQueuedDeployment(
+		ctx,
+		id,
+		time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf(
+			"release queued deployment: %w",
+			err,
+		)
+	}
+
+	return nil
 }
