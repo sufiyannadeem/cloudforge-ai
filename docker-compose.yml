@@ -147,12 +147,17 @@ services:
     restart: unless-stopped
     ports:
       - "9093:9093"
+
+    environment:
+      ALERTMANAGER_SMTP_USER: ${ALERTMANAGER_SMTP_USER}
+      ALERTMANAGER_SMTP_PASSWORD: ${ALERTMANAGER_SMTP_PASSWORD}
     volumes:
       - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
+    
     depends_on:
       - prometheus
 volumes:

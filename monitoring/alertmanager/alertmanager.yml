@@ -2,38 +2,22 @@ global:
   resolve_timeout: 5m
 
   smtp_smarthost: "smtp.gmail.com:587"
-  smtp_from: "sufiyanmohammed098@gmail.com"
-  smtp_auth_username: "sufiyanmohammed098@gmail.com"
-  smtp_auth_password: "kvycgmauzlehovyh"
+  smtp_from: "${ALERTMANAGER_SMTP_USER}"
+  smtp_auth_username: "${ALERTMANAGER_SMTP_USER}"
+  smtp_auth_password: "${ALERTMANAGER_SMTP_PASSWORD}"
   smtp_require_tls: true
 
 route:
   group_by:
     - alertname
     - service
-    - severity
-
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-
-  receiver: cloudforge-email
-
-  routes:
-    - matchers:
-        - severity="critical"
-      receiver: cloudforge-email
-
-    - matchers:
-        - severity="warning"
-      receiver: cloudforge-email
-
-    - matchers:
-        - severity="info"
-      receiver: cloudforge-email
+  receiver: email-notifications
 
 receivers:
-  - name: cloudforge-email
+  - name: email-notifications
     email_configs:
       - to: "sufiyanmohammed098@gmail.com"
         send_resolved: true
