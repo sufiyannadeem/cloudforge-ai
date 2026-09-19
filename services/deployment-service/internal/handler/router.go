@@ -52,3 +52,13 @@ func NewRouter(h *DeploymentHandler) http.Handler {
 
 	return mux
 }
+
+func RegisterDeploymentRunRoute(
+	mux *http.ServeMux,
+	h *QueuedDeploymentHandler,
+) {
+	mux.HandleFunc(
+		"POST /api/v1/deployments/{id}/run",
+		h.Run,
+	)
+}
