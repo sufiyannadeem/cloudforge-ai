@@ -316,7 +316,10 @@ func TestUpdateDeploymentSuccess(t *testing.T) {
 	existing := existingDeployment()
 
 	newImage := "nginx:1.28"
-	newStatus := model.DeploymentStatusRunning
+
+	// The deployment starts in pending status.
+	// The state machine allows pending -> queued.
+	newStatus := model.DeploymentStatusQueued
 
 	store := &mockDeploymentStore{
 		getByIDFunc: func(

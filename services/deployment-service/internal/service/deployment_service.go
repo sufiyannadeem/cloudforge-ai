@@ -11,16 +11,41 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/workflow"
 )
 
 var (
-	ErrInvalidProjectID        = errors.New("project ID is required")
-	ErrInvalidEnvironment      = errors.New("invalid environment")
-	ErrInvalidImage            = errors.New("image is required")
-	ErrInvalidGitCommitSHA     = errors.New("git commit SHA is required")
-	ErrInvalidNamespace        = errors.New("namespace is required")
-	ErrInvalidDeploymentStatus = errors.New("invalid deployment status")
-	ErrInvalidDeploymentID     = errors.New("deployment ID is required")
+	ErrInvalidProjectID = errors.New(
+		"project ID is required",
+	)
+
+	ErrInvalidEnvironment = errors.New(
+		"invalid environment",
+	)
+
+	ErrInvalidImage = errors.New(
+		"image is required",
+	)
+
+	ErrInvalidGitCommitSHA = errors.New(
+		"git commit SHA is required",
+	)
+
+	ErrInvalidNamespace = errors.New(
+		"namespace is required",
+	)
+
+	ErrInvalidDeploymentStatus = errors.New(
+		"invalid deployment status",
+	)
+
+	ErrInvalidDeploymentID = errors.New(
+		"deployment ID is required",
+	)
+
+	ErrInvalidDeploymentTransition = errors.New(
+		"invalid deployment status transition",
+	)
 )
 
 type DeploymentService struct {
@@ -58,7 +83,10 @@ func (s *DeploymentService) Create(
 	}
 
 	if err := s.store.Create(ctx, deployment); err != nil {
-		return model.Deployment{}, fmt.Errorf("create deployment: %w", err)
+		return model.Deployment{}, fmt.Errorf(
+			"create deployment: %w",
+			err,
+		)
 	}
 
 	return deployment, nil
@@ -74,7 +102,10 @@ func (s *DeploymentService) GetByID(
 
 	deployment, err := s.store.GetByID(ctx, id)
 	if err != nil {
-		return model.Deployment{}, fmt.Errorf("get deployment: %w", err)
+		return model.Deployment{}, fmt.Errorf(
+			"get deployment: %w",
+			err,
+		)
 	}
 
 	return deployment, nil
@@ -97,9 +128,16 @@ func (s *DeploymentService) List(
 		offset = 0
 	}
 
-	deployments, err := s.store.List(ctx, limit, offset)
+	deployments, err := s.store.List(
+		ctx,
+		limit,
+		offset,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("list deployments: %w", err)
+		return nil, fmt.Errorf(
+			"list deployments: %w",
+			err,
+		)
 	}
 
 	return deployments, nil
@@ -116,7 +154,10 @@ func (s *DeploymentService) Update(
 
 	deployment, err := s.store.GetByID(ctx, id)
 	if err != nil {
-		return model.Deployment{}, fmt.Errorf("get deployment for update: %w", err)
+		return model.Deployment{}, fmt.Errorf(
+			"get deployment for update: %w",
+			err,
+		)
 	}
 
 	if input.Environment != nil {
@@ -140,7 +181,9 @@ func (s *DeploymentService) Update(
 			return model.Deployment{}, ErrInvalidGitCommitSHA
 		}
 
-		deployment.GitCommitSHA = strings.TrimSpace(*input.GitCommitSHA)
+		deployment.GitCommitSHA = strings.TrimSpace(
+			*input.GitCommitSHA,
+		)
 	}
 
 	if input.Namespace != nil {
@@ -148,7 +191,9 @@ func (s *DeploymentService) Update(
 			return model.Deployment{}, ErrInvalidNamespace
 		}
 
-		deployment.Namespace = strings.TrimSpace(*input.Namespace)
+		deployment.Namespace = strings.TrimSpace(
+			*input.Namespace,
+		)
 	}
 
 	if input.Status != nil {
@@ -156,13 +201,37 @@ func (s *DeploymentService) Update(
 			return model.Deployment{}, ErrInvalidDeploymentStatus
 		}
 
-		deployment.Status = *input.Status
+		currentStatus := workflow.Status(
+			deployment.Status,
+		)
+
+		requestedStatus := workflow.Status(
+			*input.Status,
+		)
+
+		if currentStatus != requestedStatus {
+			if err := workflow.ValidateTransition(
+				currentStatus,
+				requestedStatus,
+			); err != nil {
+				return model.Deployment{}, fmt.Errorf(
+					"%w: %v",
+					ErrInvalidDeploymentTransition,
+					err,
+				)
+			}
+
+			deployment.Status = *input.Status
+		}
 	}
 
 	deployment.UpdatedAt = time.Now().UTC()
 
 	if err := s.store.Update(ctx, deployment); err != nil {
-		return model.Deployment{}, fmt.Errorf("update deployment: %w", err)
+		return model.Deployment{}, fmt.Errorf(
+			"update deployment: %w",
+			err,
+		)
 	}
 
 	return deployment, nil
@@ -177,7 +246,10 @@ func (s *DeploymentService) Delete(
 	}
 
 	if err := s.store.Delete(ctx, id); err != nil {
-		return fmt.Errorf("delete deployment: %w", err)
+		return fmt.Errorf(
+			"delete deployment: %w",
+			err,
+		)
 	}
 
 	return nil
