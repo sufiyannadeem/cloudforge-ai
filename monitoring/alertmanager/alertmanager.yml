@@ -14,10 +14,14 @@ route:
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-  receiver: email-notifications
+  receiver: email-and-aiops
 
 receivers:
-  - name: email-notifications
+  - name: email-and-aiops
     email_configs:
       - to: "sufiyanmohammed098@gmail.com"
+        send_resolved: true
+
+    webhook_configs:
+      - url: "http://aiops-service:8090/api/v1/alerts"
         send_resolved: true

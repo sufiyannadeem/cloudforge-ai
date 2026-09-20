@@ -160,6 +160,27 @@ services:
     
     depends_on:
       - prometheus
+
+  aiops-service:
+    build:
+      context: ./services/aiops-service
+    container_name: cloudforge-aiops-service
+    ports:
+      - "8090:8090"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres_data:
   prometheus_data:
