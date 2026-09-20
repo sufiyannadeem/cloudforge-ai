@@ -148,3 +148,17 @@ groups:
           summary: "Deployment P95 duration is high"
           description: "The P95 deployment execution duration has exceeded five seconds for five minutes."
           runbook: "Inspect executor latency and worker behavior."
+      - alert: CloudForgeSLOAvailabilityBelowTarget
+        expr: |
+          (
+            1 - avg_over_time(up{job="deployment-service"}[30m])
+          ) / 0.001 > 1
+        for: 5m
+        labels:
+          service: deployment-service
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Deployment service SLO availability is below target"
+          description: "The deployment-service availability error budget burn rate is above 1x for five minutes."
+          runbook: "Check Prometheus availability, deployment-service health, and recent outages."
