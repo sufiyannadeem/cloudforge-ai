@@ -165,9 +165,14 @@ services:
     build:
       context: ./services/aiops-service
     container_name: cloudforge-aiops-service
+    environment:
+      DATABASE_URL: postgresql://cloudforge:cloudforge_password@postgres:5432/cloudforge
     ports:
       - "8090:8090"
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [

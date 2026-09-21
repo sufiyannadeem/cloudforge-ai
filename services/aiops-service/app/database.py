@@ -1,0 +1,78 @@
+import os
+from contextlib import contextmanager
+from typing import Iterator
+
+import psycopg
+from psycopg import Connection
+from psycopg.rows import dict_row
+
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://cloudforge:cloudforge_password@localhost:5432/cloudforge",
+)
+
+
+@contextmanager
+def get_connection() -> Iterator[Connection]:
+    connection = psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+    )
+
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def initialize_database() -> None:
+    with get_connection() as connection:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aiops_incidents (
+                id VARCHAR(64) PRIMARY KEY,
+                fingerprint VARCHAR(64) NOT NULL UNIQUE,
+                alert_name VARCHAR(255) NOT NULL,
+                service VARCHAR(255) NOT NULL,
+                severity VARCHAR(32) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                summary TEXT NOT NULL,
+                probable_cause TEXT NOT NULL,
+                recommended_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+                labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+                annotations JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                alert_count INTEGER NOT NULL DEFAULT 1,
+                raw_alerts JSONB NOT NULL DEFAULT '[]'::jsonb
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aiops_incidents_status
+            ON aiops_incidents (status)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aiops_incidents_service
+            ON aiops_incidents (service)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aiops_incidents_updated_at
+            ON aiops_incidents (updated_at DESC)
+            """
+        )
+
+        print("AI-Ops database initialized successfully.")

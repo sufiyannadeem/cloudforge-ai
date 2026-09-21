@@ -1,6 +1,9 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 
 from .analyzer import analyze_alert
+from .database import initialize_database
 from .models import (
     AlertmanagerWebhook,
     Incident,
@@ -9,10 +12,20 @@ from .models import (
 from .store import incident_store
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_database()
+    yield
+
+
 app = FastAPI(
     title="CloudForge AI AIOps Service",
-    version="0.1.0",
-    description="Alert ingestion and rule-based incident analysis service.",
+    version="0.2.0",
+    description=(
+        "Alert ingestion, incident analysis, "
+        "and persistent incident storage."
+    ),
+    lifespan=lifespan,
 )
 
 
@@ -33,7 +46,9 @@ def ready() -> dict[str, str]:
 
 
 @app.post("/api/v1/alerts", response_model=list[Incident])
-def receive_alerts(payload: AlertmanagerWebhook) -> list[Incident]:
+def receive_alerts(
+    payload: AlertmanagerWebhook,
+) -> list[Incident]:
     incidents: list[Incident] = []
 
     for alert in payload.alerts:
