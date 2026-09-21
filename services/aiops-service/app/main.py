@@ -8,6 +8,7 @@ from .models import (
     AlertmanagerWebhook,
     Incident,
     IncidentListResponse,
+    IncidentStatsResponse,
 )
 from .store import incident_store
 
@@ -154,6 +155,15 @@ def get_incident_timeline(incident_id: str) -> dict:
         "events": events,
     }
 
+
+@app.get(
+    "/api/v1/incidents/stats",
+    response_model=IncidentStatsResponse,
+)
+def get_incident_statistics() -> IncidentStatsResponse:
+    statistics = incident_store.get_statistics()
+
+    return IncidentStatsResponse(**statistics)
 
 @app.get(
     "/api/v1/incidents/{incident_id}",

@@ -289,6 +289,74 @@ class IncidentStore:
 
             return incidents, total
 
+    def get_statistics(self) -> dict[str, Any]:
+        with get_connection() as connection:
+            summary = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_incidents,
+                    COUNT(*) FILTER (
+                        WHERE status = 'open'
+                    ) AS open_incidents,
+                    COUNT(*) FILTER (
+                        WHERE status = 'resolved'
+                    ) AS resolved_incidents,
+                    COALESCE(SUM(alert_count), 0) AS total_alerts,
+                    COALESCE(AVG(alert_count), 0) AS average_alerts_per_incident
+                FROM aiops_incidents
+                """
+            ).fetchone()
+
+            priority_rows = connection.execute(
+                """
+                SELECT priority, COUNT(*) AS count
+                FROM aiops_incidents
+                GROUP BY priority
+                ORDER BY priority
+                """
+            ).fetchall()
+
+            impact_rows = connection.execute(
+                """
+                SELECT impact, COUNT(*) AS count
+                FROM aiops_incidents
+                GROUP BY impact
+                ORDER BY impact
+                """
+            ).fetchall()
+
+            service_rows = connection.execute(
+                """
+                SELECT service, COUNT(*) AS count
+                FROM aiops_incidents
+                GROUP BY service
+                ORDER BY count DESC, service
+                """
+            ).fetchall()
+
+            return {
+                "total_incidents": summary["total_incidents"],
+                "open_incidents": summary["open_incidents"],
+                "resolved_incidents": summary["resolved_incidents"],
+                "total_alerts": summary["total_alerts"],
+                "average_alerts_per_incident": round(
+                    float(summary["average_alerts_per_incident"]),
+                    2,
+                ),
+                "incidents_by_priority": {
+                    row["priority"]: row["count"]
+                    for row in priority_rows
+                },
+                "incidents_by_impact": {
+                    row["impact"]: row["count"]
+                    for row in impact_rows
+                },
+                "incidents_by_service": {
+                    row["service"]: row["count"]
+                    for row in service_rows
+                },
+            }
+
     def get(
         self,
         incident_id: str,

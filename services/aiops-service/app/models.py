@@ -84,3 +84,19 @@ class IncidentListResponse(BaseModel):
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+class IncidentPriorityStats(BaseModel):
+    P1: int = 0
+    P2: int = 0
+    P3: int = 0
+    P4: int = 0
+
+
+class IncidentStatsResponse(BaseModel):
+    total_incidents: int
+    open_incidents: int
+    resolved_incidents: int
+    total_alerts: int
+    average_alerts_per_incident: float
+    incidents_by_priority: dict[str, int]
+    incidents_by_impact: dict[str, int]
+    incidents_by_service: dict[str, int]
