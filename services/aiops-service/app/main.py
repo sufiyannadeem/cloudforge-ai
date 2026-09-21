@@ -32,6 +32,9 @@ app = FastAPI(
 class AcknowledgeIncidentRequest(BaseModel):
     acknowledged_by: str
 
+class AssignIncidentRequest(BaseModel):
+    assigned_to: str
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -204,6 +207,35 @@ def acknowledge_incident(
 )
 def get_incident(incident_id: str) -> Incident:
     incident = incident_store.get(incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    return incident
+
+@app.patch(
+    "/api/v1/incidents/{incident_id}/assign",
+    response_model=Incident,
+)
+def assign_incident(
+    incident_id: str,
+    payload: AssignIncidentRequest,
+) -> Incident:
+    assigned_to = payload.assigned_to.strip()
+
+    if not assigned_to:
+        raise HTTPException(
+            status_code=400,
+            detail="assigned_to cannot be empty.",
+        )
+
+    incident = incident_store.assign(
+        incident_id=incident_id,
+        assigned_to=assigned_to,
+    )
 
     if incident is None:
         raise HTTPException(

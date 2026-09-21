@@ -110,6 +110,20 @@ def initialize_database() -> None:
         connection.execute(
             """
             ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS assigned_to VARCHAR(255)
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
             ADD COLUMN IF NOT EXISTS root_cause_hints JSONB
             NOT NULL DEFAULT '[]'::jsonb
             """

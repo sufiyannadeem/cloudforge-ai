@@ -418,6 +418,44 @@ class IncidentStore:
 
             return self._row_to_incident(row)
 
+    def assign(
+        self,
+        incident_id: str,
+        assigned_to: str,
+    ) -> Incident | None:
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_incidents
+                SET
+                    assigned_to = %s,
+                    assigned_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (assigned_to, incident_id),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._insert_event(
+                connection=connection,
+                incident_id=incident_id,
+                event_type="assigned",
+                message=(
+                    f"Incident assigned to {assigned_to}."
+                ),
+                status=row["status"],
+                metadata={
+                    "assigned_to": assigned_to,
+                },
+                created_at=row["updated_at"],
+            )
+
+            return self._row_to_incident(row)
+
     def list_events(
         self,
         incident_id: str,
@@ -537,6 +575,8 @@ class IncidentStore:
             updated_at=row["updated_at"],
             acknowledged_at=row.get("acknowledged_at"),
             acknowledged_by=row.get("acknowledged_by"),
+            assigned_to=row.get("assigned_to"),
+            assigned_at=row.get("assigned_at"),
             alert_count=row["alert_count"],
             raw_alerts=row["raw_alerts"] or [],
         )
