@@ -116,7 +116,8 @@ class IncidentStore:
             updated = connection.execute(
                 """
                 UPDATE aiops_incidents
-                SET severity = %s,
+                SET
+                    severity = %s,
                     status = %s,
                     impact = %s,
                     confidence = %s,
@@ -302,7 +303,10 @@ class IncidentStore:
                         WHERE status = 'resolved'
                     ) AS resolved_incidents,
                     COALESCE(SUM(alert_count), 0) AS total_alerts,
-                    COALESCE(AVG(alert_count), 0) AS average_alerts_per_incident
+                    COALESCE(
+                        AVG(alert_count),
+                        0
+                    ) AS average_alerts_per_incident
                 FROM aiops_incidents
                 """
             ).fetchone()
@@ -373,6 +377,44 @@ class IncidentStore:
 
             if row is None:
                 return None
+
+            return self._row_to_incident(row)
+
+    def acknowledge(
+        self,
+        incident_id: str,
+        acknowledged_by: str,
+    ) -> Incident | None:
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_incidents
+                SET
+                    acknowledged_at = NOW(),
+                    acknowledged_by = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (acknowledged_by, incident_id),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._insert_event(
+                connection=connection,
+                incident_id=incident_id,
+                event_type="acknowledged",
+                message=(
+                    f"Incident acknowledged by {acknowledged_by}."
+                ),
+                status=row["status"],
+                metadata={
+                    "acknowledged_by": acknowledged_by,
+                },
+                created_at=row["updated_at"],
+            )
 
             return self._row_to_incident(row)
 
@@ -493,6 +535,8 @@ class IncidentStore:
             annotations=row["annotations"] or {},
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            acknowledged_at=row.get("acknowledged_at"),
+            acknowledged_by=row.get("acknowledged_by"),
             alert_count=row["alert_count"],
             raw_alerts=row["raw_alerts"] or [],
         )

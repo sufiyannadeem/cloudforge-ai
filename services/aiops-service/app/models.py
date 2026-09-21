@@ -69,6 +69,8 @@ class Incident(BaseModel):
     annotations: dict[str, str]
     created_at: datetime
     updated_at: datetime
+    acknowledged_at: datetime | None = None
+    acknowledged_by: str | None = None
     alert_count: int = 1
     raw_alerts: list[dict[str, Any]] = Field(default_factory=list)
 

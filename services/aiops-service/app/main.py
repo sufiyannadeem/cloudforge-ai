@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 
 from .analyzer import analyze_alert
@@ -28,6 +28,9 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+class AcknowledgeIncidentRequest(BaseModel):
+    acknowledged_by: str
 
 
 @app.get("/health")
@@ -164,6 +167,36 @@ def get_incident_statistics() -> IncidentStatsResponse:
     statistics = incident_store.get_statistics()
 
     return IncidentStatsResponse(**statistics)
+
+@app.patch(
+    "/api/v1/incidents/{incident_id}/acknowledge",
+    response_model=Incident,
+)
+def acknowledge_incident(
+    incident_id: str,
+    payload: AcknowledgeIncidentRequest,
+) -> Incident:
+    acknowledged_by = payload.acknowledged_by.strip()
+
+    if not acknowledged_by:
+        raise HTTPException(
+            status_code=400,
+            detail="acknowledged_by cannot be empty.",
+        )
+
+    incident = incident_store.acknowledge(
+        incident_id=incident_id,
+        acknowledged_by=acknowledged_by,
+    )
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    return incident
+
 
 @app.get(
     "/api/v1/incidents/{incident_id}",
