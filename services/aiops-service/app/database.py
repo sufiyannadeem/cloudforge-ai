@@ -120,7 +120,25 @@ def initialize_database() -> None:
             ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ
             """
         )
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ
+            """
+        )
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS resolved_by VARCHAR(255)
+            """
+        )
 
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS resolution_notes TEXT
+            """
+        )
         connection.execute(
             """
             ALTER TABLE aiops_incidents

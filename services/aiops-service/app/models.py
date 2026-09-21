@@ -73,6 +73,9 @@ class Incident(BaseModel):
     acknowledged_by: str | None = None
     assigned_to: str | None = None
     assigned_at: datetime | None = None
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
+    resolution_notes: str | None = None
     alert_count: int = 1
     raw_alerts: list[dict[str, Any]] = Field(default_factory=list)
 

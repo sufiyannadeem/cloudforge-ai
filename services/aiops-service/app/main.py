@@ -35,6 +35,10 @@ class AcknowledgeIncidentRequest(BaseModel):
 class AssignIncidentRequest(BaseModel):
     assigned_to: str
 
+class ResolveIncidentRequest(BaseModel):
+    resolved_by: str
+    resolution_notes: str
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -210,6 +214,42 @@ def acknowledge_incident(
 
     return incident
 
+@app.patch(
+    "/api/v1/incidents/{incident_id}/resolve",
+    response_model=Incident,
+)
+def resolve_incident(
+    incident_id: str,
+    request: ResolveIncidentRequest,
+) -> Incident:
+    resolved_by = request.resolved_by.strip()
+    resolution_notes = request.resolution_notes.strip()
+
+    if not resolved_by:
+        raise HTTPException(
+            status_code=422,
+            detail="resolved_by cannot be empty.",
+        )
+
+    if not resolution_notes:
+        raise HTTPException(
+            status_code=422,
+            detail="resolution_notes cannot be empty.",
+        )
+
+    incident = incident_store.resolve(
+        incident_id=incident_id,
+        resolved_by=resolved_by,
+        resolution_notes=resolution_notes,
+    )
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found.",
+        )
+
+    return incident
 
 @app.get(
     "/api/v1/incidents/{incident_id}",

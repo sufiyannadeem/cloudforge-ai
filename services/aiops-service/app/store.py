@@ -131,7 +131,19 @@ class IncidentStore:
                     annotations = %s,
                     updated_at = %s,
                     alert_count = %s,
-                    raw_alerts = %s
+                    raw_alerts = %s,
+                    resolved_at = CASE
+                        WHEN %s = 'open' THEN NULL
+                        ELSE resolved_at
+                    END,
+                    resolved_by = CASE
+                        WHEN %s = 'open' THEN NULL
+                        ELSE resolved_by
+                    END,
+                    resolution_notes = CASE
+                        WHEN %s = 'open' THEN NULL
+                        ELSE resolution_notes
+                    END
                 WHERE fingerprint = %s
                 RETURNING *
                 """,
@@ -151,6 +163,9 @@ class IncidentStore:
                     incident.updated_at,
                     updated_alert_count,
                     Jsonb(combined_raw_alerts),
+                    incident.status.value,
+                    incident.status.value,
+                    incident.status.value,
                     incident.fingerprint,
                 ),
             ).fetchone()
@@ -427,6 +442,70 @@ class IncidentStore:
             )
 
             return self._row_to_incident(row)
+    def resolve(
+        self,
+        incident_id: str,
+        resolved_by: str,
+        resolution_notes: str,
+    ) -> Incident | None:
+        with get_connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT *
+                FROM aiops_incidents
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if existing is None:
+                return None
+
+            # Prevent duplicate resolution events.
+            if existing["status"] == "resolved":
+                return self._row_to_incident(existing)
+
+            row = connection.execute(
+                """
+                UPDATE aiops_incidents
+                SET
+                    status = 'resolved',
+                    resolved_at = NOW(),
+                    resolved_by = %s,
+                    resolution_notes = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    resolved_by,
+                    resolution_notes,
+                    incident_id,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._insert_event(
+                connection=connection,
+                incident_id=incident_id,
+                event_type="manually_resolved",
+                message=(
+                    f"Incident manually resolved by "
+                    f"{resolved_by}."
+                ),
+                status=row["status"],
+                metadata={
+                    "resolved_by": resolved_by,
+                    "resolution_notes": resolution_notes,
+                },
+                created_at=row["updated_at"],
+            )
+
+            return self._row_to_incident(row)
+
 
     def assign(
         self,
@@ -696,6 +775,9 @@ class IncidentStore:
             acknowledged_by=row.get("acknowledged_by"),
             assigned_to=row.get("assigned_to"),
             assigned_at=row.get("assigned_at"),
+            resolved_at=row.get("resolved_at"),
+            resolved_by=row.get("resolved_by"),
+            resolution_notes=row.get("resolution_notes"),
             alert_count=row["alert_count"],
             raw_alerts=row["raw_alerts"] or [],
         )
