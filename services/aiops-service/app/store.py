@@ -434,6 +434,35 @@ class IncidentStore:
         assigned_to: str,
     ) -> Incident | None:
         with get_connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT assigned_to
+                FROM aiops_incidents
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if existing is None:
+                return None
+
+            previous_assignee = existing["assigned_to"]
+
+            # Prevent duplicate assignment events when the assignee
+            # has not changed.
+            if previous_assignee == assigned_to:
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM aiops_incidents
+                    WHERE id = %s
+                    """,
+                    (incident_id,),
+                ).fetchone()
+
+                return self._row_to_incident(row)
+
             row = connection.execute(
                 """
                 UPDATE aiops_incidents
@@ -450,21 +479,101 @@ class IncidentStore:
             if row is None:
                 return None
 
+            if previous_assignee:
+                message = (
+                    f"Incident reassigned from "
+                    f"{previous_assignee} to {assigned_to}."
+                )
+                event_type = "reassigned"
+            else:
+                message = (
+                    f"Incident assigned to {assigned_to}."
+                )
+                event_type = "assigned"
+
             self._insert_event(
                 connection=connection,
                 incident_id=incident_id,
-                event_type="assigned",
-                message=(
-                    f"Incident assigned to {assigned_to}."
-                ),
+                event_type=event_type,
+                message=message,
                 status=row["status"],
                 metadata={
+                    "previous_assignee": previous_assignee,
                     "assigned_to": assigned_to,
                 },
                 created_at=row["updated_at"],
             )
 
             return self._row_to_incident(row)
+
+    def unassign(
+        self,
+        incident_id: str,
+    ) -> Incident | None:
+        with get_connection() as connection:
+            existing = connection.execute(
+                """
+                SELECT assigned_to
+                FROM aiops_incidents
+                WHERE id = %s
+                FOR UPDATE
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if existing is None:
+                return None
+
+            previous_assignee = existing["assigned_to"]
+
+
+            if previous_assignee is None:
+                row = connection.execute(
+                    """
+                    SELECT *
+                    FROM aiops_incidents
+                    WHERE id = %s
+                    """,
+                    (incident_id,),
+                ).fetchone()
+
+                return self._row_to_incident(row)
+
+            row = connection.execute(
+                """
+                UPDATE aiops_incidents
+                SET
+                    assigned_to = NULL,
+                    assigned_at = NULL,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._insert_event(
+                connection=connection,
+                incident_id=incident_id,
+                event_type="unassigned",
+                message=(
+                    f"Incident unassigned from "
+                    f"{previous_assignee}."
+                ),
+                status=row["status"],
+                metadata={
+                    "previous_assignee": previous_assignee,
+                },
+                created_at=row["updated_at"],
+            )
+
+            return self._row_to_incident(row)
+
+
+
 
     def list_events(
         self,

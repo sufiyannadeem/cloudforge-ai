@@ -254,3 +254,22 @@ def assign_incident(
         )
 
     return incident
+
+@app.delete(
+    "/api/v1/incidents/{incident_id}/assign",
+    response_model=Incident,
+)
+def unassign_incident(
+    incident_id: str,
+) -> Incident:
+    incident = incident_store.unassign(
+        incident_id=incident_id,
+    )
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    return incident
