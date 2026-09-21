@@ -197,20 +197,97 @@ class IncidentStore:
 
             return self._row_to_incident(updated)
 
-    def list_all(self) -> list[Incident]:
+    def list_all(
+        self,
+        status: str | None = None,
+        priority: str | None = None,
+        impact: str | None = None,
+        service: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "updated_at",
+        sort_order: str = "desc",
+    ) -> tuple[list[Incident], int]:
+        filters: list[str] = []
+        parameters: list[Any] = []
+
+        if status is not None:
+            filters.append("status = %s")
+            parameters.append(status)
+
+        if priority is not None:
+            filters.append("priority = %s")
+            parameters.append(priority)
+
+        if impact is not None:
+            filters.append("impact = %s")
+            parameters.append(impact)
+
+        if service is not None:
+            filters.append("service = %s")
+            parameters.append(service)
+
+        where_clause = ""
+
+        if filters:
+            where_clause = "WHERE " + " AND ".join(filters)
+
+        allowed_sort_columns = {
+            "updated_at": "updated_at",
+            "created_at": "created_at",
+            "priority": """
+                CASE priority
+                    WHEN 'P1' THEN 1
+                    WHEN 'P2' THEN 2
+                    WHEN 'P3' THEN 3
+                    WHEN 'P4' THEN 4
+                    ELSE 5
+                END
+            """,
+            "alert_count": "alert_count",
+        }
+
+        if sort_by not in allowed_sort_columns:
+            raise ValueError("Invalid sort_by value.")
+
+        if sort_order not in {"asc", "desc"}:
+            raise ValueError("Invalid sort_order value.")
+
+        sort_expression = allowed_sort_columns[sort_by]
+        order_direction = sort_order.upper()
+
+        offset = (page - 1) * page_size
+
         with get_connection() as connection:
+            total_row = connection.execute(
+                f"""
+                SELECT COUNT(*) AS total
+                FROM aiops_incidents
+                {where_clause}
+                """,
+                tuple(parameters),
+            ).fetchone()
+
+            total = int(total_row["total"])
+
             rows = connection.execute(
-                """
+                f"""
                 SELECT *
                 FROM aiops_incidents
-                ORDER BY updated_at DESC
-                """
+                {where_clause}
+                ORDER BY {sort_expression} {order_direction},
+                         updated_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(parameters + [page_size, offset]),
             ).fetchall()
 
-            return [
+            incidents = [
                 self._row_to_incident(row)
                 for row in rows
             ]
+
+            return incidents, total
 
     def get(
         self,

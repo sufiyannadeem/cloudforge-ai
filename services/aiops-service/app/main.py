@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from .analyzer import analyze_alert
 from .database import initialize_database
@@ -63,11 +63,75 @@ def receive_alerts(
     "/api/v1/incidents",
     response_model=IncidentListResponse,
 )
-def list_incidents() -> IncidentListResponse:
-    incidents = incident_store.list_all()
+def list_incidents(
+    status: str | None = Query(
+        default=None,
+        description="Filter by incident status.",
+    ),
+    priority: str | None = Query(
+        default=None,
+        description="Filter by priority: P1, P2, P3, or P4.",
+    ),
+    impact: str | None = Query(
+        default=None,
+        description="Filter by impact.",
+    ),
+    service: str | None = Query(
+        default=None,
+        description="Filter by service name.",
+    ),
+    page: int = Query(
+        default=1,
+        ge=1,
+        description="Page number.",
+    ),
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Number of incidents per page.",
+    ),
+    sort_by: str = Query(
+        default="updated_at",
+        description=(
+            "Sort field: updated_at, created_at, "
+            "priority, or alert_count."
+        ),
+    ),
+    sort_order: str = Query(
+        default="desc",
+        description="Sort direction: asc or desc.",
+    ),
+) -> IncidentListResponse:
+    try:
+        incidents, total = incident_store.list_all(
+            status=status,
+            priority=priority,
+            impact=impact,
+            service=service,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    total_pages = (
+        (total + page_size - 1) // page_size
+        if total > 0
+        else 0
+    )
 
     return IncidentListResponse(
         count=len(incidents),
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
         incidents=incidents,
     )
 

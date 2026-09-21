@@ -75,6 +75,10 @@ class Incident(BaseModel):
 
 class IncidentListResponse(BaseModel):
     count: int
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
     incidents: list[Incident]
 
 
