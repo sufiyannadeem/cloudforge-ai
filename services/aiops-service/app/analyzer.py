@@ -1,3 +1,4 @@
+
 import hashlib
 
 from .models import (
@@ -11,7 +12,7 @@ from .models import (
 )
 
 
-ANALYSIS_VERSION = "1.1"
+ANALYSIS_VERSION = "1.2"
 
 
 def calculate_fingerprint(alert: AlertPayload) -> str:
@@ -97,6 +98,110 @@ def determine_confidence(
     return AnalysisConfidence.LOW
 
 
+def determine_priority(
+    alert: AlertPayload,
+) -> str:
+    """
+    Assign an operational priority based on alert type
+    and severity.
+
+    P1: Critical service outage
+    P2: Significant reliability or performance degradation
+    P3: Warning-level issue
+    P4: Informational or unknown issue
+    """
+
+    alert_name = alert.labels.get(
+        "alertname",
+        "UnknownAlert",
+    )
+
+    severity = determine_severity(alert)
+
+    if alert_name == "DeploymentServiceDown":
+        return "P1"
+
+    if alert_name in {
+        "DeploymentServiceHighErrorRate",
+        "DeploymentServiceHighP95Latency",
+    }:
+        return "P2"
+
+    if severity == IncidentSeverity.CRITICAL:
+        return "P2"
+
+    if severity == IncidentSeverity.WARNING:
+        return "P3"
+
+    return "P4"
+
+
+def determine_root_cause_hints(
+    alert: AlertPayload,
+) -> list[str]:
+    """
+    Generate structured investigation hints.
+
+    These are hypotheses for investigation, not confirmed
+    root-cause findings.
+    """
+
+    alert_name = alert.labels.get(
+        "alertname",
+        "UnknownAlert",
+    )
+
+    if alert_name == "DeploymentServiceDown":
+        return [
+            "Deployment-service container may have stopped.",
+            "Application process may have crashed.",
+            "Health endpoint may be failing.",
+            "Database connectivity may be unavailable.",
+            "Prometheus may be unable to reach the service.",
+            "Container or host resource exhaustion may be present.",
+        ]
+
+    if alert_name == "DeploymentServiceHighErrorRate":
+        return [
+            "Application may be returning HTTP 5xx responses.",
+            "Database queries or connections may be failing.",
+            "Recent application changes may have introduced errors.",
+            "Downstream service dependencies may be unavailable.",
+            "Invalid or unexpected request payloads may be triggering failures.",
+        ]
+
+    if alert_name == "DeploymentServiceHighP95Latency":
+        return [
+            "Database queries may be slow.",
+            "Application may be experiencing CPU pressure.",
+            "Application may be experiencing memory pressure.",
+            "Long-running deployment operations may be blocking requests.",
+            "Downstream dependencies may be responding slowly.",
+        ]
+
+    severity = determine_severity(alert)
+
+    if severity == IncidentSeverity.CRITICAL:
+        return [
+            "Critical alert requires immediate investigation.",
+            "Inspect service logs and related metrics.",
+            "Check recent infrastructure or application changes.",
+        ]
+
+    if severity == IncidentSeverity.WARNING:
+        return [
+            "Review the alert labels and annotations.",
+            "Inspect related Prometheus metrics.",
+            "Check recent configuration changes.",
+        ]
+
+    return [
+        "No specialized root-cause rule exists.",
+        "Inspect alert labels and annotations.",
+        "Review related service logs and metrics.",
+    ]
+
+
 def analyze_alert(alert: AlertPayload) -> Incident:
     alert_name = alert.labels.get(
         "alertname",
@@ -113,6 +218,8 @@ def analyze_alert(alert: AlertPayload) -> Incident:
     severity = determine_severity(alert)
     impact = determine_impact(alert)
     confidence = determine_confidence(alert)
+    priority = determine_priority(alert)
+    root_cause_hints = determine_root_cause_hints(alert)
 
     if alert_status == "resolved":
         incident_status = IncidentStatus.RESOLVED
@@ -174,8 +281,9 @@ def analyze_alert(alert: AlertPayload) -> Incident:
 
     summary = (
         f"{alert_name} detected for {service} "
-        f"with {severity.value} severity and "
-        f"{impact.value} impact."
+        f"with {severity.value} severity, "
+        f"{impact.value} impact, and "
+        f"{priority} priority."
     )
 
     timestamp = utc_now()
@@ -190,8 +298,10 @@ def analyze_alert(alert: AlertPayload) -> Incident:
         impact=impact,
         confidence=confidence,
         analysis_version=ANALYSIS_VERSION,
+        priority=priority,
         summary=summary,
         probable_cause=probable_cause,
+        root_cause_hints=root_cause_hints,
         recommended_actions=recommended_actions,
         labels=alert.labels,
         annotations=alert.annotations,

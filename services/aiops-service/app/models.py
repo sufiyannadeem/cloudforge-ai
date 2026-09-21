@@ -50,7 +50,6 @@ class AlertmanagerWebhook(BaseModel):
     version: str | None = None
     groupKey: str | None = None
 
-
 class Incident(BaseModel):
     id: str
     fingerprint: str
@@ -61,8 +60,10 @@ class Incident(BaseModel):
     impact: IncidentImpact = IncidentImpact.UNKNOWN
     confidence: AnalysisConfidence = AnalysisConfidence.LOW
     analysis_version: str = "1.0"
+    priority: str = "P4"
     summary: str
     probable_cause: str
+    root_cause_hints: list[str] = Field(default_factory=list)
     recommended_actions: list[str]
     labels: dict[str, str]
     annotations: dict[str, str]

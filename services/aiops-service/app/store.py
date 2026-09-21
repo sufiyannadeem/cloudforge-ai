@@ -1,3 +1,4 @@
+
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -41,8 +42,10 @@ class IncidentStore:
                         impact,
                         confidence,
                         analysis_version,
+                        priority,
                         summary,
                         probable_cause,
+                        root_cause_hints,
                         recommended_actions,
                         labels,
                         annotations,
@@ -52,8 +55,8 @@ class IncidentStore:
                         raw_alerts
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -66,8 +69,10 @@ class IncidentStore:
                         incident.impact.value,
                         incident.confidence.value,
                         incident.analysis_version,
+                        incident.priority,
                         incident.summary,
                         incident.probable_cause,
+                        Jsonb(incident.root_cause_hints),
                         Jsonb(incident.recommended_actions),
                         Jsonb(incident.labels),
                         Jsonb(incident.annotations),
@@ -90,6 +95,8 @@ class IncidentStore:
                         "severity": incident.severity.value,
                         "impact": incident.impact.value,
                         "confidence": incident.confidence.value,
+                        "priority": incident.priority,
+                        "root_cause_hints": incident.root_cause_hints,
                     },
                     created_at=incident.created_at,
                 )
@@ -114,8 +121,10 @@ class IncidentStore:
                     impact = %s,
                     confidence = %s,
                     analysis_version = %s,
+                    priority = %s,
                     summary = %s,
                     probable_cause = %s,
+                    root_cause_hints = %s,
                     recommended_actions = %s,
                     labels = %s,
                     annotations = %s,
@@ -131,8 +140,10 @@ class IncidentStore:
                     incident.impact.value,
                     incident.confidence.value,
                     incident.analysis_version,
+                    incident.priority,
                     incident.summary,
                     incident.probable_cause,
+                    Jsonb(incident.root_cause_hints),
                     Jsonb(incident.recommended_actions),
                     Jsonb(incident.labels),
                     Jsonb(incident.annotations),
@@ -176,6 +187,8 @@ class IncidentStore:
                     "severity": incident.severity.value,
                     "impact": incident.impact.value,
                     "confidence": incident.confidence.value,
+                    "priority": incident.priority,
+                    "root_cause_hints": incident.root_cause_hints,
                     "previous_status": previous_status,
                     "alert_count": updated_alert_count,
                 },
@@ -319,8 +332,15 @@ class IncidentStore:
                 "analysis_version",
                 "1.0",
             ),
+            priority=row.get(
+                "priority",
+                "P4",
+            ),
             summary=row["summary"],
             probable_cause=row["probable_cause"],
+            root_cause_hints=(
+                row.get("root_cause_hints") or []
+            ),
             recommended_actions=(
                 row["recommended_actions"] or []
             ),

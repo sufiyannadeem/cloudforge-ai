@@ -44,8 +44,11 @@ def initialize_database() -> None:
                 impact VARCHAR(32) NOT NULL DEFAULT 'unknown',
                 confidence VARCHAR(32) NOT NULL DEFAULT 'low',
                 analysis_version VARCHAR(32) NOT NULL DEFAULT '1.0',
+                priority VARCHAR(8) NOT NULL DEFAULT 'P4',
                 summary TEXT NOT NULL,
                 probable_cause TEXT NOT NULL,
+                root_cause_hints JSONB NOT NULL
+                    DEFAULT '[]'::jsonb,
                 recommended_actions JSONB NOT NULL
                     DEFAULT '[]'::jsonb,
                 labels JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -84,6 +87,22 @@ def initialize_database() -> None:
 
         connection.execute(
             """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS priority VARCHAR(8)
+            NOT NULL DEFAULT 'P4'
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS root_cause_hints JSONB
+            NOT NULL DEFAULT '[]'::jsonb
+            """
+        )
+
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_aiops_incidents_status
             ON aiops_incidents (status)
             """
@@ -110,6 +129,12 @@ def initialize_database() -> None:
             """
         )
 
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aiops_incidents_priority
+            ON aiops_incidents (priority)
+            """
+        )
 
         connection.execute(
             """
