@@ -87,6 +87,14 @@ def list_incidents(
         default=None,
         description="Filter by service name.",
     ),
+    severity: str | None = Query(
+        default=None,
+        description="Filter by severity: info, warning, or critical.",
+    ),
+    assigned_to: str | None = Query(
+        default=None,
+        description="Filter by assigned engineer.",
+    ),
     page: int = Query(
         default=1,
         ge=1,
@@ -116,6 +124,8 @@ def list_incidents(
             priority=priority,
             impact=impact,
             service=service,
+            severity=severity,
+            assigned_to=assigned_to,
             page=page,
             page_size=page_size,
             sort_by=sort_by,

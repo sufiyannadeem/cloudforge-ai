@@ -204,6 +204,8 @@ class IncidentStore:
         priority: str | None = None,
         impact: str | None = None,
         service: str | None = None,
+        severity: str | None = None,
+        assigned_to: str | None = None,
         page: int = 1,
         page_size: int = 20,
         sort_by: str = "updated_at",
@@ -227,6 +229,14 @@ class IncidentStore:
         if service is not None:
             filters.append("service = %s")
             parameters.append(service)
+
+        if severity is not None:
+            filters.append("severity = %s")
+            parameters.append(severity)
+
+        if assigned_to is not None:
+            filters.append("assigned_to = %s")
+            parameters.append(assigned_to)
 
         where_clause = ""
 
