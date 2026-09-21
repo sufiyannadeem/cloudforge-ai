@@ -41,9 +41,13 @@ def initialize_database() -> None:
                 service VARCHAR(255) NOT NULL,
                 severity VARCHAR(32) NOT NULL,
                 status VARCHAR(32) NOT NULL,
+                impact VARCHAR(32) NOT NULL DEFAULT 'unknown',
+                confidence VARCHAR(32) NOT NULL DEFAULT 'low',
+                analysis_version VARCHAR(32) NOT NULL DEFAULT '1.0',
                 summary TEXT NOT NULL,
                 probable_cause TEXT NOT NULL,
-                recommended_actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+                recommended_actions JSONB NOT NULL
+                    DEFAULT '[]'::jsonb,
                 labels JSONB NOT NULL DEFAULT '{}'::jsonb,
                 annotations JSONB NOT NULL DEFAULT '{}'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL,
@@ -51,6 +55,30 @@ def initialize_database() -> None:
                 alert_count INTEGER NOT NULL DEFAULT 1,
                 raw_alerts JSONB NOT NULL DEFAULT '[]'::jsonb
             )
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS impact VARCHAR(32)
+            NOT NULL DEFAULT 'unknown'
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS confidence VARCHAR(32)
+            NOT NULL DEFAULT 'low'
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS analysis_version VARCHAR(32)
+            NOT NULL DEFAULT '1.0'
             """
         )
 
@@ -72,6 +100,46 @@ def initialize_database() -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_aiops_incidents_updated_at
             ON aiops_incidents (updated_at DESC)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_aiops_incidents_impact
+            ON aiops_incidents (impact)
+            """
+        )
+
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aiops_incident_events (
+                id BIGSERIAL PRIMARY KEY,
+                incident_id VARCHAR(64) NOT NULL
+                    REFERENCES aiops_incidents(id)
+                    ON DELETE CASCADE,
+                event_type VARCHAR(64) NOT NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(32),
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_incident_events_incident_id
+            ON aiops_incident_events (incident_id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_incident_events_created_at
+            ON aiops_incident_events (created_at DESC)
             """
         )
 

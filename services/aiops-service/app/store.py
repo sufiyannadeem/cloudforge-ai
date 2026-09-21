@@ -4,14 +4,19 @@ from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .models import (
+    AnalysisConfidence,
     Incident,
+    IncidentImpact,
     IncidentSeverity,
     IncidentStatus,
 )
 
 
 class IncidentStore:
-    def upsert(self, incident: Incident) -> Incident:
+    def upsert(
+        self,
+        incident: Incident,
+    ) -> Incident:
         with get_connection() as connection:
             existing = connection.execute(
                 """
@@ -32,6 +37,9 @@ class IncidentStore:
                         service,
                         severity,
                         status,
+                        impact,
+                        confidence,
+                        analysis_version,
                         summary,
                         probable_cause,
                         recommended_actions,
@@ -43,8 +51,8 @@ class IncidentStore:
                         raw_alerts
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     """,
                     (
@@ -54,6 +62,9 @@ class IncidentStore:
                         incident.service,
                         incident.severity.value,
                         incident.status.value,
+                        incident.impact.value,
+                        incident.confidence.value,
+                        incident.analysis_version,
                         incident.summary,
                         incident.probable_cause,
                         Jsonb(incident.recommended_actions),
@@ -68,9 +79,17 @@ class IncidentStore:
 
                 return incident
 
-            updated_alert_count = existing["alert_count"] + 1
-            existing_raw_alerts = existing["raw_alerts"] or []
-            incoming_raw_alerts = incident.raw_alerts or []
+            updated_alert_count = (
+                existing["alert_count"] + 1
+            )
+
+            existing_raw_alerts = (
+                existing["raw_alerts"] or []
+            )
+
+            incoming_raw_alerts = (
+                incident.raw_alerts or []
+            )
 
             combined_raw_alerts = (
                 existing_raw_alerts + incoming_raw_alerts
@@ -79,9 +98,11 @@ class IncidentStore:
             updated = connection.execute(
                 """
                 UPDATE aiops_incidents
-                SET
-                    severity = %s,
+                SET severity = %s,
                     status = %s,
+                    impact = %s,
+                    confidence = %s,
+                    analysis_version = %s,
                     summary = %s,
                     probable_cause = %s,
                     recommended_actions = %s,
@@ -96,6 +117,9 @@ class IncidentStore:
                 (
                     incident.severity.value,
                     incident.status.value,
+                    incident.impact.value,
+                    incident.confidence.value,
+                    incident.analysis_version,
                     incident.summary,
                     incident.probable_cause,
                     Jsonb(incident.recommended_actions),
@@ -130,7 +154,10 @@ class IncidentStore:
                 for row in rows
             ]
 
-    def get(self, incident_id: str) -> Incident | None:
+    def get(
+        self,
+        incident_id: str,
+    ) -> Incident | None:
         with get_connection() as connection:
             row = connection.execute(
                 """
@@ -149,23 +176,39 @@ class IncidentStore:
     def clear(self) -> None:
         with get_connection() as connection:
             connection.execute(
-                """
-                TRUNCATE TABLE aiops_incidents
-                """
+                "TRUNCATE TABLE aiops_incidents"
             )
 
     @staticmethod
-    def _row_to_incident(row: dict[str, Any]) -> Incident:
+    def _row_to_incident(
+        row: dict[str, Any],
+    ) -> Incident:
         return Incident(
             id=row["id"],
             fingerprint=row["fingerprint"],
             alert_name=row["alert_name"],
             service=row["service"],
-            severity=IncidentSeverity(row["severity"]),
-            status=IncidentStatus(row["status"]),
+            severity=IncidentSeverity(
+                row["severity"]
+            ),
+            status=IncidentStatus(
+                row["status"]
+            ),
+            impact=IncidentImpact(
+                row.get("impact", "unknown")
+            ),
+            confidence=AnalysisConfidence(
+                row.get("confidence", "low")
+            ),
+            analysis_version=row.get(
+                "analysis_version",
+                "1.0",
+            ),
             summary=row["summary"],
             probable_cause=row["probable_cause"],
-            recommended_actions=row["recommended_actions"] or [],
+            recommended_actions=(
+                row["recommended_actions"] or []
+            ),
             labels=row["labels"] or {},
             annotations=row["annotations"] or {},
             created_at=row["created_at"],
