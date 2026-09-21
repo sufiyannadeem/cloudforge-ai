@@ -72,6 +72,25 @@ def list_incidents() -> IncidentListResponse:
     )
 
 
+@app.get("/api/v1/incidents/{incident_id}/timeline")
+def get_incident_timeline(incident_id: str) -> dict:
+    incident = incident_store.get(incident_id)
+
+    if incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found",
+        )
+
+    events = incident_store.list_events(incident_id)
+
+    return {
+        "incident_id": incident_id,
+        "count": len(events),
+        "events": events,
+    }
+
+
 @app.get(
     "/api/v1/incidents/{incident_id}",
     response_model=Incident,
