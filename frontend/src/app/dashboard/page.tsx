@@ -1,6 +1,9 @@
+
 import AppShell from "@/components/layout/AppShell";
 import MetricCard from "@/components/dashboard/MetricCard";
 import ServiceHealthGrid from "@/components/dashboard/ServiceHealthGrid";
+import OperationalInsights from "@/components/dashboard/OperationalInsights";
+import ActivityTimeline from "@/components/dashboard/ActivityTimeline";
 import { getDashboardData } from "@/lib/dashboard-api";
 import type { ServiceHealth } from "@/types/health";
 
@@ -51,10 +54,60 @@ const initialServices: ServiceHealth[] = [
   },
 ];
 
+function formatMetric(
+  value: number | null,
+  suffix = "",
+  decimals = 2,
+): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "N/A";
+  }
+
+  return `${value.toFixed(decimals)}${suffix}`;
+}
+
+function formatRequestRate(
+  value: number | null,
+): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "N/A";
+  }
+
+  return `${value.toFixed(3)}/s`;
+}
+
+function getAvailabilityDescription(
+  availability: number | null,
+): string {
+  if (availability === null) {
+    return "Prometheus availability metric unavailable";
+  }
+
+  return "Deployment Service availability";
+}
+
+function getErrorRateDescription(
+  errorRate: number | null,
+): string {
+  if (errorRate === null) {
+    return "Prometheus error-rate metric unavailable";
+  }
+
+  if (errorRate === 0) {
+    return "No 5xx errors in the selected window";
+  }
+
+  return "HTTP 5xx error rate over the last 5 minutes";
+}
+
 export default async function DashboardPage() {
   const dashboard = await getDashboardData();
 
-  const { metrics, errors } = dashboard;
+  const {
+    metrics,
+    observability,
+    errors,
+  } = dashboard;
 
   return (
     <AppShell>
@@ -134,71 +187,105 @@ export default async function DashboardPage() {
           />
         </section>
 
+        <section>
+          <div className="mb-4">
+            <p className="text-sm font-medium text-indigo-400">
+              Live telemetry
+            </p>
+
+            <h3 className="mt-1 text-xl font-semibold text-white">
+              Observability metrics
+            </h3>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              Live Prometheus measurements from the Deployment Service.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <MetricCard
+              label="Availability"
+              value={formatMetric(
+                observability.availability,
+                "%",
+              )}
+              description={getAvailabilityDescription(
+                observability.availability,
+              )}
+              icon="◉"
+              accent="emerald"
+            />
+
+            <MetricCard
+              label="Request Rate"
+              value={formatRequestRate(
+                observability.requestRate,
+              )}
+              description="Requests per second over the last 5 minutes"
+              icon="↗"
+              accent="indigo"
+            />
+
+            <MetricCard
+              label="Error Rate"
+              value={formatMetric(
+                observability.errorRate,
+                "%",
+              )}
+              description={getErrorRateDescription(
+                observability.errorRate,
+              )}
+              icon="⚠"
+              accent="rose"
+            />
+
+            <MetricCard
+              label="P95 Latency"
+              value={formatMetric(
+                observability.p95Latency,
+                " ms",
+              )}
+              description="95th percentile HTTP request latency"
+              icon="◷"
+              accent="amber"
+            />
+
+            <MetricCard
+              label="Deployments in Progress"
+              value={formatMetric(
+                observability.deploymentsInProgress,
+                "",
+                0,
+              )}
+              description="Currently active deployments"
+              icon="⇧"
+              accent="indigo"
+            />
+
+            <MetricCard
+              label="Requests in Flight"
+              value={formatMetric(
+                observability.requestsInFlight,
+                "",
+                0,
+              )}
+              description="Currently processing HTTP requests"
+              icon="⇄"
+              accent="emerald"
+            />
+          </div>
+        </section>
+
         <ServiceHealthGrid
           initialServices={initialServices}
         />
 
-        <section className="grid gap-6 xl:grid-cols-2">
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="text-lg font-semibold text-white">
-              Recent activity
-            </h3>
+        <OperationalInsights
+          observability={observability}
+          incidentCount={metrics.incidents}
+        />
 
-            <p className="mt-1 text-sm text-zinc-500">
-              Activity timeline integration will be added with the
-              incident and deployment pages.
-            </p>
-
-            <div className="mt-6 rounded-xl border border-dashed border-zinc-800 px-4 py-10 text-center">
-              <p className="text-sm text-zinc-500">
-                No activity loaded yet
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-            <h3 className="text-lg font-semibold text-white">
-              Reliability overview
-            </h3>
-
-            <p className="mt-1 text-sm text-zinc-500">
-              SLO and Prometheus metrics will be integrated in the
-              observability module.
-            </p>
-
-            <div className="mt-6 space-y-4">
-              <div className="flex items-center justify-between rounded-xl bg-zinc-900 px-4 py-3">
-                <span className="text-sm text-zinc-400">
-                  Availability
-                </span>
-
-                <span className="text-sm text-zinc-500">
-                  Not measured
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl bg-zinc-900 px-4 py-3">
-                <span className="text-sm text-zinc-400">
-                  Error budget
-                </span>
-
-                <span className="text-sm text-zinc-500">
-                  Not measured
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between rounded-xl bg-zinc-900 px-4 py-3">
-                <span className="text-sm text-zinc-400">
-                  Active alerts
-                </span>
-
-                <span className="text-sm text-zinc-500">
-                  Not measured
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
+        <ActivityTimeline limit={10} />
       </div>
     </AppShell>
   );
