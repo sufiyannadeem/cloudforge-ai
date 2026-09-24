@@ -40,4 +40,9 @@ export const navigationItems: NavigationItem[] = [
     href: "/incidents",
     icon: "⚡",
   },
+  {
+    label: "Anomaly Detection",
+    href: "/anomalies",
+    icon: "◌",
+  },
 ];

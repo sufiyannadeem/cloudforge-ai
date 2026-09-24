@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 from .analysis_routes import router as incident_intelligence_router
+from .anomaly_routes import router as anomaly_router
 from .slo_routes import router as slo_router
 
 from .analyzer import analyze_alert
@@ -36,6 +37,9 @@ app.include_router(
 )
 app.include_router(
     slo_router
+)
+app.include_router(
+    anomaly_router
 )
 
 class AcknowledgeIncidentRequest(BaseModel):

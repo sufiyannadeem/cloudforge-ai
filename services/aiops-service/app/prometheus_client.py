@@ -15,6 +15,12 @@ class PrometheusQueryResult:
     error: str | None = None
 
 
+@dataclass
+class PrometheusRangeResult:
+    value: list[dict[str, Any]]
+    error: str | None = None
+
+
 class PrometheusClient:
     """Small dependency-free Prometheus HTTP API client."""
 
@@ -110,6 +116,93 @@ class PrometheusClient:
             error=None,
         )
 
+    def query_range(
+        self,
+        expression: str,
+        start_timestamp: float,
+        end_timestamp: float,
+        step_seconds: int,
+    ) -> PrometheusRangeResult:
+        """
+        Execute a Prometheus range query.
+
+        Returns the complete matrix returned by Prometheus.
+        """
+
+        params = {
+            "query": expression,
+            "start": str(start_timestamp),
+            "end": str(end_timestamp),
+            "step": str(step_seconds),
+        }
+
+        url = (
+            f"{self.base_url}/api/v1/query_range?"
+            f"{urllib.parse.urlencode(params)}"
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.timeout_seconds,
+            ) as response:
+                payload = json.loads(
+                    response.read().decode("utf-8")
+                )
+
+        except urllib.error.HTTPError as exc:
+            return PrometheusRangeResult(
+                value=[],
+                error=f"Prometheus HTTP {exc.code}: {exc.reason}",
+            )
+
+        except urllib.error.URLError as exc:
+            return PrometheusRangeResult(
+                value=[],
+                error=f"Prometheus connection error: {exc.reason}",
+            )
+
+        except TimeoutError:
+            return PrometheusRangeResult(
+                value=[],
+                error="Prometheus range request timed out",
+            )
+
+        except Exception as exc:
+            return PrometheusRangeResult(
+                value=[],
+                error=f"Prometheus range query failed: {exc}",
+            )
+
+        if payload.get("status") != "success":
+            return PrometheusRangeResult(
+                value=[],
+                error=payload.get("error")
+                or "Prometheus returned a non-success response",
+            )
+
+        data = payload.get("data", {})
+        result = data.get("result", [])
+
+        if not isinstance(result, list):
+            return PrometheusRangeResult(
+                value=[],
+                error="Unexpected Prometheus range result format",
+            )
+
+        return PrometheusRangeResult(
+            value=result,
+            error=None,
+        )
+
     def scalar(
         self,
         expression: str,
@@ -117,14 +210,6 @@ class PrometheusClient:
         """
         Execute a PromQL query expected to return one scalar-like
         vector sample.
-
-        Returns:
-            {
-                "timestamp": float,
-                "value": float
-            }
-
-        Returns None when Prometheus has no matching series.
         """
 
         result = self.query(expression)
@@ -160,6 +245,7 @@ class PrometheusClient:
 
         Missing metrics are represented as None rather than zero.
         This distinction is important because:
+
             missing metric != measured zero
         """
 
@@ -210,7 +296,6 @@ class PrometheusClient:
                 f'cloudforge_deployments_total{{service="{service_label}",status="failed"}}'
                 ")"
             ),
-
 
             "deployment_total": (
                 "sum("
@@ -265,16 +350,72 @@ class PrometheusClient:
         }
 
     @staticmethod
-    def _escape_label(value: str) -> str:
+    def _extract_range_values(
+        result: list[dict[str, Any]],
+    ) -> list[tuple[float, float]]:
         """
-        Escape a string for safe use inside a PromQL label matcher.
+        Extract timestamp/value pairs from a Prometheus matrix.
+
+        Multiple returned series are flattened. The anomaly
+        expressions are expected to aggregate to a single series.
         """
 
+        values: list[tuple[float, float]] = []
+
+        for series in result:
+            matrix = series.get("values", [])
+
+            if not isinstance(matrix, list):
+                continue
+
+            for sample in matrix:
+                if not isinstance(sample, list) or len(sample) < 2:
+                    continue
+
+                try:
+                    timestamp = float(sample[0])
+                    value = float(sample[1])
+                except (TypeError, ValueError):
+                    continue
+
+                if value != value:
+                    continue
+
+                values.append((timestamp, value))
+
+        values.sort(key=lambda item: item[0])
+
+        return values
+
+    def range_values(
+        self,
+        expression: str,
+        start_timestamp: float,
+        end_timestamp: float,
+        step_seconds: int,
+    ) -> tuple[list[tuple[float, float]], str | None]:
+        """Execute a range query and return flattened samples."""
+
+        result = self.query_range(
+            expression=expression,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            step_seconds=step_seconds,
+        )
+
+        if result.error:
+            return [], result.error
+
+        return (
+            self._extract_range_values(result.value),
+            None,
+        )
+
+    @staticmethod
+    def _escape_label(value: str) -> str:
         return (
             value
             .replace("\\", "\\\\")
             .replace('"', '\\"')
             .replace("\n", "\\n")
         )
-
-prometheus_client = PrometheusClient()
