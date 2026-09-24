@@ -6,6 +6,7 @@ import Link from "next/link";
 
 import AppShell from "@/components/layout/AppShell";
 import OperatorBriefing from "@/components/incidents/OperatorBriefing";
+import IncidentTimeline from "@/components/incidents/IncidentTimeline";
 import {
   acknowledgeIncident,
   analyzeIncidentDeterministic,
@@ -1289,140 +1290,11 @@ export default function IncidentDetailsPage() {
         </Section>
 
         <Section title="Incident Timeline">
-          {timeline.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              No timeline events available.
-            </p>
-          ) : (
-            <div className="space-y-5">
-              {timeline.map((event) => (
-                <div
-                  key={event.id}
-                  className="relative border-l-2 border-gray-200 pl-5 dark:border-gray-700"
-                >
-                  <div className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-blue-600" />
-
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      {event.event_type}
-                    </span>
-
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatDate(
-                        event.created_at,
-                      )}
-                    </span>
-                  </div>
-
-                  <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    {event.message}
-                  </p>
-
-                  {event.status && (
-                    <span
-                      className={`mt-2 inline-block rounded-full px-2 py-1 text-xs ${badgeClass(
-                        event.status,
-                      )}`}
-                    >
-                      {event.status}
-                    </span>
-                  )}
-
-                  {event.event_type ===
-                    "ai_analysis" &&
-                    event.metadata && (
-                      <div className="mt-3 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                        <div className="flex flex-wrap gap-2">
-                          {typeof event
-                            .metadata
-                            .assessment ===
-                            "string" && (
-                            <span>
-                              Assessment:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .assessment
-                              }
-                            </span>
-                          )}
-
-                          {typeof event
-                            .metadata
-                            .confidence ===
-                            "string" && (
-                            <span>
-                              Confidence:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .confidence
-                              }
-                            </span>
-                          )}
-
-                          {typeof event
-                            .metadata
-                            .provider ===
-                            "string" && (
-                            <span>
-                              Provider:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .provider
-                              }
-                            </span>
-                          )}
-
-                          {typeof event
-                            .metadata
-                            .model ===
-                            "string" && (
-                            <span>
-                              Model:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .model
-                              }
-                            </span>
-                          )}
-
-                          {typeof event
-                            .metadata
-                            .evidence_fields ===
-                            "number" && (
-                            <span>
-                              Evidence Fields:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .evidence_fields
-                              }
-                            </span>
-                          )}
-
-                          {typeof event
-                            .metadata
-                            .correlation_count ===
-                            "number" && (
-                            <span>
-                              Deployment Correlations:{" "}
-                              {
-                                event
-                                  .metadata
-                                  .correlation_count
-                              }
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                </div>
-              ))}
-            </div>
-          )}
+          <IncidentTimeline
+            events={timeline}
+            formatDate={formatDate}
+            badgeClass={badgeClass}
+          />
         </Section>
 
         <div>
