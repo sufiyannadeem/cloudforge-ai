@@ -140,7 +140,7 @@ export default function IncidentsPage() {
       setError(null);
 
       const result = await getIncidents();
-      setIncidents(result);
+      setIncidents(result.incidents);
     } catch (requestError) {
       const message =
         requestError instanceof Error

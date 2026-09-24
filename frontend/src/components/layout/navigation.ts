@@ -26,6 +26,11 @@ export const navigationItems: NavigationItem[] = [
     icon: "⇧",
   },
   {
+    label: "Observability",
+    href: "/observability",
+    icon: "◉",
+  },
+  {
     label: "AI-Ops Incidents",
     href: "/incidents",
     icon: "⚡",

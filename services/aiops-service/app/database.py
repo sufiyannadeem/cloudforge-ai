@@ -149,6 +149,14 @@ def initialize_database() -> None:
 
         connection.execute(
             """
+            ALTER TABLE aiops_incidents
+            ADD COLUMN IF NOT EXISTS ai_analysis JSONB
+            NOT NULL DEFAULT '{}'::jsonb
+            """
+        )
+
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_aiops_incidents_status
             ON aiops_incidents (status)
             """

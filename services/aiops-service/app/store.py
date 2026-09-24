@@ -1,10 +1,10 @@
-
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
 from .database import get_connection
 from .models import (
+    AIAnalysis,
     AnalysisConfidence,
     Incident,
     IncidentImpact,
@@ -52,11 +52,15 @@ class IncidentStore:
                         created_at,
                         updated_at,
                         alert_count,
-                        raw_alerts
+                        raw_alerts,
+                        ai_analysis
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s
                     )
                     """,
                     (
@@ -80,6 +84,11 @@ class IncidentStore:
                         incident.updated_at,
                         incident.alert_count,
                         Jsonb(incident.raw_alerts),
+                        Jsonb(
+                            incident.ai_analysis.model_dump(mode="json")
+                        )
+                        if incident.ai_analysis
+                        else {},
                     ),
                 )
 
@@ -212,6 +221,115 @@ class IncidentStore:
             )
 
             return self._row_to_incident(updated)
+
+    def get_by_id(
+        self,
+        incident_id: str,
+    ) -> Incident | None:
+        """
+        Return a single incident by its database ID.
+
+        This method is used by the incident analysis pipeline to load
+        the complete incident context before collecting operational
+        evidence and generating analysis.
+        """
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM aiops_incidents
+                WHERE id = %s
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            return self._row_to_incident(row)
+
+    def save_ai_analysis(
+        self,
+        incident_id: str,
+        analysis: AIAnalysis,
+    ) -> Incident | None:
+        """
+        Persist AI analysis independently from normal incident upserts.
+
+        This prevents a subsequent Alertmanager event from accidentally
+        replacing an existing AI analysis with an empty JSON object.
+        """
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_incidents
+                SET
+                    ai_analysis = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING *
+                """,
+                (
+                    Jsonb(analysis.model_dump(mode="json")),
+                    incident_id,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._insert_event(
+                connection=connection,
+                incident_id=incident_id,
+                event_type="ai_analysis",
+                message="AI incident analysis generated.",
+                status=row["status"],
+                metadata={
+                    "ai_status": analysis.status,
+                    "provider": analysis.provider,
+                    "model": analysis.model,
+                    "confidence": (
+                        analysis.confidence.value
+                        if analysis.confidence
+                        else None
+                    ),
+                    "assessment": analysis.assessment,
+                    "evidence_fields": list(
+                        analysis.evidence.keys()
+                    ),
+                    "error": analysis.error,
+                },
+                created_at=row["updated_at"],
+            )
+
+            return self._row_to_incident(row)
+
+    def get_ai_analysis(
+        self,
+        incident_id: str,
+    ) -> AIAnalysis | None:
+        """
+        Return the persisted AI analysis for an incident.
+        """
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT ai_analysis
+                FROM aiops_incidents
+                WHERE id = %s
+                """,
+                (incident_id,),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            data = row["ai_analysis"] or {}
+
+            if not data:
+                return None
+
+            return self._parse_ai_analysis(data)
 
     def list_all(
         self,
@@ -442,6 +560,7 @@ class IncidentStore:
             )
 
             return self._row_to_incident(row)
+
     def resolve(
         self,
         incident_id: str,
@@ -505,7 +624,6 @@ class IncidentStore:
             )
 
             return self._row_to_incident(row)
-
 
     def assign(
         self,
@@ -605,7 +723,6 @@ class IncidentStore:
 
             previous_assignee = existing["assigned_to"]
 
-
             if previous_assignee is None:
                 row = connection.execute(
                     """
@@ -650,9 +767,6 @@ class IncidentStore:
             )
 
             return self._row_to_incident(row)
-
-
-
 
     def list_events(
         self,
@@ -731,9 +845,53 @@ class IncidentStore:
         )
 
     @staticmethod
+    def _parse_ai_analysis(
+        data: dict[str, Any],
+    ) -> AIAnalysis:
+        """
+        Reconstruct persisted AIAnalysis from the JSONB representation.
+
+        This parser must stay in sync with the AIAnalysis model because
+        analysis results are persisted as JSONB and loaded back into the
+        Incident response model.
+        """
+        confidence = data.get("confidence")
+
+        if confidence is not None:
+            try:
+                confidence = AnalysisConfidence(confidence)
+            except ValueError:
+                confidence = None
+
+        return AIAnalysis(
+            status=data.get("status", "disabled"),
+            provider=data.get("provider", "disabled"),
+            model=data.get("model"),
+            summary=data.get("summary"),
+            probable_cause=data.get("probable_cause"),
+            root_cause_hints=data.get("root_cause_hints") or [],
+            recommended_actions=data.get("recommended_actions") or [],
+            confidence=confidence,
+
+            # Evidence-aware analysis fields.
+            assessment=data.get("assessment"),
+            evidence=data.get("evidence") or {},
+            evidence_findings=data.get("evidence_findings") or [],
+            deployment_correlations=(
+                data.get("deployment_correlations") or []
+            ),
+
+            generated_at=data.get("generated_at"),
+            error=data.get("error"),
+        )
+
+    @classmethod
     def _row_to_incident(
+        cls,
         row: dict[str, Any],
     ) -> Incident:
+        ai_analysis_data = row.get("ai_analysis") or {}
+
         return Incident(
             id=row["id"],
             fingerprint=row["fingerprint"],
@@ -780,6 +938,11 @@ class IncidentStore:
             resolution_notes=row.get("resolution_notes"),
             alert_count=row["alert_count"],
             raw_alerts=row["raw_alerts"] or [],
+            ai_analysis=(
+                cls._parse_ai_analysis(ai_analysis_data)
+                if ai_analysis_data
+                else None
+            ),
         )
 
 

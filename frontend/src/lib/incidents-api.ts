@@ -1,70 +1,148 @@
-import {
+
+import type {
   Incident,
   IncidentListResponse,
   IncidentStats,
   IncidentTimelineEvent,
-  IncidentTimelineResponse,
+  AIAnalysis,
 } from "@/types/incidents";
 
-const INCIDENTS_BASE = "/api/proxy/aiops/api/v1/incidents";
+const REQUEST_TIMEOUT_MS = 10_000;
 
-async function request<T>(
+async function requestJson<T>(
   url: string,
-  options?: RequestInit,
+  options: RequestInit = {},
 ): Promise<T> {
   const response = await fetch(url, {
     ...options,
-    cache: "no-store",
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/json",
-      ...(options?.headers ?? {}),
+      ...(options.headers ?? {}),
     },
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(
-      message || `Request failed with status ${response.status}`,
-    );
+    let message = `Request failed with status ${response.status}`;
+
+    try {
+      const body = (await response.json()) as {
+        detail?: string;
+      };
+
+      if (body.detail) {
+        message = body.detail;
+      }
+    } catch {
+      // Keep the generic HTTP error.
+    }
+
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;
 }
 
-export async function getIncidents(): Promise<Incident[]> {
-  const result = await request<IncidentListResponse>(
-    `${INCIDENTS_BASE}?limit=100&offset=0`,
-  );
+const incidentsBaseUrl =
+  "/api/proxy/aiops/api/v1/incidents";
 
-  return result.incidents ?? [];
+export async function getIncidents(
+  params: Record<string, string | number | undefined> = {},
+): Promise<IncidentListResponse> {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      searchParams.set(key, String(value));
+    }
+  }
+
+  const query = searchParams.toString();
+
+  return requestJson<IncidentListResponse>(
+    `${incidentsBaseUrl}${query ? `?${query}` : ""}`,
+  );
 }
 
 export async function getIncident(
   incidentId: string,
 ): Promise<Incident> {
-  return request<Incident>(`${INCIDENTS_BASE}/${incidentId}`);
+  return requestJson<Incident>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}`,
+  );
 }
 
 export async function getIncidentTimeline(
   incidentId: string,
 ): Promise<IncidentTimelineEvent[]> {
-  const result = await request<IncidentTimelineResponse>(
-    `${INCIDENTS_BASE}/${incidentId}/timeline`,
-  );
+  const response =
+    await requestJson<{
+      incident_id: string;
+      count: number;
+      events: IncidentTimelineEvent[];
+    }>(
+      `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/timeline`,
+    );
 
-  return result.events ?? result.items ?? result.data ?? [];
+  return response.events;
+}
+
+export async function getIncidentAIAnalysis(
+  incidentId: string,
+): Promise<AIAnalysis | null> {
+  const response =
+    await requestJson<{
+      incident_id: string;
+      ai_analysis: AIAnalysis | null;
+    }>(
+      `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/ai-analysis`,
+    );
+
+  return response.ai_analysis;
+}
+
+export async function analyzeIncident(
+  incidentId: string,
+): Promise<{
+  incident: Incident;
+  ai_analysis: AIAnalysis | null;
+}> {
+  return requestJson(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/analyze`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function analyzeIncidentDeterministic(
+  incidentId: string,
+): Promise<{
+  incident: Incident;
+  ai_analysis: AIAnalysis | null;
+}> {
+  return requestJson(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/analyze/deterministic`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function getIncidentStats(): Promise<IncidentStats> {
-  return request<IncidentStats>(`${INCIDENTS_BASE}/stats`);
+  return requestJson<IncidentStats>(
+    `${incidentsBaseUrl}/stats`,
+  );
 }
 
 export async function acknowledgeIncident(
   incidentId: string,
   acknowledgedBy: string,
 ): Promise<Incident> {
-  return request<Incident>(
-    `${INCIDENTS_BASE}/${incidentId}/acknowledge`,
+  return requestJson<Incident>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/acknowledge`,
     {
       method: "PATCH",
       body: JSON.stringify({
@@ -78,8 +156,8 @@ export async function assignIncident(
   incidentId: string,
   assignedTo: string,
 ): Promise<Incident> {
-  return request<Incident>(
-    `${INCIDENTS_BASE}/${incidentId}/assign`,
+  return requestJson<Incident>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/assign`,
     {
       method: "PATCH",
       body: JSON.stringify({
@@ -92,8 +170,8 @@ export async function assignIncident(
 export async function unassignIncident(
   incidentId: string,
 ): Promise<Incident> {
-  return request<Incident>(
-    `${INCIDENTS_BASE}/${incidentId}/unassign`,
+  return requestJson<Incident>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/assign`,
     {
       method: "DELETE",
     },
@@ -102,15 +180,15 @@ export async function unassignIncident(
 
 export async function resolveIncident(
   incidentId: string,
-  resolutionNotes?: string,
+  resolutionNotes: string,
 ): Promise<Incident> {
-  return request<Incident>(
-    `${INCIDENTS_BASE}/${incidentId}/resolve`,
+  return requestJson<Incident>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/resolve`,
     {
       method: "PATCH",
       body: JSON.stringify({
         resolved_by: "nadeem",
-        resolution_notes: resolutionNotes ?? "",
+        resolution_notes: resolutionNotes,
       }),
     },
   );

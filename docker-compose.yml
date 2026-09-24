@@ -152,7 +152,7 @@ services:
       ALERTMANAGER_SMTP_USER: ${ALERTMANAGER_SMTP_USER}
       ALERTMANAGER_SMTP_PASSWORD: ${ALERTMANAGER_SMTP_PASSWORD}
     volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/alertmanager.generated.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
@@ -167,6 +167,15 @@ services:
     container_name: cloudforge-aiops-service
     environment:
       DATABASE_URL: postgresql://cloudforge:cloudforge_password@postgres:5432/cloudforge
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_TIMEOUT_SECONDS: "5"
+      DEPLOYMENT_SERVICE_URL: http://deployment-service:8082
+      DEPLOYMENT_SERVICE_TIMEOUT_SECONDS: "5"
+      AI_PROVIDER: mock
+      AI_MOCK_MODE: valid
+      AI_BASE_URL: ""
+      AI_MODEL: ""
+      AI_TIMEOUT_SECONDS: "20"
     ports:
       - "8090:8090"
     restart: unless-stopped

@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
+from .analysis_routes import router as incident_intelligence_router
 
 from .analyzer import analyze_alert
 from .database import initialize_database
@@ -27,6 +28,10 @@ app = FastAPI(
         "and persistent incident storage."
     ),
     lifespan=lifespan,
+)
+
+app.include_router(
+    incident_intelligence_router
 )
 
 class AcknowledgeIncidentRequest(BaseModel):

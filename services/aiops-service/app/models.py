@@ -50,6 +50,51 @@ class AlertmanagerWebhook(BaseModel):
     version: str | None = None
     groupKey: str | None = None
 
+class AIAnalysis(BaseModel):
+    """
+    Persisted structured incident intelligence.
+
+    The analysis contains both the conclusion and the operational
+    evidence used to reach that conclusion.
+    """
+
+    status: str = "disabled"
+    provider: str = "disabled"
+    model: str | None = None
+
+    summary: str | None = None
+    probable_cause: str | None = None
+
+    root_cause_hints: list[str] = Field(default_factory=list)
+    recommended_actions: list[str] = Field(default_factory=list)
+
+    confidence: AnalysisConfidence | None = None
+
+    assessment: str | None = None
+
+    evidence: dict[
+        str,
+        float | int | None,
+    ] = Field(
+        default_factory=dict
+    )
+
+    evidence_findings: list[str] = Field(
+        default_factory=list
+    )
+
+    deployment_correlations: list[
+        dict[str, object]
+    ] = Field(
+        default_factory=list
+    )
+
+    generated_at: datetime | None = None
+    error: str | None = None
+
+
+
+
 class Incident(BaseModel):
     id: str
     fingerprint: str
@@ -78,6 +123,7 @@ class Incident(BaseModel):
     resolution_notes: str | None = None
     alert_count: int = 1
     raw_alerts: list[dict[str, Any]] = Field(default_factory=list)
+    ai_analysis: AIAnalysis | None = None
 
 
 class IncidentListResponse(BaseModel):
