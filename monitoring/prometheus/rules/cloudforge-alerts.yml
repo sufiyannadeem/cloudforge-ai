@@ -162,3 +162,143 @@ groups:
           summary: "Deployment service SLO availability is below target"
           description: "The deployment-service availability error budget burn rate is above 1x for five minutes."
           runbook: "Check Prometheus availability, deployment-service health, and recent outages."
+
+
+  - name: cloudforge-slo-alerts
+    interval: 30s
+
+    rules:
+
+      # ------------------------------------------------------------
+      # Availability SLO
+      # Target: 99.9%
+      # Error budget: 0.1%
+      # ------------------------------------------------------------
+
+      - alert: CloudForgeAvailabilitySLOBreached
+        expr: |
+          avg_over_time(
+            up{job="deployment-service"}[7d]
+          ) < 0.999
+        for: 10m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: availability
+
+        annotations:
+          summary: "Deployment service availability SLO breached"
+          description: "7-day observed availability is below the 99.9% SLO target."
+          runbook: "Inspect deployment-service health, recent incidents, and Prometheus availability history."
+
+      # ------------------------------------------------------------
+      # Error budget burn rate
+      # 99.9% availability means 0.1% allowed bad time.
+      # ------------------------------------------------------------
+
+      - alert: CloudForgeAvailabilityErrorBudgetBurn
+        expr: |
+          (
+            1 - avg_over_time(
+              up{job="deployment-service"}[30m]
+            )
+          ) / 0.001 > 1
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: availability
+
+        annotations:
+          summary: "Availability error budget is burning"
+          description: "Short-window availability error budget burn rate is above 1x."
+          runbook: "Inspect active incidents, service health, and recent deployments."
+
+      # ------------------------------------------------------------
+      # Request success SLO
+      # Target: 99%
+      # ------------------------------------------------------------
+
+      - alert: CloudForgeRequestSuccessSLOBreached
+        expr: |
+          (
+            1 -
+            (
+              sum(
+                increase(
+                  http_requests_total{
+                    job="deployment-service",
+                    status=~"5.."
+                  }[7d]
+                )
+              )
+              /
+              clamp_min(
+                sum(
+                  increase(
+                    http_requests_total{
+                      job="deployment-service"
+                    }[7d]
+                  )
+                ),
+                1
+              )
+            )
+          ) < 0.99
+        for: 10m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: request-success
+
+        annotations:
+          summary: "Deployment service request success SLO breached"
+          description: "7-day HTTP request success is below the 99% target."
+          runbook: "Inspect HTTP 5xx errors, application logs, dependencies, and recent deployments."
+
+      # ------------------------------------------------------------
+      # P95 latency SLO
+      # 95% of requests should complete within 500ms.
+      # ------------------------------------------------------------
+
+      - alert: CloudForgeP95LatencySLOBreached
+        expr: |
+          (
+            sum(
+              increase(
+                http_request_duration_seconds_bucket{
+                  job="deployment-service",
+                  le="0.5"
+                }[7d]
+              )
+            )
+            /
+            clamp_min(
+              sum(
+                increase(
+                  http_request_duration_seconds_count{
+                    job="deployment-service"
+                  }[7d]
+                )
+              ),
+              1
+            )
+          ) < 0.95
+        for: 10m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: latency
+
+        annotations:
+          summary: "Deployment service latency SLO breached"
+          description: "Fewer than 95% of requests are completing within 500ms over the observation window."
+          runbook: "Inspect P95 latency, slow endpoints, database calls, and resource utilization."

@@ -169,6 +169,11 @@ services:
       DATABASE_URL: postgresql://cloudforge:cloudforge_password@postgres:5432/cloudforge
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_TIMEOUT_SECONDS: "5"
+      SLO_WINDOW: "7d"
+      SLO_AVAILABILITY_TARGET: "0.999"
+      SLO_ERROR_RATE_TARGET: "0.99"
+      SLO_LATENCY_TARGET: "0.95"
+      SLO_LATENCY_THRESHOLD_MS: "500"
       DEPLOYMENT_SERVICE_URL: http://deployment-service:8082
       DEPLOYMENT_SERVICE_TIMEOUT_SECONDS: "5"
       AI_PROVIDER: mock

@@ -31,6 +31,11 @@ export const navigationItems: NavigationItem[] = [
     icon: "◉",
   },
   {
+    label: "SLO & Error Budget",
+    href: "/slo",
+    icon: "◒",
+  },
+  {
     label: "AI-Ops Incidents",
     href: "/incidents",
     icon: "⚡",
