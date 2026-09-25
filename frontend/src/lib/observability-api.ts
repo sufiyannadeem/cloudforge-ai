@@ -4,7 +4,8 @@ import type {
 } from "@/types/observability";
 
 const PROMETHEUS_URL =
-  process.env.PROMETHEUS_URL ?? "http://localhost:9090";
+  process.env.PROMETHEUS_URL ??
+  "http://localhost:9090";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -34,133 +35,127 @@ function buildQueryURL(query: string): string {
   return url.toString();
 }
 
-async function requestPrometheus(
+async function queryPrometheus(
   query: string,
 ): Promise<PrometheusQueryResponse> {
-  const url = buildQueryURL(query);
+  const controller = new AbortController();
 
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-    cache: "no-store",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
 
-  if (!response.ok) {
-    const message = await response.text();
-
-    throw new Error(
-      message ||
-        `Prometheus request failed with status ${response.status}`,
+  try {
+    const response = await fetch(
+      buildQueryURL(query),
+      {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      },
     );
+
+    if (!response.ok) {
+      throw new Error(
+        `Prometheus query failed with ${response.status}`,
+      );
+    }
+
+    return (await response.json()) as PrometheusQueryResponse;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const result =
-    (await response.json()) as PrometheusQueryResponse;
-
-  if (result.status !== "success") {
-    throw new Error(
-      result.error ||
-        "Prometheus returned an unsuccessful response",
-    );
-  }
-
-  return result;
 }
 
-export async function queryPrometheus(
-  query: string,
-): Promise<PrometheusSample[]> {
-  const result = await requestPrometheus(query);
-
-  if (!result.data || !Array.isArray(result.data.result)) {
-    throw new Error(
-      "Prometheus response did not contain valid metric data",
-    );
-  }
-
-  return result.data.result;
-}
-
-function getNumericValue(
-  samples: PrometheusSample[],
+function firstValue(
+  response: PrometheusQueryResponse,
 ): number | null {
-  const value = samples[0]?.value[1];
+  const sample = response.data?.result?.[0];
+
+  if (!sample) {
+    return null;
+  }
+
+  const value = Array.isArray(sample.value)
+    ? sample.value[1]
+    : undefined;
 
   if (value === undefined) {
     return null;
   }
 
-  const numericValue = Number(value);
+  const parsed = Number(value);
 
-  return Number.isFinite(numericValue)
-    ? numericValue
-    : null;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-export async function getDeploymentProgress(): Promise<
-  number | null
-> {
-  const result = await queryPrometheus(
-    "cloudforge_deployments_in_progress",
-  );
+async function getMetric(
+  query: string,
+): Promise<number | null> {
+  try {
+    const response = await queryPrometheus(query);
 
-  return getNumericValue(result);
-}
-
-export async function getRequestsInFlight(): Promise<
-  number | null
-> {
-  const result = await queryPrometheus(
-    "http_requests_in_flight",
-  );
-
-  return getNumericValue(result);
+    return firstValue(response);
+  } catch {
+    return null;
+  }
 }
 
 export async function getServiceAvailability(): Promise<
   number | null
 > {
-  const result = await queryPrometheus(
-    'avg(up{job="deployment-service"}) * 100',
+  return getMetric(
+    'cloudforge:service_availability:percent{job="deployment-service"}',
   );
-
-  return getNumericValue(result);
 }
 
 export async function getRequestRate(): Promise<
   number | null
 > {
-  const result = await queryPrometheus(
-    'sum(rate(http_requests_total{job="deployment-service"}[5m]))',
+  return getMetric(
+    'cloudforge:http_request_rate:5m{job="deployment-service"}',
   );
-
-  return getNumericValue(result);
 }
 
 export async function getErrorRate(): Promise<
   number | null
 > {
-  const result = await queryPrometheus(
-    'sum(rate(http_requests_total{job="deployment-service",status=~"5.."}[5m])) / sum(rate(http_requests_total{job="deployment-service"}[5m])) * 100',
+  return getMetric(
+    'cloudforge:http_error_rate:percent:5m{job="deployment-service"}',
   );
-
-  // No 5xx samples means the current error rate is zero.
-  if (result.length === 0) {
-    return 0;
-  }
-
-  return getNumericValue(result);
 }
 
 export async function getP95Latency(): Promise<
   number | null
 > {
-  const result = await queryPrometheus(
-    'histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="deployment-service"}[5m]))) * 1000',
+  return getMetric(
+    'cloudforge:http_request_latency_p95_ms:5m{job="deployment-service"}',
   );
+}
 
-  return getNumericValue(result);
+export async function getDeploymentProgress(): Promise<
+  number | null
+> {
+  return getMetric(
+    "cloudforge:deployments_in_progress",
+  );
+}
+
+export async function getRequestsInFlight(): Promise<
+  number | null
+> {
+  return getMetric(
+    "cloudforge:http_requests_in_flight",
+  );
+}
+
+export async function getPrometheusSamples(
+  query: string,
+): Promise<PrometheusSample[]> {
+  try {
+    const response = await queryPrometheus(query);
+
+    return response.data?.result ?? [];
+  } catch {
+    return [];
+  }
 }

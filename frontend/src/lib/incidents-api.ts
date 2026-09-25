@@ -5,6 +5,9 @@ import type {
   IncidentStats,
   IncidentTimelineEvent,
   AIAnalysis,
+  RemediationProposal,
+  RemediationResponse,
+  RemediationAction,
 } from "@/types/incidents";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -189,6 +192,83 @@ export async function resolveIncident(
       body: JSON.stringify({
         resolved_by: "nadeem",
         resolution_notes: resolutionNotes,
+      }),
+    },
+  );
+}
+
+
+export async function getIncidentRemediation(
+  incidentId: string,
+): Promise<RemediationResponse> {
+  return requestJson<RemediationResponse>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation`,
+  );
+}
+
+export async function previewIncidentRemediation(
+  incidentId: string,
+  payload: {
+    action: RemediationAction;
+    target_deployment_id?: string;
+    reason?: string;
+    requested_by: string;
+  },
+): Promise<RemediationProposal> {
+  return requestJson<RemediationProposal>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/preview`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function approveIncidentRemediation(
+  incidentId: string,
+  proposalId: string,
+  approvedBy: string,
+): Promise<RemediationProposal> {
+  return requestJson<RemediationProposal>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        approved_by: approvedBy,
+      }),
+    },
+  );
+}
+
+export async function rejectIncidentRemediation(
+  incidentId: string,
+  proposalId: string,
+  rejectedBy: string,
+  reason: string,
+): Promise<RemediationProposal> {
+  return requestJson<RemediationProposal>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/reject`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        rejected_by: rejectedBy,
+        reason,
+      }),
+    },
+  );
+}
+
+export async function executeIncidentRemediation(
+  incidentId: string,
+  proposalId: string,
+  executedBy: string,
+): Promise<RemediationProposal> {
+  return requestJson<RemediationProposal>(
+    `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/execute`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        executed_by: executedBy,
       }),
     },
   );

@@ -13,7 +13,7 @@ from .remediation_service import RemediationService
 
 
 router = APIRouter(
-    prefix="/api/v1/aiops/incidents",
+    prefix="/api/v1/incidents",
     tags=["AI-Ops Remediation"],
 )
 

@@ -32,57 +32,57 @@ function formatDate(value: string | null | undefined): string {
 function getSeverityClass(severity: string): string {
   switch (severity.toLowerCase()) {
     case "critical":
-      return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
+      return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
 
     case "warning":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300";
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
     case "high":
-      return "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300";
+      return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
 
     case "medium":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+      return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
 
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
 function getPriorityClass(priority: string): string {
   switch (priority.toUpperCase()) {
     case "P1":
-      return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
+      return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
 
     case "P2":
-      return "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300";
+      return "bg-orange-500/10 text-orange-700 dark:text-orange-300";
 
     case "P3":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300";
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
     case "P4":
-      return "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300";
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
 function getStatusClass(status: string): string {
   switch (status.toLowerCase()) {
     case "resolved":
-      return "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300";
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 
     case "acknowledged":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+      return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
 
     case "assigned":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300";
+      return "bg-purple-500/10 text-purple-700 dark:text-purple-300";
 
     case "open":
-      return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
+      return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
 
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
@@ -96,16 +96,16 @@ function StatCard({
   description: string;
 }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-      <p className="text-sm font-medium text-gray-500 dark:text-gray-400">
+    <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
+      <p className="text-sm font-medium text-[var(--cf-text-muted)]">
         {label}
       </p>
 
-      <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+      <p className="mt-2 text-3xl font-bold text-[var(--cf-text)]">
         {value}
       </p>
 
-      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+      <p className="mt-1 text-xs text-[var(--cf-text-muted)]">
         {description}
       </p>
     </div>
@@ -260,10 +260,10 @@ export default function IncidentsPage() {
 
   return (
     <AppShell>
-      <main className="min-w-0 space-y-6 bg-[#09090b] p-4 text-gray-100 md:p-6">
+      <main className="min-w-0 space-y-6 bg-[var(--cf-background)] p-4 text-[var(--cf-text)] md:p-6">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
-            <p className="text-sm font-medium text-blue-600 dark:text-blue-400">
+            <p className="text-sm font-medium text-blue-600">
               AIOps / Incident Intelligence
             </p>
 
@@ -272,7 +272,7 @@ export default function IncidentsPage() {
               Incidents
             </h1>
 
-            <p className="mt-2 text-sm text-gray-400">
+            <p className="mt-2 text-sm text-[var(--cf-text-muted)]">
               Monitor, investigate, and track operational incidents.
             </p>
           </div>
@@ -283,7 +283,7 @@ export default function IncidentsPage() {
               void loadIncidents();
               void loadStats();
             }}
-            className="rounded-lg border border-gray-600 bg-gray-900 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"          >
+            className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] px-4 py-2 text-sm font-medium text-[var(--cf-text)] transition hover:bg-[var(--cf-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"          >
             Refresh
           </button>
         </div>
@@ -336,14 +336,14 @@ export default function IncidentsPage() {
           />
         </section>
 
-        <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
           <div className="mb-4 flex flex-col justify-between gap-3 md:flex-row md:items-center">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              <h2 className="text-lg font-semibold text-[var(--cf-text)]">
                 Incident Filters
               </h2>
 
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Narrow the incident list by operational attributes.
               </p>
             </div>
@@ -351,7 +351,7 @@ export default function IncidentsPage() {
             <button
               type="button"
               onClick={resetFilters}
-              className="text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+              className="text-sm font-medium text-blue-600 hover:text-blue-700"
             >
               Clear filters
             </button>
@@ -361,7 +361,7 @@ export default function IncidentsPage() {
             <div>
               <label
                 htmlFor="incident-search"
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Search
               </label>
@@ -374,14 +374,14 @@ export default function IncidentsPage() {
                   setSearchQuery(event.target.value)
                 }
                 placeholder="Search incidents..."
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:ring-blue-950"
+                className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
               />
             </div>
 
             <div>
               <label
                 htmlFor="status-filter"
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Status
               </label>
@@ -392,7 +392,7 @@ export default function IncidentsPage() {
                 onChange={(event) =>
                   setStatusFilter(event.target.value)
                 }
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)]"
               >
                 <option value="all">All statuses</option>
                 <option value="open">Open</option>
@@ -407,7 +407,7 @@ export default function IncidentsPage() {
             <div>
               <label
                 htmlFor="priority-filter"
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Priority
               </label>
@@ -418,7 +418,7 @@ export default function IncidentsPage() {
                 onChange={(event) =>
                   setPriorityFilter(event.target.value)
                 }
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)]"
               >
                 <option value="all">All priorities</option>
                 <option value="P1">P1</option>
@@ -431,7 +431,7 @@ export default function IncidentsPage() {
             <div>
               <label
                 htmlFor="severity-filter"
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Severity
               </label>
@@ -442,7 +442,7 @@ export default function IncidentsPage() {
                 onChange={(event) =>
                   setSeverityFilter(event.target.value)
                 }
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)]"
               >
                 <option value="all">All severities</option>
                 <option value="critical">Critical</option>
@@ -456,7 +456,7 @@ export default function IncidentsPage() {
             <div>
               <label
                 htmlFor="service-filter"
-                className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+                className="mb-1 block text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Service
               </label>
@@ -467,7 +467,7 @@ export default function IncidentsPage() {
                 onChange={(event) =>
                   setServiceFilter(event.target.value)
                 }
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)]"
               >
                 <option value="all">All services</option>
 
@@ -481,14 +481,14 @@ export default function IncidentsPage() {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
-          <div className="flex flex-col justify-between gap-2 border-b border-gray-200 p-5 md:flex-row md:items-center dark:border-gray-800">
+        <section className="overflow-hidden rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] shadow-sm">
+          <div className="flex flex-col justify-between gap-2 border-b border-[var(--cf-border)] p-5 md:flex-row md:items-center">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              <h2 className="text-lg font-semibold text-[var(--cf-text)]">
                 Incident List
               </h2>
 
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Showing {filteredIncidents.length} of{" "}
                 {incidents.length} incidents
               </p>
@@ -496,72 +496,72 @@ export default function IncidentsPage() {
           </div>
 
           {loading ? (
-            <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-8 text-center text-sm text-[var(--cf-text-muted)]">
               Loading incidents...
             </div>
           ) : filteredIncidents.length === 0 ? (
-            <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-8 text-center text-sm text-[var(--cf-text-muted)]">
               No incidents match the selected filters.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800">
-                <thead className="bg-gray-50 dark:bg-gray-950">
+              <table className="min-w-full divide-y divide-[var(--cf-border)]">
+                <thead className="bg-[var(--cf-surface-2)]">
                   <tr>
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Incident
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Service
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Severity
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Priority
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Status
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Alerts
                     </th>
 
-                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="whitespace-nowrap px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">
                       Updated
                     </th>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                <tbody className="divide-y divide-[var(--cf-border)]">
                   {filteredIncidents.map((incident) => (
                     <tr
                       key={incident.id}
-                      className="transition hover:bg-gray-50 dark:hover:bg-gray-950"
+                      className="transition hover:bg-[var(--cf-surface-2)]"
                     >
                       <td className="max-w-md px-5 py-4">
                         <Link
 			  href={`/incidents/${incident.id}`}
-  			  className="font-medium text-blue-600 transition hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                          className="font-medium text-blue-600 transition hover:text-blue-700 hover:underline"
 			 >
   			  {incident.alert_name}
 			 </Link>
 
-                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        <p className="mt-1 text-xs text-[var(--cf-text-muted)]">
                           {incident.id}
                         </p>
 
-                        <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+                        <p className="mt-2 text-sm text-[var(--cf-text-secondary)]">
                           {incident.summary}
                         </p>
                       </td>
 
-                      <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
+                      <td className="whitespace-nowrap px-5 py-4 text-sm text-[var(--cf-text-secondary)]">
                         {incident.service}
                       </td>
 
@@ -595,11 +595,11 @@ export default function IncidentsPage() {
                         </span>
                       </td>
 
-                      <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-700 dark:text-gray-300">
+                      <td className="whitespace-nowrap px-5 py-4 text-sm text-[var(--cf-text-secondary)]">
                         {incident.alert_count}
                       </td>
 
-                      <td className="whitespace-nowrap px-5 py-4 text-sm text-gray-500 dark:text-gray-400">
+                      <td className="whitespace-nowrap px-5 py-4 text-sm text-[var(--cf-text-muted)]">
                         {formatDate(incident.updated_at)}
                       </td>
                     </tr>

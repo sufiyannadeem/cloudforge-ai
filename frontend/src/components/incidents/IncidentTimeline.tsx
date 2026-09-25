@@ -42,7 +42,7 @@ function eventTone(eventType: string): string {
       return "bg-purple-600";
 
     case "unassigned":
-      return "bg-gray-500";
+      return "bg-slate-500";
 
     case "ai_analysis":
       return "bg-indigo-600";
@@ -51,33 +51,33 @@ function eventTone(eventType: string): string {
       return "bg-green-600";
 
     default:
-      return "bg-gray-500";
+      return "bg-slate-500";
   }
 }
 
 function eventBadgeClass(eventType: string): string {
   switch (eventType) {
     case "created":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300";
+      return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
 
     case "acknowledged":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300";
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
     case "assigned":
     case "reassigned":
-      return "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300";
+      return "bg-purple-500/10 text-purple-700 dark:text-purple-300";
 
     case "unassigned":
-      return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
 
     case "ai_analysis":
-      return "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300";
+      return "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
 
     case "resolved":
-      return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
@@ -122,7 +122,7 @@ function renderAssignmentMetadata(
   }
 
   return (
-    <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3 dark:border-purple-900/60 dark:bg-purple-950/20">
+    <div className="mt-3 rounded-lg border border-purple-500/20 bg-purple-500/5 p-3 border-purple-500/20 bg-purple-500/5">
       <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">
         Assignment Change
       </div>
@@ -130,11 +130,11 @@ function renderAssignmentMetadata(
       <div className="grid gap-2 text-sm sm:grid-cols-2">
         {previousAssignee && (
           <div>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-[var(--cf-text-muted)]">
               Previous assignee
             </span>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               {previousAssignee}
             </div>
           </div>
@@ -142,11 +142,11 @@ function renderAssignmentMetadata(
 
         {assignedTo && (
           <div>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-[var(--cf-text-muted)]">
               Assigned to
             </span>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               {assignedTo}
             </div>
           </div>
@@ -154,11 +154,11 @@ function renderAssignmentMetadata(
 
         {!assignedTo && previousAssignee && (
           <div>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-[var(--cf-text-muted)]">
               Current assignee
             </span>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               Unassigned
             </div>
           </div>
@@ -212,7 +212,7 @@ function renderAIAnalysisMetadata(
       : [];
 
   return (
-    <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 dark:border-indigo-900/60 dark:bg-indigo-950/20">
+    <div className="mt-3 rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-3 border-indigo-500/20 bg-indigo-500/5">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">
           AI Analysis Metadata
@@ -222,10 +222,10 @@ function renderAIAnalysisMetadata(
           <span
             className={`rounded-full px-2 py-1 text-xs font-medium ${
               aiStatus === "ai_generated"
-                ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                 : aiStatus === "fallback"
-                  ? "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
-                  : "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                  ? "bg-orange-500/10 text-orange-700 dark:text-orange-300"
+                  : "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]"
             }`}
           >
             {aiStatus}
@@ -236,11 +236,11 @@ function renderAIAnalysisMetadata(
       <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
         {provider && (
           <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
+            <div className="text-xs text-[var(--cf-text-muted)]">
               Provider
             </div>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               {provider}
             </div>
           </div>
@@ -248,11 +248,11 @@ function renderAIAnalysisMetadata(
 
         {model && (
           <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
+            <div className="text-xs text-[var(--cf-text-muted)]">
               Model
             </div>
 
-            <div className="break-all font-medium text-gray-900 dark:text-white">
+            <div className="break-all font-medium text-[var(--cf-text)]">
               {model}
             </div>
           </div>
@@ -260,11 +260,11 @@ function renderAIAnalysisMetadata(
 
         {assessment && (
           <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
+            <div className="text-xs text-[var(--cf-text-muted)]">
               Assessment
             </div>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               {assessment}
             </div>
           </div>
@@ -272,11 +272,11 @@ function renderAIAnalysisMetadata(
 
         {confidence && (
           <div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">
+            <div className="text-xs text-[var(--cf-text-muted)]">
               Confidence
             </div>
 
-            <div className="font-medium text-gray-900 dark:text-white">
+            <div className="font-medium text-[var(--cf-text)]">
               {confidence}
             </div>
           </div>
@@ -285,7 +285,7 @@ function renderAIAnalysisMetadata(
 
       {evidenceFields.length > 0 && (
         <div className="mt-3">
-          <div className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+          <div className="mb-2 text-xs text-[var(--cf-text-muted)]">
             Evidence fields
           </div>
 
@@ -293,7 +293,7 @@ function renderAIAnalysisMetadata(
             {evidenceFields.map((field) => (
               <span
                 key={field}
-                className="rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-sm dark:bg-gray-900 dark:text-gray-300"
+                className="rounded-md bg-[var(--cf-surface)] px-2 py-1 text-xs text-[var(--cf-text-secondary)] shadow-sm"
               >
                 {field}
               </span>
@@ -303,7 +303,7 @@ function renderAIAnalysisMetadata(
       )}
 
       {error && (
-        <div className="mt-3 rounded-md border border-orange-200 bg-orange-50 p-3 text-xs text-orange-800 dark:border-orange-900/60 dark:bg-orange-950/20 dark:text-orange-300">
+        <div className="mt-3 rounded-md border border-orange-500/20 bg-orange-500/5 p-3 text-xs text-orange-800 border-orange-500/20 bg-orange-500/5 dark:text-orange-300">
           <div className="font-semibold">
             AI analysis fallback
           </div>
@@ -342,8 +342,8 @@ function renderGenericMetadata(
   }
 
   return (
-    <details className="mt-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-800">
-      <summary className="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300">
+    <details className="mt-3 rounded-lg bg-[var(--cf-surface-2)] p-3">
+      <summary className="cursor-pointer text-xs font-semibold text-[var(--cf-text-secondary)]">
         Event metadata
       </summary>
 
@@ -353,11 +353,11 @@ function renderGenericMetadata(
             key={key}
             className="grid gap-1 text-xs sm:grid-cols-[180px_1fr]"
           >
-            <span className="font-medium text-gray-500 dark:text-gray-400">
+            <span className="font-medium text-[var(--cf-text-muted)]">
               {key}
             </span>
 
-            <span className="break-words text-gray-700 dark:text-gray-300">
+            <span className="break-words text-[var(--cf-text-secondary)]">
               {typeof value === "object"
                 ? JSON.stringify(value)
                 : String(value)}
@@ -400,7 +400,7 @@ export default function IncidentTimeline({
 }: IncidentTimelineProps) {
   if (events.length === 0) {
     return (
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-[var(--cf-text-muted)]">
         No timeline events available.
       </p>
     );
@@ -408,7 +408,7 @@ export default function IncidentTimeline({
 
   return (
     <div className="relative">
-      <div className="absolute bottom-0 left-[7px] top-0 w-px bg-gray-200 dark:bg-gray-700" />
+      <div className="absolute bottom-0 left-[7px] top-0 w-px bg-[var(--cf-border)]" />
 
       <div className="space-y-6">
         {events.map((event, index) => (
@@ -417,16 +417,16 @@ export default function IncidentTimeline({
             className="relative pl-8"
           >
             <div
-              className={`absolute left-0 top-1.5 h-4 w-4 rounded-full border-2 border-white shadow-sm dark:border-gray-900 ${eventTone(
+              className={`absolute left-0 top-1.5 h-4 w-4 rounded-full border-2 border-[var(--cf-surface)] ${eventTone(
                 event.event_type,
               )}`}
             />
 
-            <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-4 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium text-gray-400 dark:text-gray-500">
+                    <span className="text-xs font-medium text-[var(--cf-text-muted)]">
                       #{index + 1}
                     </span>
 
@@ -452,14 +452,14 @@ export default function IncidentTimeline({
                   </div>
                 </div>
 
-                <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                <span className="shrink-0 text-xs text-[var(--cf-text-muted)]">
                   {formatDate(
                     event.created_at,
                   )}
                 </span>
               </div>
 
-              <p className="mt-3 text-sm leading-6 text-gray-700 dark:text-gray-300">
+              <p className="mt-3 text-sm leading-6 text-[var(--cf-text-secondary)]">
                 {event.message}
               </p>
 
@@ -470,7 +470,7 @@ export default function IncidentTimeline({
                   event.metadata,
                   "correlation_count",
                 ) !== null && (
-                  <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                  <div className="mt-3 text-xs text-[var(--cf-text-muted)]">
                     Deployment correlations:{" "}
                     {metadataNumber(
                       event.metadata,

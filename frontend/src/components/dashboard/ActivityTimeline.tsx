@@ -67,43 +67,43 @@ function getStatusClass(status: string): string {
     case "succeeded":
     case "resolved":
     case "healthy":
-      return "text-emerald-400";
+      return "text-emerald-600 dark:text-emerald-400";
 
     case "failed":
     case "critical":
-      return "text-rose-400";
+      return "text-rose-600 dark:text-rose-400";
 
     case "running":
     case "queued":
     case "pending":
     case "warning":
-      return "text-amber-400";
+      return "text-amber-600 dark:text-amber-400";
 
     case "acknowledged":
     case "assigned":
-      return "text-indigo-400";
+      return "text-indigo-600 dark:text-indigo-400";
 
     default:
-      return "text-zinc-400";
+      return "text-[var(--cf-text-secondary)]";
   }
 }
 
 function getSeverityClass(severity: string): string {
   switch (severity.toLowerCase()) {
     case "critical":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300";
 
     case "warning":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
     case "high":
-      return "border-orange-500/30 bg-orange-500/10 text-orange-300";
+      return "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-300";
 
     case "medium":
-      return "border-indigo-500/30 bg-indigo-500/10 text-indigo-300";
+      return "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300";
 
     default:
-      return "border-zinc-700 bg-zinc-800 text-zinc-300";
+      return "border-[var(--cf-border)] bg-[var(--cf-surface-2)] text-[var(--cf-text-secondary)]";
   }
 }
 
@@ -239,18 +239,18 @@ export default function ActivityTimeline({
   }, [loadActivities]);
 
   return (
-    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+    <section className="rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
-          <p className="text-sm font-medium text-indigo-400">
+          <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
             Platform events
           </p>
 
-          <h3 className="mt-1 text-lg font-semibold text-white">
+          <h3 className="mt-1 text-lg font-semibold text-[var(--cf-text)]">
             Recent activity
           </h3>
 
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
             Recent deployment and incident activity across CloudForge.
           </p>
         </div>
@@ -259,43 +259,43 @@ export default function ActivityTimeline({
           type="button"
           onClick={() => void loadActivities()}
           disabled={loading}
-          className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:border-indigo-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] px-3 py-2 text-xs font-medium text-[var(--cf-text-secondary)] shadow-sm transition hover:border-indigo-500 hover:bg-[var(--cf-surface-2)] hover:text-[var(--cf-text)] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
         >
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
       {error && (
-        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
           {error}
         </div>
       )}
 
       {loading && activities.length === 0 ? (
-        <div className="mt-6 rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm text-zinc-500">
+        <div className="mt-6 rounded-xl border border-dashed border-[var(--cf-border)] p-8 text-center text-sm text-[var(--cf-text-muted)]">
           Loading activity...
         </div>
       ) : activities.length === 0 ? (
-        <div className="mt-6 rounded-xl border border-dashed border-zinc-800 p-8 text-center text-sm text-zinc-500">
+        <div className="mt-6 rounded-xl border border-dashed border-[var(--cf-border)] p-8 text-center text-sm text-[var(--cf-text-muted)]">
           No recent activity available
         </div>
       ) : (
         <div className="mt-6 space-y-3">
           {activities.map((activity) => {
             const content = (
-              <div className="flex gap-4 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 transition hover:border-zinc-700">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-800 text-lg text-indigo-300">
+              <div className="flex gap-4 rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4 transition hover:border-[var(--cf-border-strong)] hover:bg-[var(--cf-surface-3)]">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-lg text-indigo-600 ring-1 ring-indigo-500/20 dark:text-indigo-300">
                   {getActivityIcon(activity.type)}
                 </div>
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-white">
+                      <p className="truncate text-sm font-semibold text-[var(--cf-text)]">
                         {activity.title}
                       </p>
 
-                      <p className="mt-1 text-xs leading-5 text-zinc-500">
+                      <p className="mt-1 text-xs leading-5 text-[var(--cf-text-muted)]">
                         {activity.description}
                       </p>
                     </div>
@@ -310,7 +310,7 @@ export default function ActivityTimeline({
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-zinc-600">
+                    <span className="text-xs text-[var(--cf-text-muted)]">
                       {activity.type === "deployment"
                         ? "Deployment"
                         : "Incident"}
@@ -327,12 +327,12 @@ export default function ActivityTimeline({
                     )}
 
                     {activity.priority && (
-                      <span className="rounded-full border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-zinc-300">
+                      <span className="rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface-3)] px-2 py-0.5 text-[10px] font-semibold text-[var(--cf-text-secondary)]">
                         {activity.priority}
                       </span>
                     )}
 
-                    <span className="text-xs text-zinc-600">
+                    <span className="text-xs text-[var(--cf-text-muted)]">
                       {formatDate(activity.timestamp)}
                     </span>
                   </div>

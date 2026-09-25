@@ -4,6 +4,7 @@ import MetricCard from "@/components/dashboard/MetricCard";
 import ServiceHealthGrid from "@/components/dashboard/ServiceHealthGrid";
 import OperationalInsights from "@/components/dashboard/OperationalInsights";
 import ActivityTimeline from "@/components/dashboard/ActivityTimeline";
+import PlatformCommandCenter from "@/components/dashboard/PlatformCommandCenter";
 import { getDashboardData } from "@/lib/dashboard-api";
 import type { ServiceHealth } from "@/types/health";
 
@@ -114,38 +115,40 @@ export default async function DashboardPage() {
       <div className="mx-auto max-w-[1600px] space-y-8 p-4 sm:p-6 lg:p-8">
         <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <p className="mb-2 text-sm font-medium text-indigo-400">
+            <p className="mb-2 text-sm font-medium text-indigo-600 dark:text-indigo-400">
               Platform overview
             </p>
 
-            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+            <h2 className="text-3xl font-bold tracking-tight text-[var(--cf-text)] sm:text-4xl">
               Welcome to CloudForge
             </h2>
 
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--cf-text-secondary)]">
               Monitor your projects, infrastructure, deployments,
               and AI-powered incident intelligence.
             </p>
           </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-4 py-3">
-            <p className="text-xs text-zinc-500">
+          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] shadow-sm px-4 py-3">
+            <p className="text-xs text-[var(--cf-text-muted)]">
               Environment
             </p>
 
-            <p className="mt-1 text-sm font-semibold text-white">
+            <p className="mt-1 text-sm font-semibold text-[var(--cf-text)]">
               Development
             </p>
           </div>
         </section>
 
+        <PlatformCommandCenter />
+
         {errors.length > 0 && (
           <section className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
-            <p className="text-sm font-semibold text-amber-300">
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
               Some dashboard data could not be loaded
             </p>
 
-            <ul className="mt-2 space-y-1 text-xs text-amber-200">
+            <ul className="mt-2 space-y-1 text-xs text-amber-700 dark:text-amber-200">
               {errors.map((error) => (
                 <li key={error}>{error}</li>
               ))}
@@ -189,15 +192,15 @@ export default async function DashboardPage() {
 
         <section>
           <div className="mb-4">
-            <p className="text-sm font-medium text-indigo-400">
+            <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
               Live telemetry
             </p>
 
-            <h3 className="mt-1 text-xl font-semibold text-white">
+            <h3 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
               Observability metrics
             </h3>
 
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
               Live Prometheus measurements from the Deployment Service.
             </p>
           </div>

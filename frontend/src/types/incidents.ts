@@ -140,3 +140,62 @@ export interface IncidentStats {
   incidents_by_impact: Record<string, number>;
   incidents_by_service: Record<string, number>;
 }
+
+
+export type RemediationAction =
+  | "acknowledge_incident"
+  | "no_action"
+  | "rerun_deployment"
+  | "restart_deployment"
+  | "scale_deployment"
+  | "rollback_deployment";
+
+export type RemediationStatus =
+  | "PROPOSED"
+  | "PENDING_APPROVAL"
+  | "APPROVED"
+  | "REJECTED"
+  | "EXECUTING"
+  | "SUCCEEDED"
+  | "FAILED";
+
+export type RemediationPolicyDecision =
+  | "allowed"
+  | "blocked"
+  | "requires_approval";
+
+export interface RemediationAvailableAction {
+  action: RemediationAction;
+  policy: RemediationPolicyDecision;
+  human_approval_required: boolean;
+  description: string;
+}
+
+export interface RemediationProposal {
+  id: string;
+  incident_id: string;
+  action: RemediationAction;
+  status: RemediationStatus;
+  policy_decision: RemediationPolicyDecision;
+  policy_reason: string;
+  reason: string | null;
+  target_deployment_id: string | null;
+  proposed_by: string;
+  approved_by: string | null;
+  rejected_by: string | null;
+  rejection_reason: string | null;
+  execution_requested_by: string | null;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  rejected_at: string | null;
+  executed_at: string | null;
+}
+
+export interface RemediationResponse {
+  incident_id: string;
+  available_actions: RemediationAvailableAction[];
+  proposals: RemediationProposal[];
+}

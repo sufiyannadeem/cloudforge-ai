@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import AppShell from "@/components/layout/AppShell";
 import {
+  getSLOBurnRates,
   getSLOSummary,
+  type SLOBurnRates,
   type SLOResult,
   type SLOStatus,
   type SLOSummary,
@@ -12,9 +14,31 @@ import {
 
 const EMPTY_SUMMARY: SLOSummary | null = null;
 
+const EMPTY_BURN_RATES: SLOBurnRates = {
+  availability: {
+    "5m": null,
+    "30m": null,
+    "1h": null,
+    "6h": null,
+  },
+  requestSuccess: {
+    "5m": null,
+    "30m": null,
+    "1h": null,
+    "6h": null,
+  },
+  latency: {
+    "5m": null,
+    "30m": null,
+    "1h": null,
+    "6h": null,
+  },
+  generatedAt: "",
+};
+
 function formatPercent(
   value: number | null,
-  decimals = 3,
+  decimals = 2,
 ): string {
   if (value === null || !Number.isFinite(value)) {
     return "N/A";
@@ -47,30 +71,54 @@ function statusLabel(status: SLOStatus): string {
 function statusClass(status: SLOStatus): string {
   switch (status) {
     case "healthy":
-      return "border-emerald-700/50 bg-emerald-950/30 text-emerald-300";
+      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
     case "at_risk":
-      return "border-amber-700/50 bg-amber-950/30 text-amber-300";
+      return "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300";
     case "breached":
-      return "border-rose-700/50 bg-rose-950/30 text-rose-300";
+      return "border-rose-500/20 bg-rose-500/10 text-rose-700 dark:text-rose-300";
     case "insufficient_data":
-      return "border-gray-700 bg-gray-900/50 text-gray-400";
+      return "border-[var(--cf-border)] bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
-function metricValue(slo: SLOResult): string {
-  if (slo.compliance === null) {
-    return "N/A";
+function burnClass(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "text-[var(--cf-text-muted)]";
   }
 
-  if (slo.type === "latency") {
-    return formatPercent(slo.compliance, 2);
+  if (value >= 14.4) {
+    return "text-rose-600 dark:text-rose-300";
   }
 
-  return formatPercent(slo.compliance, 3);
+  if (value >= 6) {
+    return "text-amber-600 dark:text-amber-300";
+  }
+
+  if (value >= 1) {
+    return "text-orange-600 dark:text-orange-300";
+  }
+
+  return "text-emerald-600 dark:text-emerald-300";
 }
 
-function targetValue(slo: SLOResult): string {
-  return formatPercent(slo.target, 3);
+function burnLabel(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "No data";
+  }
+
+  if (value >= 14.4) {
+    return "Fast burn";
+  }
+
+  if (value >= 6) {
+    return "Slow burn";
+  }
+
+  if (value >= 1) {
+    return "Budget consuming";
+  }
+
+  return "Within budget";
 }
 
 function SLOCard({
@@ -81,26 +129,23 @@ function SLOCard({
   const remaining =
     slo.error_budget_remaining === null
       ? "N/A"
-      : formatPercent(
-          slo.error_budget_remaining,
-          1,
-        );
+      : formatPercent(slo.error_budget_remaining, 1);
 
   return (
-    <article className="rounded-xl border border-[#29292f] bg-[#121214] p-5 shadow-sm">
+    <article className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-wide text-gray-500">
+          <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
             {slo.type.replace("_", " ")}
           </p>
 
-          <h2 className="mt-1 text-xl font-semibold text-white">
+          <h2 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
             {slo.name}
           </h2>
         </div>
 
         <span
-          className={`rounded-full border px-3 py-1 text-xs font-medium ${statusClass(
+          className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${statusClass(
             slo.status,
           )}`}
         >
@@ -108,261 +153,284 @@ function SLOCard({
         </span>
       </div>
 
-      <p className="mt-3 text-sm leading-6 text-gray-500">
+      <p className="mt-3 text-sm leading-6 text-[var(--cf-text-secondary)]">
         {slo.description}
       </p>
 
-      <div className="mt-6 grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-[#1a1a1f] p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">
-            Observed
+      <div className="mt-5 grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3">
+          <p className="text-xs text-[var(--cf-text-muted)]">
+            Compliance
           </p>
-
-          <p className="mt-2 text-xl font-semibold text-white">
-            {metricValue(slo)}
+          <p className="mt-1 text-lg font-semibold text-[var(--cf-text)]">
+            {formatPercent(slo.compliance)}
           </p>
         </div>
 
-        <div className="rounded-lg bg-[#1a1a1f] p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">
+        <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3">
+          <p className="text-xs text-[var(--cf-text-muted)]">
             Target
           </p>
-
-          <p className="mt-2 text-xl font-semibold text-white">
-            {targetValue(slo)}
+          <p className="mt-1 text-lg font-semibold text-[var(--cf-text)]">
+            {formatPercent(slo.target)}
           </p>
         </div>
 
-        <div className="rounded-lg bg-[#1a1a1f] p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">
-            Error budget
+        <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3">
+          <p className="text-xs text-[var(--cf-text-muted)]">
+            Error budget remaining
           </p>
-
-          <p className="mt-2 text-xl font-semibold text-white">
+          <p className="mt-1 text-lg font-semibold text-[var(--cf-text)]">
             {remaining}
           </p>
         </div>
 
-        <div className="rounded-lg bg-[#1a1a1f] p-4">
-          <p className="text-xs uppercase tracking-wide text-gray-500">
+        <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3">
+          <p className="text-xs text-[var(--cf-text-muted)]">
             Burn rate
           </p>
-
-          <p className="mt-2 text-xl font-semibold text-white">
+          <p
+            className={`mt-1 text-lg font-semibold ${burnClass(
+              slo.burn_rate,
+            )}`}
+          >
             {formatBurnRate(slo.burn_rate)}
           </p>
         </div>
-      </div>
-
-      {slo.latency_threshold_ms !== null && (
-        <div className="mt-4 text-xs text-gray-500">
-          Latency threshold:{" "}
-          <span className="text-gray-300">
-            {slo.latency_threshold_ms} ms
-          </span>
-        </div>
-      )}
-
-      <div className="mt-4 border-t border-[#29292f] pt-4 text-xs text-gray-500">
-        Observation window:{" "}
-        <span className="text-gray-300">
-          {slo.window}
-        </span>
       </div>
     </article>
   );
 }
 
-function SummaryCard({
+function BurnMetric({
   label,
   value,
-  description,
 }: {
   label: string;
-  value: string;
-  description: string;
+  value: number | null;
 }) {
   return (
-    <div className="rounded-xl border border-[#29292f] bg-[#121214] p-5">
-      <p className="text-xs uppercase tracking-wide text-gray-500">
-        {label}
-      </p>
+    <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-[var(--cf-text-secondary)]">
+          {label}
+        </span>
 
-      <p className="mt-2 text-3xl font-semibold text-white">
-        {value}
-      </p>
+        <span
+          className={`text-lg font-semibold ${burnClass(value)}`}
+        >
+          {formatBurnRate(value)}
+        </span>
+      </div>
 
-      <p className="mt-2 text-sm text-gray-500">
-        {description}
+      <p
+        className={`mt-1 text-xs font-medium ${burnClass(value)}`}
+      >
+        {burnLabel(value)}
       </p>
     </div>
+  );
+}
+
+function BurnAnalysis({
+  burnRates,
+}: {
+  burnRates: SLOBurnRates;
+}) {
+  const windows = ["5m", "30m", "1h", "6h"] as const;
+
+  return (
+    <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
+      <div>
+        <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
+          SRE burn analysis
+        </p>
+
+        <h2 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
+          Multi-window error-budget consumption
+        </h2>
+
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--cf-text-secondary)]">
+          Burn rate shows how quickly each reliability objective is
+          consuming its allowed error budget. Fast burn is
+          14.4x or higher, slow burn is 6x or higher, and values
+          above 1x indicate budget consumption.
+        </p>
+      </div>
+
+      <div className="mt-6 overflow-x-auto">
+        <div className="min-w-[760px]">
+          <div className="grid grid-cols-[1.5fr_repeat(4,1fr)] gap-3 border-b border-[var(--cf-border)] pb-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-muted)]">
+              SLO
+            </div>
+
+            {windows.map((window) => (
+              <div
+                key={window}
+                className="text-center text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-muted)]"
+              >
+                {window}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 space-y-3">
+            <div className="grid grid-cols-[1.5fr_repeat(4,1fr)] gap-3">
+              <div className="flex items-center text-sm font-medium text-[var(--cf-text)]">
+                Availability
+              </div>
+
+              {windows.map((window) => (
+                <BurnMetric
+                  key={window}
+                  label={window}
+                  value={burnRates.availability[window]}
+                />
+              ))}
+            </div>
+
+            <div className="grid grid-cols-[1.5fr_repeat(4,1fr)] gap-3">
+              <div className="flex items-center text-sm font-medium text-[var(--cf-text)]">
+                Request success
+              </div>
+
+              {windows.map((window) => (
+                <BurnMetric
+                  key={window}
+                  label={window}
+                  value={burnRates.requestSuccess[window]}
+                />
+              ))}
+            </div>
+
+            <div className="grid grid-cols-[1.5fr_repeat(4,1fr)] gap-3">
+              <div className="flex items-center text-sm font-medium text-[var(--cf-text)]">
+                Latency
+              </div>
+
+              {windows.map((window) => (
+                <BurnMetric
+                  key={window}
+                  label={window}
+                  value={burnRates.latency[window]}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap gap-3 text-xs">
+        <span className="rounded-full bg-emerald-500/10 px-3 py-1 font-medium text-emerald-700 dark:text-emerald-300">
+          &lt; 1x — within budget
+        </span>
+        <span className="rounded-full bg-orange-500/10 px-3 py-1 font-medium text-orange-700 dark:text-orange-300">
+          ≥ 1x — consuming budget
+        </span>
+        <span className="rounded-full bg-amber-500/10 px-3 py-1 font-medium text-amber-700 dark:text-amber-300">
+          ≥ 6x — slow burn
+        </span>
+        <span className="rounded-full bg-rose-500/10 px-3 py-1 font-medium text-rose-700 dark:text-rose-300">
+          ≥ 14.4x — fast burn
+        </span>
+      </div>
+    </section>
   );
 }
 
 export default function SLOPage() {
   const [summary, setSummary] =
     useState<SLOSummary | null>(EMPTY_SUMMARY);
+  const [burnRates, setBurnRates] =
+    useState<SLOBurnRates>(EMPTY_BURN_RATES);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const [isLoading, setIsLoading] =
-    useState(true);
-
-  const [isRefreshing, setIsRefreshing] =
-    useState(false);
-
-  const [error, setError] =
-    useState<string | null>(null);
-
-  const loadSummary = useCallback(
-    async (manualRefresh = false) => {
-      if (manualRefresh) {
-        setIsRefreshing(true);
-      } else {
-        setIsLoading(true);
-      }
-
+  const loadData = useCallback(async () => {
+    try {
       setError(null);
 
-      try {
-        const result = await getSLOSummary();
+      const [nextSummary, nextBurnRates] =
+        await Promise.all([
+          getSLOSummary(),
+          getSLOBurnRates(),
+        ]);
 
-        setSummary(result);
-      } catch (loadError) {
-        setSummary(null);
-
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Unable to load SLO data.",
-        );
-      } finally {
-        setIsLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [],
-  );
+      setSummary(nextSummary);
+      setBurnRates(nextBurnRates);
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load SLO data.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => {
-      void loadSummary();
-    }, 0);
-
     const interval = window.setInterval(() => {
-      void loadSummary(true);
-    }, 30000);
+      void loadData();
+    }, 30_000);
 
     return () => {
-      window.clearTimeout(initialLoad);
       window.clearInterval(interval);
     };
-  }, [loadSummary]);
+  }, [loadData]);
 
-  const overallStatus =
-    summary?.overall_status ?? "insufficient_data";
+  const refreshOnMount = useCallback(() => {
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(refreshOnMount, 0);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [refreshOnMount]);
 
   return (
     <AppShell>
-      <main className="min-w-0 space-y-8 bg-[#09090b] p-4 text-gray-100 md:p-6">
-        <section className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
-          <div>
-            <p className="text-sm font-medium text-indigo-400">
-              Site Reliability Engineering
-            </p>
+      <main className="min-w-0 space-y-6 bg-[var(--cf-background)] p-4 text-[var(--cf-text)] md:p-6">
+        <header>
+          <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
+            Service-level objectives
+          </p>
 
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
-              SLO & Error Budget
-            </h1>
+          <h1 className="mt-1 text-3xl font-bold tracking-tight text-[var(--cf-text)]">
+            Reliability objectives
+          </h1>
 
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-gray-400">
-              Track service-level objectives, reliability
-              compliance, error-budget consumption, and
-              burn rate using Prometheus telemetry.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void loadSummary(true)}
-            disabled={isRefreshing}
-            className="rounded-lg border border-[#3b3b44] bg-[#151519] px-4 py-2 text-sm font-medium text-gray-200 transition hover:border-indigo-400 hover:bg-[#1c1c24] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isRefreshing
-              ? "Refreshing..."
-              : "Refresh SLOs"}
-          </button>
-        </section>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--cf-text-secondary)]">
+            Monitor service reliability, error budgets, and
+            multi-window burn rates from one SRE control surface.
+          </p>
+        </header>
 
         {error && (
-          <div className="rounded-xl border border-rose-700/60 bg-rose-950/30 p-4 text-sm text-rose-300">
-            {error}
+          <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4">
+            <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+              Unable to load SLO telemetry
+            </p>
+
+            <p className="mt-1 text-sm text-rose-700/80 dark:text-rose-300/80">
+              {error}
+            </p>
           </div>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <SummaryCard
-            label="Overall status"
-            value={
-              isLoading
-                ? "Loading..."
-                : statusLabel(overallStatus)
-            }
-            description="Aggregated state across configured SLOs."
-          />
-
-          <SummaryCard
-            label="Healthy"
-            value={summary?.healthy_count.toString() ?? "0"}
-            description="SLOs currently meeting their target."
-          />
-
-          <SummaryCard
-            label="At risk"
-            value={summary?.at_risk_count.toString() ?? "0"}
-            description="SLOs consuming budget quickly."
-          />
-
-          <SummaryCard
-            label="Breached"
-            value={summary?.breached_count.toString() ?? "0"}
-            description="SLOs currently below target."
-          />
-        </section>
-
-        <section className="rounded-xl border border-[#29292f] bg-[#121214] p-5">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-            <div>
-              <p className="text-sm text-gray-400">
-                Monitoring target
-              </p>
-
-              <h2 className="mt-1 text-lg font-semibold text-white">
-                {summary?.service ?? "Deployment Service"}
-              </h2>
-            </div>
-
-            <div className="text-sm text-gray-500">
-              Observation window:{" "}
-              <span className="font-medium text-gray-300">
-                {summary?.window ?? "7d"}
-              </span>
-            </div>
-          </div>
-        </section>
-
         <section>
           <div className="mb-4">
-            <p className="text-sm font-medium text-indigo-400">
-              Service-level objectives
-            </p>
-
-            <h2 className="mt-1 text-2xl font-semibold text-white">
-              Reliability objectives
+            <h2 className="text-xl font-semibold text-[var(--cf-text)]">
+              Current SLOs
             </h2>
 
-            <p className="mt-2 text-sm text-gray-500">
-              Error budget represents the amount of
-              unreliability permitted before the SLO target
-              is exhausted.
+            <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
+              Seven-day reliability objectives for the selected
+              service.
             </p>
           </div>
 
@@ -376,7 +444,7 @@ export default function SLOPage() {
               ))}
             </div>
           ) : (
-            <div className="rounded-xl border border-[#29292f] bg-[#121214] p-8 text-center text-sm text-gray-500">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-8 text-center text-sm text-[var(--cf-text-muted)]">
               {isLoading
                 ? "Loading SLO measurements..."
                 : "No SLO measurements available."}
@@ -384,48 +452,49 @@ export default function SLOPage() {
           )}
         </section>
 
-        <section className="rounded-xl border border-[#29292f] bg-[#121214] p-5">
-          <p className="text-sm font-medium text-indigo-400">
+        <BurnAnalysis burnRates={burnRates} />
+
+        <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
+          <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
             SRE interpretation
           </p>
 
-          <h2 className="mt-1 text-xl font-semibold text-white">
+          <h2 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
             How to read the dashboard
           </h2>
 
-          <div className="mt-5 space-y-4 text-sm leading-6 text-gray-400">
-            <p>
-              <span className="font-medium text-gray-200">
-                SLO:
-              </span>{" "}
-              The reliability target the service is expected
-              to maintain.
-            </p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {[
+              [
+                "SLO",
+                "The reliability target the service is expected to maintain.",
+              ],
+              [
+                "Error budget",
+                "The allowed fraction of bad service before the SLO is exhausted.",
+              ],
+              [
+                "Burn rate",
+                "How quickly the observed bad-service rate is consuming the allowed error budget.",
+              ],
+              [
+                "Insufficient data",
+                "Prometheus does not have enough matching telemetry to make a reliable calculation.",
+              ],
+            ].map(([title, description]) => (
+              <div
+                key={title}
+                className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4"
+              >
+                <p className="font-medium text-[var(--cf-text)]">
+                  {title}
+                </p>
 
-            <p>
-              <span className="font-medium text-gray-200">
-                Error budget:
-              </span>{" "}
-              The allowed fraction of bad service before the
-              SLO is exhausted.
-            </p>
-
-            <p>
-              <span className="font-medium text-gray-200">
-                Burn rate:
-              </span>{" "}
-              How quickly the observed bad-service rate is
-              consuming the allowed error budget.
-            </p>
-
-            <p>
-              <span className="font-medium text-gray-200">
-                Insufficient data:
-              </span>{" "}
-              Prometheus does not have enough matching
-              telemetry to make a reliable SLO calculation.
-              It is not treated as a healthy result.
-            </p>
+                <p className="mt-1 text-sm leading-6 text-[var(--cf-text-secondary)]">
+                  {description}
+                </p>
+              </div>
+            ))}
           </div>
         </section>
       </main>

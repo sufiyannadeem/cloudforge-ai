@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
@@ -11,10 +12,17 @@ interface AppShellProps {
 export default function AppShell({
   children,
 }: AppShellProps) {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] =
+    useState(false);
 
   return (
-    <div className="flex min-h-screen bg-zinc-950 text-white">
+    <div
+      className={[
+        "flex min-h-screen",
+        "bg-[var(--cf-background)]",
+        "text-[var(--cf-text)]",
+      ].join(" ")}
+    >
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -25,7 +33,12 @@ export default function AppShell({
           onMenuClick={() => setSidebarOpen(true)}
         />
 
-        <main className="flex-1 overflow-x-hidden">
+        <main
+          className={[
+            "min-w-0 flex-1 overflow-x-hidden",
+            "bg-[var(--cf-background)]",
+          ].join(" ")}
+        >
           {children}
         </main>
       </div>

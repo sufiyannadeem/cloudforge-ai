@@ -7,6 +7,7 @@ import Link from "next/link";
 import AppShell from "@/components/layout/AppShell";
 import OperatorBriefing from "@/components/incidents/OperatorBriefing";
 import IncidentTimeline from "@/components/incidents/IncidentTimeline";
+import RemediationPanel from "@/components/incidents/RemediationPanel";
 import {
   acknowledgeIncident,
   analyzeIncidentDeterministic,
@@ -50,21 +51,21 @@ function badgeClass(value: string): string {
     normalized === "p1" ||
     normalized === "p4"
   ) {
-    return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
+    return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
   }
 
   if (
     normalized === "warning" ||
     normalized === "p2"
   ) {
-    return "bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300";
+    return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
   }
 
   if (
     normalized === "resolved" ||
     normalized === "succeeded"
   ) {
-    return "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300";
+    return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   }
 
   if (
@@ -73,10 +74,10 @@ function badgeClass(value: string): string {
     normalized === "medium" ||
     normalized === "high"
   ) {
-    return "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+    return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
   }
 
-  return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+  return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
 }
 
 function assessmentClass(
@@ -84,19 +85,19 @@ function assessmentClass(
 ): string {
   switch (assessment) {
     case "alert_supported":
-      return "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300";
+      return "bg-rose-500/10 text-rose-700 dark:text-rose-300";
 
     case "alert_not_currently_observed":
-      return "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-300";
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
 
     case "evidence_available":
-      return "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300";
+      return "bg-blue-500/10 text-blue-700 dark:text-blue-300";
 
     case "insufficient_evidence":
-      return "bg-yellow-100 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300";
+      return "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 
     default:
-      return "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+      return "bg-[var(--cf-surface-3)] text-[var(--cf-text-secondary)]";
   }
 }
 
@@ -205,8 +206,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-      <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+    <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
+      <h2 className="text-lg font-semibold text-[var(--cf-text)]">
         {title}
       </h2>
 
@@ -229,16 +230,16 @@ function DeploymentCorrelationPanel({
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-gray-900 dark:text-white">
+          <h3 className="font-semibold text-[var(--cf-text)]">
             Deployment Correlations
           </h3>
 
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-xs text-[var(--cf-text-muted)]">
             Historical deployments temporally correlated with this incident.
           </p>
         </div>
 
-        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+        <span className="rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-1 text-xs font-semibold text-[var(--cf-text-secondary)]">
           {correlations.length}{" "}
           {correlations.length === 1
             ? "deployment"
@@ -247,7 +248,7 @@ function DeploymentCorrelationPanel({
       </div>
 
       {correlations.length === 0 ? (
-        <div className="mt-4 rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+        <div className="mt-4 rounded-lg border border-dashed border-[var(--cf-border)] p-4 text-sm text-[var(--cf-text-muted)]">
           No deployment was detected within the incident correlation window.
         </div>
       ) : (
@@ -256,15 +257,15 @@ function DeploymentCorrelationPanel({
             (correlation, index) => (
               <div
                 key={`${correlation.deployment_id}-${index}`}
-                className="rounded-xl border border-gray-200 bg-gray-50 p-5 dark:border-gray-700 dark:bg-gray-800"
+                className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-5 border-[var(--cf-border)] bg-[var(--cf-surface-2)]"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Deployment
                     </p>
 
-                    <p className="mt-1 break-all font-mono text-sm font-semibold text-gray-900 dark:text-white">
+                    <p className="mt-1 break-all font-mono text-sm font-semibold text-[var(--cf-text)]">
                       {correlation.deployment_id}
                     </p>
                   </div>
@@ -291,21 +292,21 @@ function DeploymentCorrelationPanel({
 
                 <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Environment
                     </p>
 
-                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+                    <p className="mt-1 text-sm font-medium text-[var(--cf-text)]">
                       {correlation.environment || "—"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Incident Time Difference
                     </p>
 
-                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-white">
+                    <p className="mt-1 text-sm font-medium text-[var(--cf-text)]">
                       {formatTimeDifference(
                         correlation.incident_time_difference_seconds,
                       )}
@@ -313,52 +314,52 @@ function DeploymentCorrelationPanel({
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Correlation Type
                     </p>
 
-                    <p className="mt-1 break-words text-sm font-medium text-gray-900 dark:text-white">
+                    <p className="mt-1 break-words text-sm font-medium text-[var(--cf-text)]">
                       {correlation.correlation_type
                         .replaceAll("_", " ")}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Image
                     </p>
 
-                    <p className="mt-1 break-all font-mono text-sm text-gray-900 dark:text-white">
+                    <p className="mt-1 break-all font-mono text-sm text-[var(--cf-text)]">
                       {correlation.image || "—"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Namespace
                     </p>
 
-                    <p className="mt-1 font-mono text-sm text-gray-900 dark:text-white">
+                    <p className="mt-1 font-mono text-sm text-[var(--cf-text)]">
                       {correlation.namespace || "—"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Git Commit
                     </p>
 
-                    <p className="mt-1 break-all font-mono text-sm text-gray-900 dark:text-white">
+                    <p className="mt-1 break-all font-mono text-sm text-[var(--cf-text)]">
                       {correlation.git_commit_sha || "—"}
                     </p>
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Deployment Created
                     </p>
 
-                    <p className="mt-1 text-sm text-gray-900 dark:text-white">
+                    <p className="mt-1 text-sm text-[var(--cf-text)]">
                       {formatDate(
                         correlation.deployment_created_at,
                       )}
@@ -366,11 +367,11 @@ function DeploymentCorrelationPanel({
                   </div>
 
                   <div>
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       Deployment Updated
                     </p>
 
-                    <p className="mt-1 text-sm text-gray-900 dark:text-white">
+                    <p className="mt-1 text-sm text-[var(--cf-text)]">
                       {formatDate(
                         correlation.deployment_updated_at,
                       )}
@@ -416,8 +417,8 @@ function AIAnalysisPanel({
   if (!analysis) {
     return (
       <Section title="Incident Intelligence">
-        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center dark:border-gray-700">
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+        <div className="rounded-lg border border-dashed border-[var(--cf-border)] p-6 text-center border-[var(--cf-border)]">
+          <p className="text-sm text-[var(--cf-text-muted)]">
             No incident intelligence has been generated yet.
           </p>
 
@@ -459,12 +460,12 @@ function AIAnalysisPanel({
             {analysis.confidence ?? "unknown"}
           </span>
 
-          <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+          <span className="rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-1 text-sm font-semibold text-[var(--cf-text-secondary)]">
             Provider: {analysis.provider}
           </span>
 
           {analysis.model && (
-            <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+            <span className="rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-1 text-sm font-semibold text-[var(--cf-text-secondary)]">
               Model: {analysis.model}
             </span>
           )}
@@ -472,11 +473,11 @@ function AIAnalysisPanel({
 
         {analysis.summary && (
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Analysis Summary
             </h3>
 
-            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+            <p className="mt-2 text-sm leading-6 text-[var(--cf-text-secondary)]">
               {analysis.summary}
             </p>
           </div>
@@ -484,11 +485,11 @@ function AIAnalysisPanel({
 
         {analysis.probable_cause && (
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Evidence-Based Probable Cause
             </h3>
 
-            <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+            <p className="mt-2 text-sm leading-6 text-[var(--cf-text-secondary)]">
               {analysis.probable_cause}
             </p>
           </div>
@@ -496,11 +497,11 @@ function AIAnalysisPanel({
 
         <div>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Operational Evidence
             </h3>
 
-            <span className="text-xs text-gray-500 dark:text-gray-400">
+            <span className="text-xs text-[var(--cf-text-muted)]">
               Generated{" "}
               {formatDate(
                 analysis.generated_at,
@@ -509,7 +510,7 @@ function AIAnalysisPanel({
           </div>
 
           {evidenceEntries.length === 0 ? (
-            <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-3 text-sm text-[var(--cf-text-muted)]">
               No operational evidence was available.
             </p>
           ) : (
@@ -518,13 +519,13 @@ function AIAnalysisPanel({
                 ([key, value]) => (
                   <div
                     key={key}
-                    className="rounded-lg border border-gray-200 p-4 dark:border-gray-700"
+                    className="rounded-lg border border-[var(--cf-border)] p-4"
                   >
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <p className="text-xs font-medium uppercase tracking-wide text-[var(--cf-text-muted)]">
                       {formatEvidenceLabel(key)}
                     </p>
 
-                    <p className="mt-2 text-xl font-bold text-gray-900 dark:text-white">
+                    <p className="mt-2 text-xl font-bold text-[var(--cf-text)]">
                       {formatEvidenceValue(
                         key,
                         value,
@@ -538,13 +539,13 @@ function AIAnalysisPanel({
         </div>
 
         <div>
-          <h3 className="font-semibold text-gray-900 dark:text-white">
+          <h3 className="font-semibold text-[var(--cf-text)]">
             Evidence Findings
           </h3>
 
           {analysis.evidence_findings.length ===
           0 ? (
-            <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-3 text-sm text-[var(--cf-text-muted)]">
               No evidence findings were generated.
             </p>
           ) : (
@@ -553,7 +554,7 @@ function AIAnalysisPanel({
                 (finding, index) => (
                   <li
                     key={`${finding}-${index}`}
-                    className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm leading-6 text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                    className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3 text-sm leading-6 text-[var(--cf-text-secondary)]"
                   >
                     {finding}
                   </li>
@@ -569,11 +570,11 @@ function AIAnalysisPanel({
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Root Cause Hints
             </h3>
 
-            <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-gray-600 dark:text-gray-300">
+            <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-[var(--cf-text-secondary)]">
               {analysis.root_cause_hints.length ===
               0 ? (
                 <li>No hints available.</li>
@@ -592,11 +593,11 @@ function AIAnalysisPanel({
           </div>
 
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Recommended Actions
             </h3>
 
-            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-gray-600 dark:text-gray-300">
+            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-[var(--cf-text-secondary)]">
               {analysis.recommended_actions.length ===
               0 ? (
                 <li>No actions available.</li>
@@ -627,7 +628,7 @@ function AIAnalysisPanel({
             type="button"
             onClick={onAnalyze}
             disabled={analyzing}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            className="rounded-lg border border-[var(--cf-border)] px-4 py-2 text-sm font-medium text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {analyzing
               ? "Re-analyzing..."
@@ -908,7 +909,7 @@ export default function IncidentDetailsPage() {
   if (loading) {
     return (
       <AppShell>
-        <div className="p-8 text-gray-500 dark:text-gray-400">
+        <div className="p-8 text-[var(--cf-text-muted)]">
           Loading incident details...
         </div>
       </AppShell>
@@ -951,11 +952,11 @@ export default function IncidentDetailsPage() {
               AIOps / Incident Intelligence
             </p>
 
-            <h1 className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">
+            <h1 className="mt-1 text-2xl font-bold text-[var(--cf-text)]">
               {incident.alert_name}
             </h1>
 
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
               {incident.id}
             </p>
           </div>
@@ -967,7 +968,7 @@ export default function IncidentDetailsPage() {
               actionLoading ||
               analysisLoading
             }
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            className="rounded-lg border border-[var(--cf-border)] px-4 py-2 text-sm text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Refresh
           </button>
@@ -980,8 +981,8 @@ export default function IncidentDetailsPage() {
         )}
 
         <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
+            <p className="text-sm text-[var(--cf-text-muted)]">
               Status
             </p>
 
@@ -994,8 +995,8 @@ export default function IncidentDetailsPage() {
             </span>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
+            <p className="text-sm text-[var(--cf-text-muted)]">
               Severity
             </p>
 
@@ -1008,8 +1009,8 @@ export default function IncidentDetailsPage() {
             </span>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
+            <p className="text-sm text-[var(--cf-text-muted)]">
               Priority
             </p>
 
@@ -1022,12 +1023,12 @@ export default function IncidentDetailsPage() {
             </span>
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm border-[var(--cf-border)] bg-[var(--cf-surface)]">
+            <p className="text-sm text-[var(--cf-text-muted)]">
               Alert Count
             </p>
 
-            <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+            <p className="mt-2 text-2xl font-bold text-[var(--cf-text)]">
               {incident.alert_count}
             </p>
           </div>
@@ -1046,51 +1047,51 @@ export default function IncidentDetailsPage() {
         <Section title="Incident Overview">
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Service
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {incident.service}
               </p>
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Impact
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {incident.impact}
               </p>
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Confidence
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {incident.confidence}
               </p>
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Analysis Version
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {incident.analysis_version}
               </p>
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Created At
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {formatDate(
                   incident.created_at,
                 )}
@@ -1098,11 +1099,11 @@ export default function IncidentDetailsPage() {
             </div>
 
             <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 Updated At
               </p>
 
-              <p className="mt-1 font-medium text-gray-900 dark:text-white">
+              <p className="mt-1 font-medium text-[var(--cf-text)]">
                 {formatDate(
                   incident.updated_at,
                 )}
@@ -1111,21 +1112,21 @@ export default function IncidentDetailsPage() {
           </div>
 
           <div className="mt-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Summary
             </h3>
 
-            <p className="mt-2 text-gray-600 dark:text-gray-300">
+            <p className="mt-2 text-[var(--cf-text-secondary)]">
               {incident.summary}
             </p>
           </div>
 
           <div className="mt-6">
-            <h3 className="font-semibold text-gray-900 dark:text-white">
+            <h3 className="font-semibold text-[var(--cf-text)]">
               Original Probable Cause
             </h3>
 
-            <p className="mt-2 text-gray-600 dark:text-gray-300">
+            <p className="mt-2 text-[var(--cf-text-secondary)]">
               {incident.probable_cause ||
                 "No probable cause available."}
             </p>
@@ -1136,11 +1137,11 @@ export default function IncidentDetailsPage() {
           <Section title="Root Cause Hints">
             {incident.root_cause_hints.length ===
             0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 No root-cause hints available.
               </p>
             ) : (
-              <ul className="list-disc space-y-2 pl-5 text-sm text-gray-600 dark:text-gray-300">
+              <ul className="list-disc space-y-2 pl-5 text-sm text-[var(--cf-text-secondary)]">
                 {incident.root_cause_hints.map(
                   (hint, index) => (
                     <li
@@ -1157,11 +1158,11 @@ export default function IncidentDetailsPage() {
           <Section title="Original Recommended Actions">
             {incident.recommended_actions.length ===
             0 ? (
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-sm text-[var(--cf-text-muted)]">
                 No recommended actions available.
               </p>
             ) : (
-              <ol className="list-decimal space-y-2 pl-5 text-sm text-gray-600 dark:text-gray-300">
+              <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--cf-text-secondary)]">
                 {incident.recommended_actions.map(
                   (action, index) => (
                     <li
@@ -1203,7 +1204,7 @@ export default function IncidentDetailsPage() {
                 actionLoading ||
                 !incident.assigned_to
               }
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+              className="rounded-lg border border-[var(--cf-border)] px-4 py-2 text-sm text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               Unassign
             </button>
@@ -1213,7 +1214,7 @@ export default function IncidentDetailsPage() {
             <div>
               <label
                 htmlFor="assignedTo"
-                className="text-sm font-medium text-gray-700 dark:text-gray-200"
+                className="text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Assign To
               </label>
@@ -1228,7 +1229,7 @@ export default function IncidentDetailsPage() {
                     )
                   }
                   placeholder="Username"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)] outline-none focus:border-blue-500"
                 />
 
                 <button
@@ -1237,13 +1238,13 @@ export default function IncidentDetailsPage() {
                     void handleAssign()
                   }
                   disabled={actionLoading}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-gray-900"
+                  className="rounded-lg bg-[var(--cf-text)] px-4 py-2 text-sm text-[var(--cf-surface)] hover:opacity-90 disabled:opacity-50"
                 >
                   Assign
                 </button>
               </div>
 
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <p className="mt-2 text-xs text-[var(--cf-text-muted)]">
                 Current assignee:{" "}
                 {incident.assigned_to ||
                   "Unassigned"}
@@ -1253,7 +1254,7 @@ export default function IncidentDetailsPage() {
             <div>
               <label
                 htmlFor="resolutionNotes"
-                className="text-sm font-medium text-gray-700 dark:text-gray-200"
+                className="text-sm font-medium text-[var(--cf-text-secondary)]"
               >
                 Resolution Notes
               </label>
@@ -1268,7 +1269,7 @@ export default function IncidentDetailsPage() {
                 }
                 rows={3}
                 placeholder="Describe the resolution..."
-                className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                className="mt-2 w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2 text-sm text-[var(--cf-text)] outline-none focus:border-blue-500"
               />
 
               <button
@@ -1289,6 +1290,8 @@ export default function IncidentDetailsPage() {
           </div>
         </Section>
 
+	<RemediationPanel incidentId={incident.id} />
+
         <Section title="Incident Timeline">
           <IncidentTimeline
             events={timeline}
@@ -1303,7 +1306,7 @@ export default function IncidentDetailsPage() {
             onClick={() =>
               router.push("/incidents")
             }
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+            className="rounded-lg border border-[var(--cf-border)] px-4 py-2 text-sm text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)]"
           >
             Back to Incident List
           </button>

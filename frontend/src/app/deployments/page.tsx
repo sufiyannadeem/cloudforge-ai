@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import AppShell from "@/components/layout/AppShell";
 import {
   Deployment,
   DeploymentAttempt,
@@ -183,12 +184,13 @@ export default function DeploymentsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-slate-950 px-6 py-10 text-white">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-8 flex items-center justify-between">
+    <AppShell>
+      <div className="mx-auto w-full max-w-[1600px] space-y-8 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto w-full max-w-[1600px]">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div>
-            <h1 className="text-3xl font-bold">Deployments</h1>
-            <p className="mt-2 text-slate-400">
+            <h1 className="text-3xl font-bold tracking-tight text-[var(--cf-text)]">Deployments</h1>
+            <p className="mt-2 text-[var(--cf-text-secondary)]">
               Create, execute, and monitor application deployments.
             </p>
           </div>
@@ -196,14 +198,20 @@ export default function DeploymentsPage() {
           <button
             type="button"
             onClick={() => setShowForm((current) => !current)}
-            className="rounded-lg bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500"
+            className="
+              rounded-lg bg-indigo-600 px-4 py-2.5
+              font-semibold text-[var(--cf-text)] shadow-sm
+              transition hover:bg-indigo-500
+              focus:outline-none focus:ring-2
+              focus:ring-indigo-500/30
+            "
           >
             {showForm ? "Cancel" : "Create Deployment"}
           </button>
         </div>
 
         {error && (
-          <div className="mb-6 rounded-lg border border-red-500/40 bg-red-500/10 p-4 text-red-300">
+          <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-700 dark:text-red-300">
             {error}
           </div>
         )}
@@ -211,9 +219,9 @@ export default function DeploymentsPage() {
         {showForm && (
           <form
             onSubmit={createDeployment}
-            className="mb-8 rounded-xl border border-slate-800 bg-slate-900 p-6"
+            className="mb-8 rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm"
           >
-            <h2 className="mb-5 text-xl font-semibold">
+            <h2 className="mb-5 text-xl font-semibold text-[var(--cf-text)]">
               Create Deployment
             </h2>
 
@@ -225,7 +233,15 @@ export default function DeploymentsPage() {
                 onChange={(event) =>
                   updateField("project_id", event.target.value)
                 }
-                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="
+                  rounded-lg border border-[var(--cf-border)]
+                  bg-[var(--cf-surface)]
+                  p-3 text-[var(--cf-text)]
+                  placeholder:text-[var(--cf-text-muted)]
+                  outline-none transition
+                  focus:border-indigo-500
+                  focus:ring-2 focus:ring-indigo-500/20
+                "
               />
 
               <select
@@ -233,7 +249,15 @@ export default function DeploymentsPage() {
                 onChange={(event) =>
                   updateField("environment", event.target.value)
                 }
-                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="
+                  rounded-lg border border-[var(--cf-border)]
+                  bg-[var(--cf-surface)]
+                  p-3 text-[var(--cf-text)]
+                  placeholder:text-[var(--cf-text-muted)]
+                  outline-none transition
+                  focus:border-indigo-500
+                  focus:ring-2 focus:ring-indigo-500/20
+                "
               >
                 <option value="development">Development</option>
                 <option value="staging">Staging</option>
@@ -247,7 +271,15 @@ export default function DeploymentsPage() {
                 onChange={(event) =>
                   updateField("image", event.target.value)
                 }
-                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="
+                  rounded-lg border border-[var(--cf-border)]
+                  bg-[var(--cf-surface)]
+                  p-3 text-[var(--cf-text)]
+                  placeholder:text-[var(--cf-text-muted)]
+                  outline-none transition
+                  focus:border-indigo-500
+                  focus:ring-2 focus:ring-indigo-500/20
+                "
               />
 
               <input
@@ -257,7 +289,15 @@ export default function DeploymentsPage() {
                 onChange={(event) =>
                   updateField("git_commit_sha", event.target.value)
                 }
-                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="
+                  rounded-lg border border-[var(--cf-border)]
+                  bg-[var(--cf-surface)]
+                  p-3 text-[var(--cf-text)]
+                  placeholder:text-[var(--cf-text-muted)]
+                  outline-none transition
+                  focus:border-indigo-500
+                  focus:ring-2 focus:ring-indigo-500/20
+                "
               />
 
               <input
@@ -267,39 +307,52 @@ export default function DeploymentsPage() {
                 onChange={(event) =>
                   updateField("namespace", event.target.value)
                 }
-                className="rounded-lg border border-slate-700 bg-slate-950 p-3"
+                className="
+                  rounded-lg border border-[var(--cf-border)]
+                  bg-[var(--cf-surface)]
+                  p-3 text-[var(--cf-text)]
+                  placeholder:text-[var(--cf-text-muted)]
+                  outline-none transition
+                  focus:border-indigo-500
+                  focus:ring-2 focus:ring-indigo-500/20
+                "
               />
             </div>
 
             <button
               type="submit"
               disabled={saving}
-              className="mt-5 rounded-lg bg-emerald-600 px-5 py-2 font-medium hover:bg-emerald-500 disabled:opacity-50"
+              className="
+                mt-5 rounded-lg bg-indigo-600 px-5 py-2.5
+                font-semibold text-[var(--cf-text)]
+                transition hover:bg-indigo-500
+                disabled:cursor-not-allowed disabled:opacity-50
+              "
             >
               {saving ? "Creating..." : "Create Deployment"}
             </button>
           </form>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+        <div className="overflow-hidden rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] shadow-sm">
           {loading ? (
-            <p className="p-6 text-slate-400">
+            <p className="p-6 text-[var(--cf-text-secondary)]">
               Loading deployments...
             </p>
           ) : deployments.length === 0 ? (
-            <p className="p-6 text-slate-400">
+            <p className="p-6 text-[var(--cf-text-secondary)]">
               No deployments found.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="border-b border-slate-800 bg-slate-950">
+                <thead className="border-b border-[var(--cf-border)] bg-[var(--cf-surface-2)]">
                   <tr>
-                    <th className="p-4">Environment</th>
-                    <th className="p-4">Image</th>
-                    <th className="p-4">Namespace</th>
-                    <th className="p-4">Status</th>
-                    <th className="p-4">Actions</th>
+                    <th className="p-4 text-left text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">Environment</th>
+                    <th className="p-4 text-left text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">Image</th>
+                    <th className="p-4 text-left text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">Namespace</th>
+                    <th className="p-4 text-left text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">Status</th>
+                    <th className="p-4 text-left text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">Actions</th>
                   </tr>
                 </thead>
 
@@ -307,22 +360,41 @@ export default function DeploymentsPage() {
                   {deployments.map((deployment) => (
                     <tr
                       key={deployment.id}
-                      className="border-b border-slate-800"
+                      className="border-b border-[var(--cf-border)] transition-colors hover:bg-[var(--cf-surface-2)]"
                     >
                       <td className="p-4">
                         {deployment.environment}
                       </td>
 
-                      <td className="max-w-xs truncate p-4 text-slate-300">
+                      <td className="max-w-xs truncate p-4 text-sm text-[var(--cf-text-secondary)]">
                         {deployment.image}
                       </td>
 
-                      <td className="p-4 text-slate-300">
+                      <td className="p-4 text-sm text-[var(--cf-text-secondary)]">
                         {deployment.namespace}
                       </td>
 
                       <td className="p-4">
-                        <span className="rounded-full bg-blue-500/20 px-3 py-1 text-sm text-blue-300">
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                            {
+                              succeeded:
+                                "bg-emerald-500/10 text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300",
+                              failed:
+                                "bg-red-500/10 text-red-700 ring-1 ring-red-500/20 dark:text-red-300",
+                              running:
+                                "bg-blue-500/10 text-blue-700 ring-1 ring-blue-500/20 dark:text-blue-300",
+                              pending:
+                                "bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300",
+                              queued:
+                                "bg-indigo-500/10 text-indigo-700 ring-1 ring-indigo-500/20 dark:text-indigo-300",
+                              cancelled:
+                                "bg-slate-500/10 text-slate-700 ring-1 ring-slate-500/20 dark:text-slate-300",
+                            }[deployment.status] ??
+                            "bg-slate-500/10 text-slate-700 dark:text-slate-300"
+                          }`}
+                        >
+                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
                           {deployment.status}
                         </span>
                       </td>
@@ -332,7 +404,7 @@ export default function DeploymentsPage() {
                           type="button"
                           disabled={runningId === deployment.id}
                           onClick={() => runDeployment(deployment.id)}
-                          className="text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                          className="font-medium text-emerald-600 transition hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300 disabled:opacity-50"
                         >
                           {runningId === deployment.id
                             ? "Running..."
@@ -342,7 +414,7 @@ export default function DeploymentsPage() {
                         <button
                           type="button"
                           onClick={() => loadAttempts(deployment.id)}
-                          className="text-blue-400 hover:text-blue-300"
+                          className="font-medium text-indigo-600 transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
                         >
                           Attempts
                         </button>
@@ -350,7 +422,7 @@ export default function DeploymentsPage() {
                         <button
                           type="button"
                           onClick={() => deleteDeployment(deployment.id)}
-                          className="text-red-400 hover:text-red-300"
+                          className="font-medium text-red-600 transition hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
                         >
                           Delete
                         </button>
@@ -366,40 +438,40 @@ export default function DeploymentsPage() {
         {Object.entries(attempts).map(([deploymentId, records]) => (
           <div
             key={deploymentId}
-            className="mt-6 rounded-xl border border-slate-800 bg-slate-900 p-6"
+            className="mt-6 rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm"
           >
-            <h2 className="mb-4 text-xl font-semibold">
+            <h2 className="mb-4 text-xl font-semibold text-[var(--cf-text)]">
               Deployment Attempts
             </h2>
 
             {records.length === 0 ? (
-              <p className="text-slate-400">No attempts found.</p>
+              <p className="text-[var(--cf-text-secondary)]">No attempts found.</p>
             ) : (
               <div className="space-y-3">
                 {records.map((attempt) => (
                   <div
                     key={attempt.id}
-                    className="rounded-lg border border-slate-700 p-4"
+                    className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4"
                   >
                     <div className="flex justify-between">
                       <span>
                         Attempt #{attempt.attempt_number}
                       </span>
 
-                      <span className="text-blue-300">
+                      <span className="font-medium text-indigo-600 dark:text-indigo-400">
                         {attempt.status}
                       </span>
                     </div>
 
                     {attempt.error_message && (
-                      <p className="mt-2 text-red-300">
+                      <p className="mt-2 text-red-600 dark:text-red-400">
                         {attempt.error_message}
                       </p>
                     )}
 
                     {attempt.duration_ms !== null &&
                       attempt.duration_ms !== undefined && (
-                        <p className="mt-2 text-sm text-slate-400">
+                        <p className="mt-2 text-sm text-[var(--cf-text-muted)]">
                           Duration: {attempt.duration_ms} ms
                         </p>
                       )}
@@ -410,6 +482,7 @@ export default function DeploymentsPage() {
           </div>
         ))}
       </div>
-    </main>
+      </div>
+    </AppShell>
   );
 }

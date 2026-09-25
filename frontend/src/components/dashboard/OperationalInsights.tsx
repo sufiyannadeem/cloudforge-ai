@@ -75,7 +75,7 @@ function getReliabilityStatus(
     return {
       label: "Unknown",
       className:
-        "border-zinc-700 bg-zinc-800 text-zinc-300",
+        "border-[var(--cf-border)] bg-[var(--cf-surface-2)] text-[var(--cf-text-secondary)]",
     };
   }
 
@@ -83,14 +83,14 @@ function getReliabilityStatus(
     return {
       label: "Degraded",
       className:
-        "border-rose-500/30 bg-rose-500/10 text-rose-300",
+        "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
     };
   }
 
   return {
     label: "Healthy",
     className:
-      "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+      "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   };
 }
 
@@ -99,21 +99,21 @@ function getDeploymentStatusClass(
 ): string {
   switch (status.toLowerCase()) {
     case "succeeded":
-      return "text-emerald-400";
+      return "text-emerald-600 dark:text-emerald-400";
 
     case "failed":
-      return "text-rose-400";
+      return "text-rose-600 dark:text-rose-400";
 
     case "running":
     case "queued":
     case "pending":
-      return "text-amber-400";
+      return "text-amber-600 dark:text-amber-400";
 
     case "cancelled":
-      return "text-zinc-400";
+      return "text-[var(--cf-text-secondary)]";
 
     default:
-      return "text-indigo-400";
+      return "text-indigo-600 dark:text-indigo-400";
   }
 }
 
@@ -218,35 +218,35 @@ export default function OperationalInsights({
   return (
     <section className="space-y-6">
       <div>
-        <p className="text-sm font-medium text-indigo-400">
+        <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
           Operational intelligence
         </p>
 
-        <h3 className="mt-1 text-xl font-semibold text-white">
+        <h3 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
           Reliability and activity
         </h3>
 
-        <p className="mt-1 text-sm text-zinc-500">
+        <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
           Current reliability signals, incident posture,
           and recent deployment activity.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-300">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
           {error}
         </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+        <div className="rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h4 className="text-lg font-semibold text-white">
+              <h4 className="text-lg font-semibold text-[var(--cf-text)]">
                 Reliability posture
               </h4>
 
-              <p className="mt-1 text-sm text-zinc-500">
+              <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
                 Current Prometheus measurement window
               </p>
             </div>
@@ -259,84 +259,84 @@ export default function OperationalInsights({
           </div>
 
           <div className="mt-6 grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-zinc-900 p-4">
-              <p className="text-xs text-zinc-500">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+              <p className="text-xs text-[var(--cf-text-muted)]">
                 Availability
               </p>
 
-              <p className="mt-2 text-2xl font-semibold text-white">
+              <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                 {formatNumber(observability.availability)}%
               </p>
             </div>
 
-            <div className="rounded-xl bg-zinc-900 p-4">
-              <p className="text-xs text-zinc-500">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+              <p className="text-xs text-[var(--cf-text-muted)]">
                 Error rate
               </p>
 
-              <p className="mt-2 text-2xl font-semibold text-white">
+              <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                 {formatNumber(observability.errorRate)}%
               </p>
             </div>
 
-            <div className="rounded-xl bg-zinc-900 p-4">
-              <p className="text-xs text-zinc-500">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+              <p className="text-xs text-[var(--cf-text-muted)]">
                 P95 latency
               </p>
 
-              <p className="mt-2 text-2xl font-semibold text-white">
+              <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                 {formatNumber(observability.p95Latency)} ms
               </p>
             </div>
 
-            <div className="rounded-xl bg-zinc-900 p-4">
-              <p className="text-xs text-zinc-500">
+            <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+              <p className="text-xs text-[var(--cf-text-muted)]">
                 SLO reference
               </p>
 
-              <p className="mt-2 text-2xl font-semibold text-white">
+              <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                 99.9%
               </p>
             </div>
           </div>
 
-          <p className="mt-4 text-xs leading-5 text-zinc-500">
+          <p className="mt-4 text-xs leading-5 text-[var(--cf-text-muted)]">
             The SLO reference is a target for comparison.
             A formal error budget requires a defined time
             window and historical availability measurements.
           </p>
         </div>
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+        <div className="rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm">
           <div>
-            <h4 className="text-lg font-semibold text-white">
+            <h4 className="text-lg font-semibold text-[var(--cf-text)]">
               Incident summary
             </h4>
 
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
               Data provided by the AI-Ops Service
             </p>
           </div>
 
           {loading && !incidentStats ? (
-            <div className="mt-6 rounded-xl bg-zinc-900 p-6 text-center text-sm text-zinc-500">
+            <div className="mt-6 rounded-xl bg-[var(--cf-surface-2)] p-6 text-center text-sm text-[var(--cf-text-muted)]">
               Loading incident statistics...
             </div>
           ) : (
             <div className="mt-6 grid grid-cols-2 gap-3">
-              <div className="rounded-xl bg-zinc-900 p-4">
-                <p className="text-xs text-zinc-500">
+              <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+                <p className="text-xs text-[var(--cf-text-muted)]">
                   Total incidents
                 </p>
 
-                <p className="mt-2 text-2xl font-semibold text-white">
+                <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                   {incidentStats?.total_incidents ??
                     incidentCount}
                 </p>
               </div>
 
-              <div className="rounded-xl bg-zinc-900 p-4">
-                <p className="text-xs text-zinc-500">
+              <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+                <p className="text-xs text-[var(--cf-text-muted)]">
                   Open incidents
                 </p>
 
@@ -345,8 +345,8 @@ export default function OperationalInsights({
                 </p>
               </div>
 
-              <div className="rounded-xl bg-zinc-900 p-4">
-                <p className="text-xs text-zinc-500">
+              <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+                <p className="text-xs text-[var(--cf-text-muted)]">
                   Resolved incidents
                 </p>
 
@@ -355,8 +355,8 @@ export default function OperationalInsights({
                 </p>
               </div>
 
-              <div className="rounded-xl bg-zinc-900 p-4">
-                <p className="text-xs text-zinc-500">
+              <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-4">
+                <p className="text-xs text-[var(--cf-text-muted)]">
                   Total alerts
                 </p>
 
@@ -369,35 +369,35 @@ export default function OperationalInsights({
         </div>
       </div>
 
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
+      <div className="rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm">
         <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
           <div>
-            <h4 className="text-lg font-semibold text-white">
+            <h4 className="text-lg font-semibold text-[var(--cf-text)]">
               Recent deployments
             </h4>
 
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
               Latest deployment records from Deployment Service
             </p>
           </div>
 
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-[var(--cf-text-muted)]">
             Showing up to 5 records
           </span>
         </div>
 
         {loading && data.deployments.length === 0 ? (
-          <div className="mt-6 rounded-xl bg-zinc-900 p-6 text-center text-sm text-zinc-500">
+          <div className="mt-6 rounded-xl bg-[var(--cf-surface-2)] p-6 text-center text-sm text-[var(--cf-text-muted)]">
             Loading recent deployments...
           </div>
         ) : data.deployments.length === 0 ? (
-          <div className="mt-6 rounded-xl border border-dashed border-zinc-800 p-6 text-center text-sm text-zinc-500">
+          <div className="mt-6 rounded-xl border border-dashed border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-6 text-center text-sm text-[var(--cf-text-muted)]">
             No deployments available
           </div>
         ) : (
           <div className="mt-6 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-zinc-800 text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="border-b border-[var(--cf-border)] text-xs uppercase tracking-wide text-[var(--cf-text-muted)]">
                 <tr>
                   <th className="px-3 py-3 font-medium">
                     Environment
@@ -420,11 +420,11 @@ export default function OperationalInsights({
               <tbody className="divide-y divide-zinc-800">
                 {data.deployments.map((deployment) => (
                   <tr key={deployment.id}>
-                    <td className="whitespace-nowrap px-3 py-4 text-zinc-300">
+                    <td className="whitespace-nowrap px-3 py-4 text-[var(--cf-text-secondary)]">
                       {deployment.environment}
                     </td>
 
-                    <td className="max-w-[220px] truncate px-3 py-4 text-zinc-400">
+                    <td className="max-w-[220px] truncate px-3 py-4 text-[var(--cf-text-secondary)]">
                       {deployment.image}
                     </td>
 
@@ -436,7 +436,7 @@ export default function OperationalInsights({
                       {deployment.status}
                     </td>
 
-                    <td className="whitespace-nowrap px-3 py-4 text-zinc-500">
+                    <td className="whitespace-nowrap px-3 py-4 text-[var(--cf-text-muted)]">
                       {formatDate(deployment.created_at)}
                     </td>
                   </tr>

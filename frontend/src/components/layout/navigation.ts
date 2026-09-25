@@ -4,45 +4,60 @@ export interface NavigationItem {
   icon: string;
 }
 
-export const navigationItems: NavigationItem[] = [
+export interface NavigationGroup {
+  label: string;
+  items: NavigationItem[];
+}
+
+export const navigationGroups: NavigationGroup[] = [
   {
-    label: "Overview",
-    href: "/dashboard",
-    icon: "▦",
+    label: "Platform",
+    items: [
+      {
+        label: "Overview",
+        href: "/dashboard",
+        icon: "▦",
+      },
+      {
+        label: "Projects",
+        href: "/projects",
+        icon: "◈",
+      },
+      {
+        label: "Infrastructure",
+        href: "/infrastructure",
+        icon: "⌘",
+      },
+      {
+        label: "Deployments",
+        href: "/deployments",
+        icon: "⇧",
+      },
+    ],
   },
   {
-    label: "Projects",
-    href: "/projects",
-    icon: "◈",
-  },
-  {
-    label: "Infrastructure",
-    href: "/infrastructure",
-    icon: "⌘",
-  },
-  {
-    label: "Deployments",
-    href: "/deployments",
-    icon: "⇧",
-  },
-  {
-    label: "Observability",
-    href: "/observability",
-    icon: "◉",
-  },
-  {
-    label: "SLO & Error Budget",
-    href: "/slo",
-    icon: "◒",
-  },
-  {
-    label: "AI-Ops Incidents",
-    href: "/incidents",
-    icon: "⚡",
-  },
-  {
-    label: "Anomaly Detection",
-    href: "/anomalies",
-    icon: "◌",
+    label: "Reliability & AI",
+    items: [
+      {
+        label: "Observability",
+        href: "/observability",
+        icon: "◉",
+      },
+      {
+        label: "SLO & Error Budget",
+        href: "/slo",
+        icon: "◒",
+      },
+      {
+        label: "AI-Ops Incidents",
+        href: "/incidents",
+        icon: "⚡",
+      },
+      {
+        label: "Anomaly Detection",
+        href: "/anomalies",
+        icon: "◌",
+      },
+    ],
   },
 ];

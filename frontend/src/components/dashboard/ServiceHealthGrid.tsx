@@ -76,20 +76,20 @@ export default function ServiceHealthGrid({
   ).length;
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-5">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <h3 className="text-xl font-semibold text-white">
+          <h3 className="text-xl font-semibold text-[var(--cf-text)]">
             Platform services
           </h3>
 
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
             Live health checks for platform dependencies
           </p>
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="rounded-full border border-zinc-800 px-3 py-1 text-xs text-zinc-400">
+          <span className="rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface)] px-3 py-1 text-xs font-medium text-[var(--cf-text-secondary)]">
             {healthyCount}/{services.length} healthy
           </span>
 
@@ -97,7 +97,7 @@ export default function ServiceHealthGrid({
             type="button"
             onClick={() => void checkServices()}
             disabled={loading}
-            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] px-3 py-2 text-xs font-medium text-[var(--cf-text-secondary)] shadow-sm transition hover:border-[var(--cf-border-strong)] hover:bg-[var(--cf-surface-2)] hover:text-[var(--cf-text)] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
           >
             {loading ? "Checking..." : "Refresh"}
           </button>
@@ -105,14 +105,14 @@ export default function ServiceHealthGrid({
       </div>
 
       {lastChecked && (
-        <p className="text-xs text-zinc-600">
+        <p className="text-xs text-[var(--cf-text-muted)]">
           Last checked:{" "}
           {new Date(lastChecked).toLocaleTimeString()}
         </p>
       )}
 
       {error && (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-300">
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300">
           {error}
         </div>
       )}
