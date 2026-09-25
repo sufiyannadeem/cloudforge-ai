@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 from .analysis_routes import router as incident_intelligence_router
+from .remediation_routes import router as remediation_router
 from .anomaly_routes import router as anomaly_router
 from .ai_enrichment_routes import router as ai_enrichment_router
 from .slo_routes import router as slo_router
@@ -35,6 +36,10 @@ app = FastAPI(
 
 app.include_router(
     incident_intelligence_router
+)
+
+app.include_router(
+    remediation_router
 )
 app.include_router(
     slo_router

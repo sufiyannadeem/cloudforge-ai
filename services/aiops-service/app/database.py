@@ -222,4 +222,58 @@ def initialize_database() -> None:
             """
         )
 
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS aiops_remediation_proposals (
+                id VARCHAR(64) PRIMARY KEY,
+                incident_id VARCHAR(64) NOT NULL
+                    REFERENCES aiops_incidents(id)
+                    ON DELETE CASCADE,
+                action VARCHAR(64) NOT NULL,
+                status VARCHAR(32) NOT NULL,
+                policy_decision VARCHAR(32) NOT NULL,
+                policy_reason TEXT NOT NULL,
+                reason TEXT,
+                target_deployment_id VARCHAR(128),
+                proposed_by VARCHAR(255) NOT NULL,
+                approved_by VARCHAR(255),
+                rejected_by VARCHAR(255),
+                rejection_reason TEXT,
+                execution_requested_by VARCHAR(255),
+                result JSONB NOT NULL DEFAULT '{}'::jsonb,
+                error TEXT,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                approved_at TIMESTAMPTZ,
+                rejected_at TIMESTAMPTZ,
+                executed_at TIMESTAMPTZ
+            )
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_remediation_incident_id
+            ON aiops_remediation_proposals (incident_id)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_remediation_status
+            ON aiops_remediation_proposals (status)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_remediation_created_at
+            ON aiops_remediation_proposals (created_at DESC)
+            """
+        )
+
         print("AI-Ops database initialized successfully.")
