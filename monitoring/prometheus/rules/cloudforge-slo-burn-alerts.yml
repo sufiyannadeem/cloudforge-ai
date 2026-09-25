@@ -1,0 +1,205 @@
+groups:
+
+  # ============================================================
+  # SRE MULTI-WINDOW ERROR-BUDGET BURN ALERTS
+  #
+  # Fast burn:
+  #   5m + 1h
+  #
+  # Slow burn:
+  #   30m + 6h
+  #
+  # Both windows must breach before an alert fires.
+  # This reduces false positives caused by short-lived spikes.
+  # ============================================================
+
+  - name: cloudforge-slo-burn-alerts
+    interval: 30s
+
+    rules:
+
+      # ==========================================================
+      # AVAILABILITY — FAST BURN
+      # ==========================================================
+
+      - alert: CloudForgeAvailabilitySLOFastBurn
+        expr: |
+          (
+            cloudforge:slo_availability_burn:5m{
+              job="deployment-service"
+            } > 14.4
+          )
+          and
+          (
+            cloudforge:slo_availability_burn:1h{
+              job="deployment-service"
+            } > 14.4
+          )
+        for: 2m
+
+        labels:
+          severity: critical
+          service: deployment-service
+          team: platform
+          slo: availability
+          burn_window: fast
+
+        annotations:
+          summary: "Availability SLO is burning rapidly"
+          description: "The deployment-service availability error budget is burning at more than 14.4x across both short and long windows."
+          runbook: "Investigate active outage symptoms, recent deployments, service health, and infrastructure dependencies."
+
+      # ==========================================================
+      # AVAILABILITY — SLOW BURN
+      # ==========================================================
+
+      - alert: CloudForgeAvailabilitySLOSlowBurn
+        expr: |
+          (
+            cloudforge:slo_availability_burn:30m{
+              job="deployment-service"
+            } > 6
+          )
+          and
+          (
+            cloudforge:slo_availability_burn:6h{
+              job="deployment-service"
+            } > 6
+          )
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: availability
+          burn_window: slow
+
+        annotations:
+          summary: "Availability SLO is burning persistently"
+          description: "The deployment-service availability error budget has exceeded 6x burn across both medium and long windows."
+          runbook: "Review recurring availability failures, recent changes, and incident history."
+
+      # ==========================================================
+      # REQUEST SUCCESS — FAST BURN
+      # ==========================================================
+
+      - alert: CloudForgeRequestSuccessSLOFastBurn
+        expr: |
+          (
+            cloudforge:slo_request_success_burn:5m{
+              job="deployment-service"
+            } > 14.4
+          )
+          and
+          (
+            cloudforge:slo_request_success_burn:1h{
+              job="deployment-service"
+            } > 14.4
+          )
+        for: 2m
+
+        labels:
+          severity: critical
+          service: deployment-service
+          team: platform
+          slo: request-success
+          burn_window: fast
+
+        annotations:
+          summary: "Request success SLO is burning rapidly"
+          description: "The deployment-service request-success error budget is burning at more than 14.4x across both short and long windows."
+          runbook: "Inspect HTTP 5xx errors, application logs, dependencies, and recent deployments."
+
+      # ==========================================================
+      # REQUEST SUCCESS — SLOW BURN
+      # ==========================================================
+
+      - alert: CloudForgeRequestSuccessSLOSlowBurn
+        expr: |
+          (
+            cloudforge:slo_request_success_burn:30m{
+              job="deployment-service"
+            } > 6
+          )
+          and
+          (
+            cloudforge:slo_request_success_burn:6h{
+              job="deployment-service"
+            } > 6
+          )
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: request-success
+          burn_window: slow
+
+        annotations:
+          summary: "Request success SLO is burning persistently"
+          description: "The deployment-service request-success error budget has exceeded 6x burn across both medium and long windows."
+          runbook: "Review recurring 5xx errors, dependency failures, and recent application changes."
+
+      # ==========================================================
+      # LATENCY — FAST BURN
+      # ==========================================================
+
+      - alert: CloudForgeLatencySLOFastBurn
+        expr: |
+          (
+            cloudforge:slo_latency_burn:5m{
+              job="deployment-service"
+            } > 14.4
+          )
+          and
+          (
+            cloudforge:slo_latency_burn:1h{
+              job="deployment-service"
+            } > 14.4
+          )
+        for: 2m
+
+        labels:
+          severity: critical
+          service: deployment-service
+          team: platform
+          slo: latency
+          burn_window: fast
+
+        annotations:
+          summary: "Latency SLO is burning rapidly"
+          description: "The deployment-service latency error budget is burning at more than 14.4x across both short and long windows."
+          runbook: "Inspect P95 latency, slow endpoints, database performance, resource pressure, and downstream dependencies."
+
+      # ==========================================================
+      # LATENCY — SLOW BURN
+      # ==========================================================
+
+      - alert: CloudForgeLatencySLOSlowBurn
+        expr: |
+          (
+            cloudforge:slo_latency_burn:30m{
+              job="deployment-service"
+            } > 6
+          )
+          and
+          (
+            cloudforge:slo_latency_burn:6h{
+              job="deployment-service"
+            } > 6
+          )
+        for: 5m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: latency
+          burn_window: slow
+
+        annotations:
+          summary: "Latency SLO is burning persistently"
+          description: "The deployment-service latency error budget has exceeded 6x burn across both medium and long windows."
+          runbook: "Review recurring latency degradation, database performance, resource utilization, and downstream services."

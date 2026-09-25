@@ -1,0 +1,592 @@
+groups:
+
+  # ============================================================
+  # CANONICAL SERVICE / HTTP RECORDING RULES
+  # ============================================================
+
+  - name: cloudforge-recording-rules
+    interval: 30s
+
+    rules:
+
+      # ----------------------------------------------------------
+      # SERVICE AVAILABILITY
+      # ----------------------------------------------------------
+
+      - record: cloudforge:service_availability:ratio
+        expr: |
+          avg by (job, service, environment) (
+            up{job="deployment-service"}
+          )
+
+      - record: cloudforge:service_availability:percent
+        expr: |
+          100 *
+          avg by (job, service, environment) (
+            up{job="deployment-service"}
+          )
+
+      # ----------------------------------------------------------
+      # HTTP REQUEST RATE
+      # ----------------------------------------------------------
+
+      - record: cloudforge:http_request_rate:5m
+        expr: |
+          sum by (job, service, environment) (
+            rate(http_requests_total{
+              job="deployment-service"
+            }[5m])
+          )
+
+      # ----------------------------------------------------------
+      # HTTP ERROR RATE
+      # ----------------------------------------------------------
+
+      - record: cloudforge:http_error_rate:5m
+        expr: |
+          (
+            sum by (job, service, environment) (
+              rate(http_requests_total{
+                job="deployment-service",
+                status=~"5.."
+              }[5m])
+            )
+          )
+          /
+          clamp_min(
+            sum by (job, service, environment) (
+              rate(http_requests_total{
+                job="deployment-service"
+              }[5m])
+            ),
+            0.001
+          )
+
+      - record: cloudforge:http_error_rate:percent:5m
+        expr: |
+          100 *
+          (
+            (
+              sum by (job, service, environment) (
+                rate(http_requests_total{
+                  job="deployment-service",
+                  status=~"5.."
+                }[5m])
+              )
+            )
+            /
+            clamp_min(
+              sum by (job, service, environment) (
+                rate(http_requests_total{
+                  job="deployment-service"
+                }[5m])
+              ),
+              0.001
+            )
+          )
+
+      # ----------------------------------------------------------
+      # HTTP P95 LATENCY
+      # ----------------------------------------------------------
+
+      - record: cloudforge:http_request_latency_p95_seconds:5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (job, service, environment, le) (
+              rate(http_request_duration_seconds_bucket{
+                job="deployment-service"
+              }[5m])
+            )
+          )
+
+      - record: cloudforge:http_request_latency_p95_ms:5m
+        expr: |
+          1000 *
+          histogram_quantile(
+            0.95,
+            sum by (job, service, environment, le) (
+              rate(http_request_duration_seconds_bucket{
+                job="deployment-service"
+              }[5m])
+            )
+          )
+
+      # ----------------------------------------------------------
+      # REQUESTS IN FLIGHT
+      # ----------------------------------------------------------
+
+      - record: cloudforge:http_requests_in_flight
+        expr: |
+          sum by (job, service, environment) (
+            http_requests_in_flight{
+              job="deployment-service"
+            }
+          )
+
+      # ============================================================
+      # DEPLOYMENT RECORDING RULES
+      # ============================================================
+
+      - record: cloudforge:deployment_rate:10m
+        expr: |
+          sum by (job, service, environment) (
+            rate(cloudforge_deployments_total{
+              job="deployment-service"
+            }[10m])
+          )
+
+      - record: cloudforge:deployment_failure_rate:10m
+        expr: |
+          (
+            sum by (job, service, environment) (
+              rate(cloudforge_deployments_total{
+                job="deployment-service",
+                status="failed"
+              }[10m])
+            )
+          )
+          /
+          clamp_min(
+            sum by (job, service, environment) (
+              rate(cloudforge_deployments_total{
+                job="deployment-service"
+              }[10m])
+            ),
+            0.001
+          )
+
+      - record: cloudforge:deployment_failure_rate:percent:10m
+        expr: |
+          100 *
+          (
+            (
+              sum by (job, service, environment) (
+                rate(cloudforge_deployments_total{
+                  job="deployment-service",
+                  status="failed"
+                }[10m])
+              )
+            )
+            /
+            clamp_min(
+              sum by (job, service, environment) (
+                rate(cloudforge_deployments_total{
+                  job="deployment-service"
+                }[10m])
+              ),
+              0.001
+            )
+          )
+
+      - record: cloudforge:deployment_duration_p95_seconds:10m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (job, service, environment, le) (
+              rate(cloudforge_deployment_duration_seconds_bucket{
+                job="deployment-service"
+              }[10m])
+            )
+          )
+
+      - record: cloudforge:deployments_in_progress
+        expr: |
+          sum by (job, service, environment) (
+            cloudforge_deployments_in_progress{
+              job="deployment-service"
+            }
+          )
+
+      - record: cloudforge:deployment_failures:15m
+        expr: |
+          sum by (job, service, environment) (
+            increase(cloudforge_deployments_total{
+              job="deployment-service",
+              status="failed"
+            }[15m])
+          )
+
+      # ============================================================
+      # REQUEST SUCCESS
+      # ============================================================
+
+      - record: cloudforge:http_request_success_ratio:5m
+        expr: |
+          1 -
+          (
+            (
+              sum by (job, service, environment) (
+                rate(http_requests_total{
+                  job="deployment-service",
+                  status=~"5.."
+                }[5m])
+              )
+              or on (job, service, environment)
+              (
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service"
+                  }[5m])
+                ) * 0
+              )
+            )
+            /
+            clamp_min(
+              sum by (job, service, environment) (
+                rate(http_requests_total{
+                  job="deployment-service"
+                }[5m])
+              ),
+              0.001
+            )
+          )
+
+      - record: cloudforge:http_request_success_percent:5m
+        expr: |
+          100 *
+          cloudforge:http_request_success_ratio:5m
+
+      # ============================================================
+      # SLO COMPLIANCE — 7 DAY
+      # ============================================================
+
+      - record: cloudforge:slo_availability:7d
+        expr: |
+          avg by (job, service, environment) (
+            avg_over_time(
+              up{job="deployment-service"}[7d]
+            )
+          )
+
+      - record: cloudforge:slo_request_success:7d
+        expr: |
+          1 -
+          (
+            (
+              sum by (job, service, environment) (
+                increase(http_requests_total{
+                  job="deployment-service",
+                  status=~"5.."
+                }[7d])
+              )
+              or on (job, service, environment)
+              (
+                sum by (job, service, environment) (
+                  increase(http_requests_total{
+                    job="deployment-service"
+                  }[7d])
+                ) * 0
+              )
+            )
+            /
+            clamp_min(
+              sum by (job, service, environment) (
+                increase(http_requests_total{
+                  job="deployment-service"
+                }[7d])
+              ),
+              1
+            )
+          )
+
+      - record: cloudforge:slo_latency_compliance:7d
+        expr: |
+          (
+            sum by (job, service, environment) (
+              increase(http_request_duration_seconds_bucket{
+                job="deployment-service",
+                le="0.5"
+              }[7d])
+            )
+          )
+          /
+          clamp_min(
+            sum by (job, service, environment) (
+              increase(http_request_duration_seconds_count{
+                job="deployment-service"
+              }[7d])
+            ),
+            1
+          )
+
+  # ============================================================
+  # SRE ERROR-BUDGET BURN-RATE RECORDING RULES
+  #
+  # SLOs:
+  #   Availability      = 99.9%  -> 0.1% error budget
+  #   Request success   = 99.0%  -> 1.0% error budget
+  #   Latency compliance= 95.0%  -> 5.0% error budget
+  # ============================================================
+
+  - name: cloudforge-sre-recording-rules
+    interval: 30s
+
+    rules:
+
+      # ----------------------------------------------------------
+      # AVAILABILITY BURN
+      # ----------------------------------------------------------
+
+      - record: cloudforge:slo_availability_burn:5m
+        expr: |
+          (
+            1 -
+            avg by (job, service, environment) (
+              avg_over_time(
+                up{job="deployment-service"}[5m]
+              )
+            )
+          )
+          / 0.001
+
+      - record: cloudforge:slo_availability_burn:30m
+        expr: |
+          (
+            1 -
+            avg by (job, service, environment) (
+              avg_over_time(
+                up{job="deployment-service"}[30m]
+              )
+            )
+          )
+          / 0.001
+
+      - record: cloudforge:slo_availability_burn:1h
+        expr: |
+          (
+            1 -
+            avg by (job, service, environment) (
+              avg_over_time(
+                up{job="deployment-service"}[1h]
+              )
+            )
+          )
+          / 0.001
+
+      - record: cloudforge:slo_availability_burn:6h
+        expr: |
+          (
+            1 -
+            avg by (job, service, environment) (
+              avg_over_time(
+                up{job="deployment-service"}[6h]
+              )
+            )
+          )
+          / 0.001
+
+      # ----------------------------------------------------------
+      # REQUEST SUCCESS BURN
+      # ----------------------------------------------------------
+
+      - record: cloudforge:slo_request_success_burn:5m
+        expr: |
+          (
+            1 -
+            cloudforge:http_request_success_ratio:5m
+          )
+          / 0.01
+
+      - record: cloudforge:slo_request_success_burn:30m
+        expr: |
+          (
+            1 -
+            (
+              1 -
+              (
+                (
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service",
+                    status=~"5.."
+                  }[30m])
+                )
+                or on (job, service, environment)
+                (
+                  sum by (job, service, environment) (
+                    rate(http_requests_total{
+                      job="deployment-service"
+                    }[30m])
+                  ) * 0
+                )
+              )
+                /
+                clamp_min(
+                  sum by (job, service, environment) (
+                    rate(http_requests_total{
+                      job="deployment-service"
+                    }[30m])
+                  ),
+                  0.001
+                )
+              )
+            )
+          )
+          / 0.01
+
+      - record: cloudforge:slo_request_success_burn:1h
+        expr: |
+          (
+            (
+              (
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service",
+                    status=~"5.."
+                  }[1h])
+                )
+                or
+                (
+                  sum by (job, service, environment) (
+                    rate(http_requests_total{
+                      job="deployment-service"
+                    }[1h])
+                  ) * 0
+                )
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service"
+                  }[1h])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.01
+
+      - record: cloudforge:slo_request_success_burn:6h
+        expr: |
+          (
+            (
+              (
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service",
+                    status=~"5.."
+                  }[6h])
+                )
+                or
+                (
+                  sum by (job, service, environment) (
+                    rate(http_requests_total{
+                      job="deployment-service"
+                    }[6h])
+                  ) * 0
+                )
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service"
+                  }[6h])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.01
+
+      # ----------------------------------------------------------
+      # LATENCY BURN
+      # ----------------------------------------------------------
+
+      - record: cloudforge:slo_latency_burn:5m
+        expr: |
+          (
+            1 -
+            (
+              sum by (job, service, environment) (
+                rate(http_request_duration_seconds_bucket{
+                  job="deployment-service",
+                  le="0.5"
+                }[5m])
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_request_duration_seconds_count{
+                    job="deployment-service"
+                  }[5m])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.05
+
+      - record: cloudforge:slo_latency_burn:30m
+        expr: |
+          (
+            1 -
+            (
+              sum by (job, service, environment) (
+                rate(http_request_duration_seconds_bucket{
+                  job="deployment-service",
+                  le="0.5"
+                }[30m])
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_request_duration_seconds_count{
+                    job="deployment-service"
+                  }[30m])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.05
+
+      - record: cloudforge:slo_latency_burn:1h
+        expr: |
+          (
+            1 -
+            (
+              sum by (job, service, environment) (
+                rate(http_request_duration_seconds_bucket{
+                  job="deployment-service",
+                  le="0.5"
+                }[1h])
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_request_duration_seconds_count{
+                    job="deployment-service"
+                  }[1h])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.05
+
+      - record: cloudforge:slo_latency_burn:6h
+        expr: |
+          (
+            1 -
+            (
+              sum by (job, service, environment) (
+                rate(http_request_duration_seconds_bucket{
+                  job="deployment-service",
+                  le="0.5"
+                }[6h])
+              )
+              /
+              clamp_min(
+                sum by (job, service, environment) (
+                  rate(http_request_duration_seconds_count{
+                    job="deployment-service"
+                  }[6h])
+                ),
+                0.001
+              )
+            )
+          )
+          / 0.05
