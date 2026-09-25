@@ -88,7 +88,7 @@ class IncidentStore:
                             incident.ai_analysis.model_dump(mode="json")
                         )
                         if incident.ai_analysis
-                        else {},
+                        else Jsonb({}),
                     ),
                 )
 

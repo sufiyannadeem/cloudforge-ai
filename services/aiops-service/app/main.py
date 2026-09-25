@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query
 from .analysis_routes import router as incident_intelligence_router
 from .anomaly_routes import router as anomaly_router
+from .ai_enrichment_routes import router as ai_enrichment_router
 from .slo_routes import router as slo_router
 
 from .analyzer import analyze_alert
@@ -41,7 +42,9 @@ app.include_router(
 app.include_router(
     anomaly_router
 )
-
+app.include_router(
+    ai_enrichment_router
+)
 class AcknowledgeIncidentRequest(BaseModel):
     acknowledged_by: str
 
