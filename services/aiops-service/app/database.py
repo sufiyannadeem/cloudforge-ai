@@ -7,16 +7,21 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://cloudforge@localhost:5432/cloudforge",
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+def _require_database_url() -> str:
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL must be set; passwordless database connections are not allowed"
+        )
+    return DATABASE_URL
 
 
 @contextmanager
 def get_connection() -> Iterator[Connection]:
     connection = psycopg.connect(
-        DATABASE_URL,
+        _require_database_url(),
         row_factory=dict_row,
     )
 

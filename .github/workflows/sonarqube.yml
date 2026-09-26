@@ -74,9 +74,9 @@ jobs:
       - name: Generate AIOps coverage
         working-directory: services/aiops-service
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install coverage pytest
-          python -m pip install -r requirements.txt
+          python -m pip install --only-binary=:all: "pip==26.2.1"
+          python -m pip install --only-binary=:all: "coverage==7.10.6" "pytest==8.4.2"
+          python -m pip install --only-binary=:all: -r requirements.txt
 
           rm -f coverage.xml .coverage
 

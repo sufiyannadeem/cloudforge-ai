@@ -12,7 +12,11 @@ RUN groupadd --system appgroup \
 
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir --no-compile -r requirements.txt
+RUN python -m pip install \
+    --no-cache-dir \
+    --no-compile \
+    --only-binary=:all: \
+    -r requirements.txt
 
 COPY app ./app
 

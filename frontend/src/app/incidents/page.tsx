@@ -189,7 +189,7 @@ export default function IncidentsPage() {
           .map((incident) => incident.service)
           .filter(Boolean),
       ),
-    ).sort();
+    ).sort((a, b) => a.localeCompare(b));
   }, [incidents]);
 
   const filteredIncidents = useMemo(() => {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import json
 import os
 import urllib.error
@@ -378,7 +379,7 @@ class PrometheusClient:
                 except (TypeError, ValueError):
                     continue
 
-                if value != value:
+                if math.isnan(value):
                     continue
 
                 values.append((timestamp, value))
