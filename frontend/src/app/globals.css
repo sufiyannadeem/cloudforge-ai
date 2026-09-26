@@ -1,0 +1,391 @@
+@import "tailwindcss";
+
+/*
+ * CloudForge AI
+ * Global design system
+ *
+ * All platform surfaces should ultimately consume these tokens.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   LIGHT THEME
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+
+  --cf-background: #f4f6f8;
+
+  --cf-surface: #ffffff;
+  --cf-surface-2: #f8fafc;
+  --cf-overlay: rgba(15, 23, 42, 0.58);
+  --cf-surface-3: #eef2f7;
+
+  --cf-border: #d8dee8;
+  --cf-border-strong: #c4ccd8;
+
+  --cf-text: #0f172a;
+  --cf-text-secondary: #475569;
+  --cf-text-muted: #64748b;
+
+  --cf-primary: #4f46e5;
+  --cf-primary-hover: #4338ca;
+
+  --cf-success: #16a34a;
+  --cf-warning: #d97706;
+  --cf-danger: #dc2626;
+  --cf-info: #2563eb;
+
+  /* Existing variable compatibility */
+  --background: var(--cf-background);
+  --foreground: var(--cf-text);
+  --muted: var(--cf-text-muted);
+  --border: var(--cf-border);
+  --panel: var(--cf-surface);
+  --panel-hover: var(--cf-surface-2);
+  --primary: var(--cf-primary);
+  --success: var(--cf-success);
+  --warning: var(--cf-warning);
+  --danger: var(--cf-danger);
+}
+
+/* ============================================================
+   DARK THEME
+   ============================================================ */
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cf-background: #09090b;
+
+  --cf-surface: #111318;
+  --cf-surface-2: #181b23;
+  --cf-surface-3: #20242e;
+
+  --cf-border: #292e39;
+  --cf-border-strong: #3b4350;
+
+  --cf-text: #f8fafc;
+  --cf-text-secondary: #cbd5e1;
+  --cf-text-muted: #94a3b8;
+
+  --cf-primary: #6366f1;
+  --cf-primary-hover: #818cf8;
+
+  --cf-success: #22c55e;
+  --cf-warning: #f59e0b;
+  --cf-danger: #ef4444;
+  --cf-info: #60a5fa;
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--cf-background);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+
+  background: var(--cf-background);
+  color: var(--cf-text);
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+input,
+textarea,
+select {
+  color: var(--cf-text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--cf-text-muted);
+}
+
+::selection {
+  background: var(--cf-primary);
+  color: #ffffff;
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--cf-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--cf-border-strong);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cf-text-muted);
+}
+
+/* ============================================================
+   CLOUDFORGE SEMANTIC UTILITIES
+   ============================================================ */
+
+.cf-page {
+  background: var(--cf-background);
+  color: var(--cf-text);
+}
+
+.cf-surface {
+  background: var(--cf-surface);
+  color: var(--cf-text);
+  border-color: var(--cf-border);
+}
+
+.cf-surface-2 {
+  background: var(--cf-surface-2);
+  color: var(--cf-text);
+  border-color: var(--cf-border);
+}
+
+.cf-surface-3 {
+  background: var(--cf-surface-3);
+  color: var(--cf-text);
+  border-color: var(--cf-border);
+}
+
+.cf-border {
+  border-color: var(--cf-border);
+}
+
+.cf-text {
+  color: var(--cf-text);
+}
+
+.cf-text-secondary {
+  color: var(--cf-text-secondary);
+}
+
+.cf-text-muted {
+  color: var(--cf-text-muted);
+}
+
+/* ============================================================
+   LEGACY NEUTRAL UTILITY COMPATIBILITY
+   ============================================================
+   Existing pages still contain hardcoded neutral Tailwind
+   utilities. These mappings keep them visually consistent
+   until those components are migrated to cf-* tokens.
+   Semantic colors such as emerald, amber, rose, blue, and
+   indigo are intentionally NOT overridden.
+   ============================================================ */
+
+/* ---------- Light: dark legacy surfaces ---------- */
+
+html[data-theme="light"] .bg-zinc-950,
+html[data-theme="light"] .bg-zinc-950\/40,
+html[data-theme="light"] .bg-zinc-950\/50,
+html[data-theme="light"] .bg-zinc-950\/60,
+html[data-theme="light"] .bg-slate-950,
+html[data-theme="light"] .bg-gray-950,
+html[data-theme="light"] .bg-gray-950\/30,
+html[data-theme="light"] .bg-gray-950\/40,
+html[data-theme="light"] .bg-gray-950\/50 {
+  background-color: var(--cf-background) !important;
+}
+
+html[data-theme="light"] .bg-zinc-900,
+html[data-theme="light"] .bg-zinc-900\/40,
+html[data-theme="light"] .bg-zinc-900\/50,
+html[data-theme="light"] .bg-zinc-900\/60,
+html[data-theme="light"] .bg-gray-900,
+html[data-theme="light"] .bg-gray-900\/40,
+html[data-theme="light"] .bg-gray-900\/50,
+html[data-theme="light"] .bg-gray-900\/60 {
+  background-color: var(--cf-surface) !important;
+}
+
+html[data-theme="light"] .bg-zinc-800,
+html[data-theme="light"] .bg-zinc-800\/40,
+html[data-theme="light"] .bg-zinc-800\/50,
+html[data-theme="light"] .bg-gray-800,
+html[data-theme="light"] .bg-gray-800\/40,
+html[data-theme="light"] .bg-gray-800\/50 {
+  background-color: var(--cf-surface-3) !important;
+}
+
+/* ---------- Light: legacy text ---------- */
+
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-zinc-100,
+html[data-theme="light"] .text-zinc-200,
+html[data-theme="light"] .text-gray-100,
+html[data-theme="light"] .text-gray-200 {
+  color: var(--cf-text) !important;
+}
+
+html[data-theme="light"] .text-zinc-300,
+html[data-theme="light"] .text-zinc-400,
+html[data-theme="light"] .text-gray-300,
+html[data-theme="light"] .text-gray-400 {
+  color: var(--cf-text-secondary) !important;
+}
+
+html[data-theme="light"] .text-zinc-500,
+html[data-theme="light"] .text-zinc-600,
+html[data-theme="light"] .text-gray-500,
+html[data-theme="light"] .text-gray-600 {
+  color: var(--cf-text-muted) !important;
+}
+
+html[data-theme="light"] .text-gray-700,
+html[data-theme="light"] .text-gray-800,
+html[data-theme="light"] .text-gray-900,
+html[data-theme="light"] .text-black {
+  color: var(--cf-text) !important;
+}
+
+/* ---------- Light: legacy borders ---------- */
+
+html[data-theme="light"] .border-zinc-700,
+html[data-theme="light"] .border-zinc-800,
+html[data-theme="light"] .border-gray-700,
+html[data-theme="light"] .border-gray-800,
+html[data-theme="light"] .border-gray-200,
+html[data-theme="light"] .border-gray-100 {
+  border-color: var(--cf-border) !important;
+}
+
+/* ---------- Dark: legacy light surfaces ---------- */
+
+html[data-theme="dark"] .bg-white,
+html[data-theme="dark"] .bg-gray-50,
+html[data-theme="dark"] .bg-gray-100 {
+  background-color: var(--cf-surface) !important;
+}
+
+html[data-theme="dark"] .bg-gray-200 {
+  background-color: var(--cf-surface-3) !important;
+}
+
+/* ---------- Dark: legacy text ---------- */
+
+html[data-theme="dark"] .text-black,
+html[data-theme="dark"] .text-gray-900,
+html[data-theme="dark"] .text-gray-800 {
+  color: var(--cf-text) !important;
+}
+
+html[data-theme="dark"] .text-gray-700,
+html[data-theme="dark"] .text-gray-600,
+html[data-theme="dark"] .text-gray-500 {
+  color: var(--cf-text-secondary) !important;
+}
+
+/* ---------- Dark: legacy borders ---------- */
+
+html[data-theme="dark"] .border-gray-100,
+html[data-theme="dark"] .border-gray-200,
+html[data-theme="dark"] .border-gray-300,
+html[data-theme="dark"] .border-gray-700,
+html[data-theme="dark"] .border-gray-800 {
+  border-color: var(--cf-border) !important;
+}
+
+/* ============================================================
+   COMMON ARBITRARY DARK SURFACES
+   ============================================================ */
+
+html[data-theme="light"] .bg-\[\#09090b\] {
+  background-color: var(--cf-background) !important;
+}
+
+html[data-theme="light"] .bg-\[\#121214\],
+html[data-theme="light"] .bg-\[\#151519\],
+html[data-theme="light"] .bg-\[\#1a1a1f\],
+html[data-theme="light"] .bg-\[\#1c1c24\] {
+  background-color: var(--cf-surface) !important;
+}
+
+html[data-theme="light"] .border-\[\#29292f\] {
+  border-color: var(--cf-border) !important;
+}
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+
+select,
+input,
+textarea {
+  border-color: var(--cf-border);
+  background-color: var(--cf-surface);
+  color: var(--cf-text);
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  border-color: var(--cf-primary);
+  outline: none;
+}
+
+select option {
+  background: var(--cf-surface);
+  color: var(--cf-text);
+}
+
+/* ============================================================
+   REDUCE TRANSITION FLASH
+   ============================================================ */
+
+html,
+body,
+header,
+aside,
+main,
+section,
+article {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
+}

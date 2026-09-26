@@ -1,0 +1,6 @@
+title = "CloudForge AI Gitleaks configuration"
+
+[allowlist]
+description = "Known false-positive metric key"
+regexes = ['''key === "p95_latency_seconds"''']
+paths = ['''frontend/src/app/incidents/\[id\]/page\.tsx''']

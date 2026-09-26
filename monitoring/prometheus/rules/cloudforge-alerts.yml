@@ -1,8 +1,14 @@
 groups:
+
+  # ============================================================
+  # DEPLOYMENT SERVICE OPERATIONAL ALERTS
+  # ============================================================
+
   - name: cloudforge-deployment-service-alerts
     interval: 30s
 
     rules:
+
       - alert: DeploymentServiceDown
         expr: up{job="deployment-service"} == 0
         for: 1m
@@ -19,19 +25,9 @@ groups:
 
       - alert: DeploymentServiceHighErrorRate
         expr: |
-          (
-            sum(rate(http_requests_total{
-              job="deployment-service",
-              status=~"5.."
-            }[5m]))
-          /
-            clamp_min(
-              sum(rate(http_requests_total{
-                job="deployment-service"
-              }[5m])),
-              0.001
-            )
-          ) > 0.05
+          cloudforge:http_error_rate:5m{
+            job="deployment-service"
+          } > 0.05
         for: 5m
 
         labels:
@@ -46,14 +42,9 @@ groups:
 
       - alert: DeploymentServiceHighP95Latency
         expr: |
-          histogram_quantile(
-            0.95,
-            sum by (le) (
-              rate(http_request_duration_seconds_bucket{
-                job="deployment-service"
-              }[5m])
-            )
-          ) > 1
+          cloudforge:http_request_latency_p95_seconds:5m{
+            job="deployment-service"
+          } > 1
         for: 5m
 
         labels:
@@ -68,9 +59,9 @@ groups:
 
       - alert: DeploymentServiceNoRecentTraffic
         expr: |
-          sum(rate(http_requests_total{
+          cloudforge:http_request_rate:5m{
             job="deployment-service"
-          }[10m])) == 0
+          } == 0
         for: 10m
 
         labels:
@@ -83,22 +74,15 @@ groups:
           description: "The deployment-service has received no HTTP traffic during the last ten minutes."
           runbook: "Confirm whether the service is expected to receive traffic."
 
+      # ----------------------------------------------------------
+      # DEPLOYMENT HEALTH
+      # ----------------------------------------------------------
 
       - alert: CloudForgeDeploymentFailureRateHigh
         expr: |
-          (
-            sum(rate(cloudforge_deployments_total{
-              job="deployment-service",
-              status="failed"
-            }[10m]))
-          /
-            clamp_min(
-              sum(rate(cloudforge_deployments_total{
-                job="deployment-service"
-              }[10m])),
-              0.001
-            )
-          ) > 0.10
+          cloudforge:deployment_failure_rate:10m{
+            job="deployment-service"
+          } > 0.10
         for: 5m
 
         labels:
@@ -113,10 +97,9 @@ groups:
 
       - alert: CloudForgeRepeatedDeploymentFailures
         expr: |
-          increase(cloudforge_deployments_total{
-            job="deployment-service",
-            status="failed"
-          }[15m]) >= 3
+          cloudforge:deployment_failures:15m{
+            job="deployment-service"
+          } >= 3
         for: 1m
 
         labels:
@@ -131,12 +114,9 @@ groups:
 
       - alert: CloudForgeHighDeploymentP95Duration
         expr: |
-          histogram_quantile(
-            0.95,
-            sum by (environment, le) (
-              rate(cloudforge_deployment_duration_seconds_bucket[10m])
-            )
-          ) > 5
+          cloudforge:deployment_duration_p95_seconds:10m{
+            job="deployment-service"
+          } > 5
         for: 5m
 
         labels:
@@ -148,17 +128,61 @@ groups:
           summary: "Deployment P95 duration is high"
           description: "The P95 deployment execution duration has exceeded five seconds for five minutes."
           runbook: "Inspect executor latency and worker behavior."
-      - alert: CloudForgeSLOAvailabilityBelowTarget
+
+      # ============================================================
+      # 7-DAY SLO COMPLIANCE
+      # ============================================================
+
+      - alert: CloudForgeAvailabilitySLOBreached
         expr: |
-          (
-            1 - avg_over_time(up{job="deployment-service"}[30m])
-          ) / 0.001 > 1
-        for: 5m
+          cloudforge:slo_availability:7d{
+            job="deployment-service"
+          } < 0.999
+        for: 10m
+
         labels:
-          service: deployment-service
           severity: warning
+          service: deployment-service
           team: platform
+          slo: availability
+
         annotations:
-          summary: "Deployment service SLO availability is below target"
-          description: "The deployment-service availability error budget burn rate is above 1x for five minutes."
-          runbook: "Check Prometheus availability, deployment-service health, and recent outages."
+          summary: "Deployment service availability SLO breached"
+          description: "7-day observed availability is below the 99.9% SLO target."
+          runbook: "Inspect deployment-service health, recent incidents, and Prometheus availability history."
+
+      - alert: CloudForgeRequestSuccessSLOBreached
+        expr: |
+          cloudforge:slo_request_success:7d{
+            job="deployment-service"
+          } < 0.99
+        for: 10m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: request-success
+
+        annotations:
+          summary: "Deployment service request success SLO breached"
+          description: "7-day HTTP request success is below the 99% target."
+          runbook: "Inspect HTTP 5xx errors, application logs, dependencies, and recent deployments."
+
+      - alert: CloudForgeP95LatencySLOBreached
+        expr: |
+          cloudforge:slo_latency_compliance:7d{
+            job="deployment-service"
+          } < 0.95
+        for: 10m
+
+        labels:
+          severity: warning
+          service: deployment-service
+          team: platform
+          slo: latency
+
+        annotations:
+          summary: "Deployment service latency SLO breached"
+          description: "Fewer than 95% of requests are completing within 500ms over the seven-day observation window."
+          runbook: "Inspect P95 latency, slow endpoints, database calls, and resource utilization."
