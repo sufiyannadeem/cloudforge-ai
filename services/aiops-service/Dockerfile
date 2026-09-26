@@ -10,13 +10,14 @@ WORKDIR /app
 RUN groupadd --system appgroup \
     && useradd --system --gid appgroup --home-dir /app appuser
 
-COPY requirements.txt .
+COPY requirements.lock .
 
 RUN python -m pip install \
     --no-cache-dir \
     --no-compile \
     --only-binary=:all: \
-    -r requirements.txt
+    --require-hashes \
+    -r requirements.lock
 
 COPY app ./app
 
