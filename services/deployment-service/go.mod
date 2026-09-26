@@ -1,6 +1,6 @@
 module github.com/sufiyannadeem/cloudforge-ai-deployment-service
 
-go 1.25.0
+go 1.25.14
 
 require (
 	github.com/google/uuid v1.6.0

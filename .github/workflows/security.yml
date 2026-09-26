@@ -1,0 +1,204 @@
+name: CloudForge AI Security
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TRIVY_SEVERITY: HIGH,CRITICAL
+
+jobs:
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  trivy-filesystem:
+    name: Trivy Filesystem Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  trivy-config:
+    name: Trivy IaC and Configuration Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Trivy configuration scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: ${{ env.TRIVY_SEVERITY }}
+          exit-code: "1"
+          format: table
+
+  image-security:
+    name: Build and Scan Images
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: project-service
+            context: services/project-service
+            dockerfile: services/project-service/Dockerfile
+            image: cloudforge-project-service:security
+
+          - name: infrastructure-service
+            context: services/infrastructure-service
+            dockerfile: services/infrastructure-service/Dockerfile
+            image: cloudforge-infrastructure-service:security
+
+          - name: deployment-service
+            context: services/deployment-service
+            dockerfile: services/deployment-service/Dockerfile
+            image: cloudforge-deployment-service:security
+
+          - name: aiops-service
+            context: services/aiops-service
+            dockerfile: services/aiops-service/Dockerfile
+            image: cloudforge-aiops-service:security
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Build ${{ matrix.name }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          tags: ${{ matrix.image }}
+          load: true
+          push: false
+          provenance: false
+
+      - name: Scan ${{ matrix.name }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          scanners: vuln,secret,misconfig
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Generate image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: cyclonedx
+          output: ${{ matrix.name }}-sbom.json
+          exit-code: "0"
+
+      - name: Upload image SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.name }}-sbom
+          path: ${{ matrix.name }}-sbom.json
+          retention-days: 30
+          if-no-files-found: error
+
+  sbom:
+    name: Generate Repository SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: cyclonedx
+          output: cloudforge-sbom.json
+          exit-code: "0"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cloudforge-repository-sbom
+          path: cloudforge-sbom.json
+          retention-days: 30
+          if-no-files-found: error
+
+  security-summary:
+    name: Security Gate
+    needs:
+      - secret-scan
+      - trivy-filesystem
+      - trivy-config
+      - image-security
+      - sbom
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Security gate passed
+        run: |
+          echo "=========================================="
+          echo "CLOUDFORGE AI SECURITY GATE"
+          echo "=========================================="
+          echo "Secret scan: PASS"
+          echo "Filesystem vulnerability scan: PASS"
+          echo "IaC/configuration scan: PASS"
+          echo "Application image scans: PASS"
+          echo "SBOM generation: PASS"
+          echo "=========================================="

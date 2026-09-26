@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://cloudforge:cloudforge_password@localhost:5432/cloudforge",
+    "postgresql://cloudforge@localhost:5432/cloudforge",
 )
 
 

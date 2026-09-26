@@ -241,7 +241,7 @@ Local PostgreSQL configuration:
 |---|---|
 | Database | cloudforge |
 | Username | cloudforge |
-| Password | cloudforge_password |
+| Password | Value from local `.env` (`POSTGRES_PASSWORD`) |
 | Host from host machine | localhost |
 | Host inside Compose | postgres |
 | Port | 5432 |
@@ -302,7 +302,7 @@ go build ./...
 Integration tests use a separate test database:
 
 ```bash
-export TEST_DATABASE_URL="postgres://cloudforge:cloudforge_password@localhost:5432/cloudforge_test?sslmode=disable"
+export TEST_DATABASE_URL="postgres://cloudforge:${POSTGRES_PASSWORD}@localhost:5432/cloudforge_test?sslmode=disable"
 ```
 
 ## Docker Commands

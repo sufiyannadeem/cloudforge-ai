@@ -1,0 +1,9 @@
+[run]
+relative_files = True
+
+
+[report]
+omit =
+    */tests/*
+    */test_*.py
+    */__pycache__/*

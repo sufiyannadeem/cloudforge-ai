@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: cloudforge
       POSTGRES_USER: cloudforge
-      POSTGRES_PASSWORD: cloudforge_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -27,7 +27,7 @@ services:
     environment:
       APP_ENV: production
       SERVER_PORT: "8080"
-      DATABASE_URL: postgres://cloudforge:cloudforge_password@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
       SHUTDOWN_TIMEOUT_SECONDS: "10"
     ports:
       - "8080:8080"
@@ -55,7 +55,7 @@ services:
     environment:
       APP_ENV: production
       SERVER_PORT: "8081"
-      DATABASE_URL: postgres://cloudforge:cloudforge_password@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
       SHUTDOWN_TIMEOUT_SECONDS: "10"
     ports:
       - "8081:8081"
@@ -84,7 +84,7 @@ services:
     environment:
       APP_ENV: production
       SERVER_PORT: "8082"
-      DATABASE_URL: postgres://cloudforge:cloudforge_password@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
       SHUTDOWN_TIMEOUT_SECONDS: "10"
     ports:
       - "8082:8082"
@@ -166,7 +166,7 @@ services:
       context: ./services/aiops-service
     container_name: cloudforge-aiops-service
     environment:
-      DATABASE_URL: postgresql://cloudforge:cloudforge_password@postgres:5432/cloudforge
+      DATABASE_URL: postgresql://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_TIMEOUT_SECONDS: "5"
       SLO_WINDOW: "7d"

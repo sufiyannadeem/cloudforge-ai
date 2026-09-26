@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 
 	if databaseURL == "" {
-		databaseURL = "postgres://cloudforge:cloudforge_password@localhost:5432/cloudforge?sslmode=disable"
+		databaseURL = "postgres://cloudforge@localhost:5432/cloudforge?sslmode=disable"
 	}
 
 	pool, err := pgxpool.New(ctx, databaseURL)

@@ -1,0 +1,11 @@
+scan:
+  skip-dirs:
+    - .git
+    - .venv
+    - node_modules
+    - .next
+    - backups
+    - backup
+
+misconfiguration:
+  include-non-failures: false

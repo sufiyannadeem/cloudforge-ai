@@ -27,3 +27,15 @@ __pycache__/
 backups/
 monitoring/alertmanager/alertmanager.generated.yml
 backup/
+
+# Security / analysis reports
+cloudforge-sbom.json
+trivy-results.json
+trivy-results.sarif
+coverage.out
+coverage.xml
+.sonar/
+
+# Generated security artifacts
+*-sbom.json
+.coverage

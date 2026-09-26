@@ -33,7 +33,7 @@ func Load() (Config, error) {
 	return Config{
 		AppEnv:                 getEnv("APP_ENV", "development"),
 		ServerPort:             serverPort,
-		DatabaseURL:            getEnv("DATABASE_URL", "postgres://cloudforge:cloudforge_password@localhost:5432/cloudforge?sslmode=disable"),
+		DatabaseURL:            getEnv("DATABASE_URL", "postgres://cloudforge@localhost:5432/cloudforge?sslmode=disable"),
 		ShutdownTimeoutSeconds: timeout,
 	}, nil
 }

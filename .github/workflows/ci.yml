@@ -26,7 +26,7 @@ jobs:
         env:
           POSTGRES_DB: cloudforge
           POSTGRES_USER: cloudforge
-          POSTGRES_PASSWORD: cloudforge_password
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -40,14 +40,14 @@ jobs:
         working-directory: services/project-service
 
     env:
-      TEST_DATABASE_URL: postgres://cloudforge:cloudforge_password@localhost:5432/cloudforge_test?sslmode=disable
+      TEST_DATABASE_URL: postgres://cloudforge@localhost:5432/cloudforge_test?sslmode=disable
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: services/project-service/go.mod
           cache-dependency-path: services/project-service/go.sum
@@ -80,7 +80,7 @@ jobs:
       - name: Create test database
         working-directory: .
         run: |
-          PGPASSWORD=cloudforge_password psql \
+          psql \
             -h localhost \
             -U cloudforge \
             -d cloudforge \
@@ -89,7 +89,7 @@ jobs:
       - name: Apply database schema
         working-directory: .
         run: |
-          PGPASSWORD=cloudforge_password psql \
+          psql \
             -h localhost \
             -U cloudforge \
             -d cloudforge_test \
