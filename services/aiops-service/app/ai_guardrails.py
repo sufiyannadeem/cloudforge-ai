@@ -114,6 +114,8 @@ class AIGuardrailValidator:
         self,
         content: str,
         fallback: AIAnalysis,
+        provider: str,
+        model: str | None,
     ) -> AIValidationResult:
         """
         Validate an AI provider response.
@@ -153,8 +155,8 @@ class AIGuardrailValidator:
 
             analysis = AIAnalysis(
                 status="ai_generated",
-                provider="mock",
-                model=validated.model,
+                provider=provider,
+                model=model or validated.model,
                 summary=validated.summary,
                 probable_cause=validated.probable_cause,
                 root_cause_hints=validated.root_cause_hints,

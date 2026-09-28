@@ -5,6 +5,7 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -18,22 +19,21 @@ class AIProviderResult:
 
 class AIProvider:
     """
-    Provider abstraction for Incident Intelligence.
+    Provider abstraction for CloudForge AI.
 
-    Supported modes:
+    Supported providers:
 
-        AI_PROVIDER=disabled
-        AI_PROVIDER=mock
-        AI_PROVIDER=openai_compatible
+        disabled
+        mock
+        openai_compatible
+        bedrock
 
-    Mock provider:
-        No external API call is made.
+    The provider abstraction deliberately keeps external
+    model access behind a single interface.
 
-    OpenAI-compatible provider requires:
-
-        AI_BASE_URL
-        AI_API_KEY
-        AI_MODEL
+    AI output is never trusted directly. The caller is
+    responsible for parsing and validating the response
+    through CloudForge guardrails.
     """
 
     def __init__(self) -> None:
@@ -57,6 +57,14 @@ class AIProvider:
             "",
         )
 
+        self.aws_region = os.getenv(
+            "AWS_REGION",
+            os.getenv(
+                "AWS_DEFAULT_REGION",
+                "eu-west-1",
+            ),
+        ).strip()
+
         self.timeout = float(
             os.getenv(
                 "AI_TIMEOUT_SECONDS",
@@ -71,12 +79,15 @@ class AIProvider:
 
         Mock mode does not require credentials.
 
-        OpenAI-compatible mode requires all required
-        external-provider configuration.
+        Bedrock uses the AWS SDK credential chain and therefore
+        does not require an API key in the application.
         """
 
         if self.provider == "mock":
             return True
+
+        if self.provider == "bedrock":
+            return bool(self.model)
 
         return (
             self.provider == "openai_compatible"
@@ -109,35 +120,41 @@ class AIProvider:
                 user_prompt=user_prompt,
             )
 
-        if self.provider != "openai_compatible":
-            return AIProviderResult(
-                status="error",
-                provider=self.provider,
-                model=self.model or None,
-                content=None,
-                error=(
-                    f"Unsupported AI provider: "
-                    f"{self.provider}"
-                ),
+        if self.provider == "bedrock":
+            return self._analyze_bedrock(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
             )
 
-        if not self.enabled:
-            return AIProviderResult(
-                status="error",
-                provider=self.provider,
-                model=self.model or None,
-                content=None,
-                error=(
-                    "OpenAI-compatible AI provider "
-                    "is not fully configured. "
-                    "Required: AI_BASE_URL, "
-                    "AI_API_KEY and AI_MODEL."
-                ),
+        if self.provider == "openai_compatible":
+            if not self.enabled:
+                return AIProviderResult(
+                    status="error",
+                    provider=self.provider,
+                    model=self.model or None,
+                    content=None,
+                    error=(
+                        "OpenAI-compatible AI provider "
+                        "is not fully configured. "
+                        "Required: AI_BASE_URL, "
+                        "AI_API_KEY and AI_MODEL."
+                    ),
+                )
+
+            return self._analyze_openai_compatible(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
             )
 
-        return self._analyze_openai_compatible(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+        return AIProviderResult(
+            status="error",
+            provider=self.provider,
+            model=self.model or None,
+            content=None,
+            error=(
+                f"Unsupported AI provider: "
+                f"{self.provider}"
+            ),
         )
 
     def _analyze_mock(
@@ -183,6 +200,281 @@ class AIProvider:
                     f"{type(exc).__name__}: {exc}"
                 ),
             )
+
+    def _analyze_bedrock(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AIProviderResult:
+        """
+        Execute an AWS Bedrock Runtime inference request.
+
+        Credentials are resolved through the standard AWS SDK
+        credential chain.
+
+        The application never stores AWS credentials.
+        """
+
+        if not self.model:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=None,
+                content=None,
+                error=(
+                    "Bedrock AI provider requires "
+                    "AI_MODEL."
+                ),
+            )
+
+        try:
+            import boto3
+            from botocore.exceptions import (
+                BotoCoreError,
+                ClientError,
+            )
+
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=self.aws_region,
+            )
+
+            request_body = self._build_bedrock_request(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+
+            response = client.invoke_model(
+                modelId=self.model,
+                body=json.dumps(
+                    request_body
+                ),
+                contentType="application/json",
+                accept="application/json",
+            )
+
+            response_body = response["body"].read()
+
+            response_json = json.loads(
+                response_body.decode("utf-8")
+            )
+
+            content = self._extract_bedrock_content(
+                response_json
+            )
+
+            if not content:
+                return AIProviderResult(
+                    status="error",
+                    provider="bedrock",
+                    model=self.model,
+                    content=None,
+                    error=(
+                        "Bedrock returned an empty "
+                        "model response."
+                    ),
+                )
+
+            return AIProviderResult(
+                status="success",
+                provider="bedrock",
+                model=self.model,
+                content=content,
+                error=None,
+            )
+
+        except ClientError as exc:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=self.model,
+                content=None,
+                error=self._format_aws_error(
+                    exc
+                ),
+            )
+
+        except BotoCoreError as exc:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=self.model,
+                content=None,
+                error=(
+                    "Bedrock AWS SDK error: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+
+        except TimeoutError:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=self.model,
+                content=None,
+                error=(
+                    "Bedrock request timed out."
+                ),
+            )
+
+        except json.JSONDecodeError as exc:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=self.model,
+                content=None,
+                error=(
+                    "Bedrock returned invalid JSON: "
+                    f"{exc}"
+                ),
+            )
+
+        except Exception as exc:
+            return AIProviderResult(
+                status="error",
+                provider="bedrock",
+                model=self.model,
+                content=None,
+                error=(
+                    "Unexpected Bedrock provider "
+                    "error: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+
+    def _build_bedrock_request(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        """
+        Build the request payload.
+
+        CloudForge keeps temperature low because the AI is
+        interpreting operational evidence rather than
+        generating creative content.
+
+        This request shape targets Amazon Nova-style
+        Bedrock models.
+        """
+
+        return {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": (
+                                f"{system_prompt}\n\n"
+                                f"{user_prompt}"
+                            )
+                        }
+                    ],
+                }
+            ],
+            "inferenceConfig": {
+                "temperature": 0.1,
+                "maxTokens": 1200,
+            },
+        }
+
+    def _extract_bedrock_content(
+        self,
+        response_json: dict[str, Any],
+    ) -> str | None:
+        """
+        Extract text from an Amazon Nova-style response.
+        """
+
+        output = response_json.get(
+            "output",
+            {},
+        )
+
+        message = output.get(
+            "message",
+            {},
+        )
+
+        content = message.get(
+            "content",
+            [],
+        )
+
+        if not isinstance(
+            content,
+            list,
+        ):
+            return None
+
+        text_parts: list[str] = []
+
+        for item in content:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            text = item.get("text")
+
+            if text:
+                text_parts.append(
+                    str(text)
+                )
+
+        if not text_parts:
+            return None
+
+        return "\n".join(
+            text_parts
+        ).strip()
+
+    @staticmethod
+    def _format_aws_error(
+        exc: Exception,
+    ) -> str:
+        """
+        Convert an AWS SDK exception into a safe application
+        error message.
+
+        Secret material is never included deliberately.
+        """
+
+        response = getattr(
+            exc,
+            "response",
+            {},
+        )
+
+        error = (
+            response.get(
+                "Error",
+                {},
+            )
+            if isinstance(
+                response,
+                dict,
+            )
+            else {}
+        )
+
+        code = error.get(
+            "Code",
+            type(exc).__name__,
+        )
+
+        message = error.get(
+            "Message",
+            str(exc),
+        )
+
+        return (
+            "Bedrock AWS error "
+            f"{code}: {message}"
+        )
 
     def _analyze_openai_compatible(
         self,

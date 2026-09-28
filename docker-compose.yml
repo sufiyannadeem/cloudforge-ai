@@ -157,7 +157,7 @@ services:
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
-    
+
     depends_on:
       - prometheus
 
@@ -176,11 +176,23 @@ services:
       SLO_LATENCY_THRESHOLD_MS: "500"
       DEPLOYMENT_SERVICE_URL: http://deployment-service:8082
       DEPLOYMENT_SERVICE_TIMEOUT_SECONDS: "5"
+
       AI_PROVIDER: mock
       AI_MOCK_MODE: valid
       AI_BASE_URL: ""
       AI_MODEL: ""
       AI_TIMEOUT_SECONDS: "20"
+
+
+      AWS_PROFILE: cloudforge
+      AWS_REGION: eu-west-1
+      AWS_DEFAULT_REGION: eu-west-1
+      AWS_CONFIG_FILE: /home/appuser/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/appuser/.aws/credentials
+
+    volumes:
+      - ${HOME}/.cloudforge-aws-container:/home/appuser/.aws:ro
+
     ports:
       - "8090:8090"
     restart: unless-stopped
@@ -190,12 +202,10 @@ services:
     healthcheck:
       test:
         [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8090/health || exit 1"
         ]
-      interval: 15s
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s

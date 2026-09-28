@@ -6,6 +6,11 @@ from .remediation_routes import router as remediation_router
 from .anomaly_routes import router as anomaly_router
 from .ai_enrichment_routes import router as ai_enrichment_router
 from .slo_routes import router as slo_router
+from .finops_routes import router as finops_router
+
+from .aws_finops_routes import (
+    router as aws_finops_router,
+)
 
 from .analyzer import analyze_alert
 from .database import initialize_database
@@ -49,6 +54,12 @@ app.include_router(
 )
 app.include_router(
     ai_enrichment_router
+)
+app.include_router(
+    finops_router
+)
+app.include_router(
+    aws_finops_router
 )
 class AcknowledgeIncidentRequest(BaseModel):
     acknowledged_by: str

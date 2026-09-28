@@ -39,3 +39,16 @@ coverage.xml
 # Generated security artifacts
 *-sbom.json
 .coverage
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+crash.log
+crash.*.log
+
+# Local AWS credentials
+.cloudforge-aws/
+.cloudforge-aws-container/

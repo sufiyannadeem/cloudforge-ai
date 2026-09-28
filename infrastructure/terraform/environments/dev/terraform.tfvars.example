@@ -1,0 +1,19 @@
+aws_region = "eu-west-1"
+
+project_name = "cloudforge-ai"
+
+environment = "dev"
+
+vpc_cidr = "10.40.0.0/16"
+
+availability_zones = [
+  "eu-west-1a",
+  "eu-west-1b",
+  "eu-west-1c"
+]
+
+# Cost-conscious development configuration.
+# Production HA can use one NAT Gateway per AZ.
+single_nat_gateway = true
+
+ecr_image_tag_mutability = "IMMUTABLE"

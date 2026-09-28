@@ -21,6 +21,8 @@ RUN python -m pip install \
 
 COPY app ./app
 
+COPY knowledge ./knowledge
+
 RUN chown -R appuser:appgroup /app
 
 USER appuser

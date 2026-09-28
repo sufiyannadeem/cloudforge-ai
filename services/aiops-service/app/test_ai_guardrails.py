@@ -125,27 +125,24 @@ def valid_payload(fallback):
 """
 
 
-def run():
+def test_valid_response() -> None:
     validator = AIGuardrailValidator()
     fallback = deterministic_analysis()
-
-    print("========================================")
-    print("AI GUARDRAIL VALIDATION")
-    print("========================================")
 
     result = validator.validate(
         valid_payload(fallback),
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert result.valid
     assert result.analysis is not None
 
-    print("VALID RESPONSE: PASS")
 
-    # ---------------------------------------------------------
-    # Evidence tampering
-    # ---------------------------------------------------------
+def test_evidence_tampering_rejected() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
 
     tampered = valid_payload(fallback).replace(
         '"error_rate": 0.0',
@@ -155,75 +152,121 @@ def run():
     result = validator.validate(
         tampered,
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert not result.valid
 
-    print("EVIDENCE TAMPERING REJECTION: PASS")
 
-    # ---------------------------------------------------------
-    # Deployment correlation tampering
-    # ---------------------------------------------------------
+def test_deployment_correlation_tampering_rejected() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
 
     tampered = valid_payload(fallback).replace(
-        '"correlation_strength": "high"',
-        '"correlation_strength": "critical"',
+        '"deployment_id": "deployment-1"',
+        '"deployment_id": "fake-deployment"',
     )
 
     result = validator.validate(
         tampered,
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert not result.valid
 
-    print(
-        "DEPLOYMENT CORRELATION TAMPERING REJECTION: PASS"
-    )
 
-    # ---------------------------------------------------------
-    # Unsupported assessment
-    # ---------------------------------------------------------
+def test_unsupported_assessment_rejected() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
 
     tampered = valid_payload(fallback).replace(
         '"assessment": "evidence_available"',
-        '"assessment": "root_cause_confirmed"',
+        '"assessment": "confirmed_root_cause"',
     )
 
     result = validator.validate(
         tampered,
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert not result.valid
 
-    print("UNSUPPORTED ASSESSMENT REJECTION: PASS")
 
-    # ---------------------------------------------------------
-    # Invalid JSON
-    # ---------------------------------------------------------
+def test_invalid_json_rejected() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
 
     result = validator.validate(
         "not-json",
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert not result.valid
 
-    print("INVALID JSON REJECTION: PASS")
 
-    # ---------------------------------------------------------
-    # Empty response
-    # ---------------------------------------------------------
+def test_empty_response_rejected() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
 
     result = validator.validate(
         "",
         fallback,
+        provider="mock",
+        model="cloudforge-mock-v1",
     )
 
     assert not result.valid
 
+
+def test_provider_metadata_is_preserved() -> None:
+    validator = AIGuardrailValidator()
+    fallback = deterministic_analysis()
+
+    result = validator.validate(
+        valid_payload(fallback),
+        fallback,
+        provider="bedrock",
+        model="amazon.nova-lite-v1:0",
+    )
+
+    assert result.valid
+    assert result.analysis is not None
+    assert result.analysis.provider == "bedrock"
+    assert result.analysis.model == "amazon.nova-lite-v1:0"
+
+
+def run() -> None:
+    print("========================================")
+    print("AI GUARDRAIL VALIDATION")
+    print("========================================")
+
+    test_valid_response()
+    print("VALID RESPONSE: PASS")
+
+    test_evidence_tampering_rejected()
+    print("EVIDENCE TAMPERING REJECTION: PASS")
+
+    test_deployment_correlation_tampering_rejected()
+    print("DEPLOYMENT CORRELATION TAMPERING REJECTION: PASS")
+
+    test_unsupported_assessment_rejected()
+    print("UNSUPPORTED ASSESSMENT REJECTION: PASS")
+
+    test_invalid_json_rejected()
+    print("INVALID JSON REJECTION: PASS")
+
+    test_empty_response_rejected()
     print("EMPTY RESPONSE REJECTION: PASS")
+
+    test_provider_metadata_is_preserved()
+    print("PROVIDER METADATA PRESERVATION: PASS")
 
     print()
     print("ALL AI GUARDRAIL TESTS PASSED")

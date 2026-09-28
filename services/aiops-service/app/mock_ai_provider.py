@@ -24,6 +24,16 @@ class MockAIProvider:
 
     name = "mock"
 
+    @property
+    def enabled(self) -> bool:
+        """
+        The local mock provider is always available.
+
+        It does not require credentials or an external
+        network connection.
+        """
+        return True
+
     def __init__(
         self,
         mode: str | None = None,
