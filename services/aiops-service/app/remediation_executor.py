@@ -9,7 +9,6 @@ from .remediation_models import RemediationAction
 
 
 class RemediationExecutor:
-
     def __init__(
         self,
         base_url: str | None = None,
@@ -23,10 +22,14 @@ class RemediationExecutor:
             )
         ).rstrip("/")
 
-        self.timeout_seconds = timeout_seconds or float(
-            os.getenv(
-                "DEPLOYMENT_SERVICE_TIMEOUT_SECONDS",
-                "5",
+        self.timeout_seconds = (
+            timeout_seconds
+            if timeout_seconds is not None
+            else float(
+                os.getenv(
+                    "DEPLOYMENT_SERVICE_TIMEOUT_SECONDS",
+                    "5",
+                )
             )
         )
 
@@ -38,7 +41,6 @@ class RemediationExecutor:
         target_deployment_id: str | None,
         actor: str,
     ) -> dict:
-
         if action == RemediationAction.NO_ACTION:
             return {
                 "action": action.value,
@@ -81,10 +83,9 @@ class RemediationExecutor:
         incident_id: str,
         actor: str,
     ) -> dict:
-
         url = (
             f"{self.base_url}"
-            f"/api/v1/deployments/{deployment_id}/run"
+            f"/api/v1/deployments/{deployment_id}/remediation-run"
         )
 
         request = urllib.request.Request(
@@ -124,10 +125,13 @@ class RemediationExecutor:
                 }
 
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
+            body = exc.read().decode(
+                "utf-8",
+                errors="replace",
+            )
 
             raise RuntimeError(
-                f"deployment rerun rejected with HTTP "
+                "deployment rerun rejected with HTTP "
                 f"{exc.code}: {body}"
             ) from exc
 

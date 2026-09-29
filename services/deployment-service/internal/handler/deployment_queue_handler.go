@@ -3,12 +3,21 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
+)
+
+const (
+	cloudForgeActorHeader       = "X-CloudForge-Actor"
+	cloudForgeIncidentHeader    = "X-CloudForge-Incident"
+	cloudForgeRemediationHeader = "X-CloudForge-Remediation"
+
+	cloudForgeHumanApproved = "human-approved"
 )
 
 type DeploymentJobSubmitter interface {
@@ -30,7 +39,68 @@ func NewQueuedDeploymentHandler(
 	}
 }
 
+func authorizeRemediationRequest(r *http.Request) error {
+	actor := strings.TrimSpace(
+		r.Header.Get(cloudForgeActorHeader),
+	)
+
+	if actor == "" {
+		return errors.New("missing remediation actor")
+	}
+
+	incidentID := strings.TrimSpace(
+		r.Header.Get(cloudForgeIncidentHeader),
+	)
+
+	if incidentID == "" {
+		return errors.New("missing remediation incident")
+	}
+
+	remediation := strings.TrimSpace(
+		r.Header.Get(cloudForgeRemediationHeader),
+	)
+
+	if remediation != cloudForgeHumanApproved {
+		return errors.New("remediation authorization required")
+	}
+
+	return nil
+}
+
+// Run is the normal deployment execution endpoint.
+//
+// IMPORTANT:
+// This endpoint intentionally does NOT require remediation headers.
+// Normal deployment workflows must continue to work without
+// CloudForge remediation authorization metadata.
 func (h *QueuedDeploymentHandler) Run(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	h.queue(w, r)
+}
+
+// RunRemediation is the controlled remediation execution endpoint.
+//
+// Only explicitly human-approved AIOps remediation requests may use
+// this endpoint.
+func (h *QueuedDeploymentHandler) RunRemediation(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if err := authorizeRemediationRequest(r); err != nil {
+		writeError(
+			w,
+			http.StatusForbidden,
+			"remediation authorization required",
+		)
+		return
+	}
+
+	h.queue(w, r)
+}
+
+func (h *QueuedDeploymentHandler) queue(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {

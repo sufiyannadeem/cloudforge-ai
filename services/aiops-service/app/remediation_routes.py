@@ -216,6 +216,7 @@ def execute_remediation(
         return service.execute(
             proposal_id,
             request.executed_by.strip(),
+            request.idempotency_key.strip(),
         )
 
     except PermissionError as exc:
@@ -230,8 +231,58 @@ def execute_remediation(
             detail=str(exc),
         ) from exc
 
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Remediation execution failed: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/{incident_id}/remediation/{proposal_id}/verify",
+)
+def verify_remediation(
+    incident_id: str,
+    proposal_id: str,
+):
+
+    proposal = service.remediations.get(proposal_id)
+
+    if proposal is None or proposal.incident_id != incident_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Remediation proposal not found",
+        )
+
+    try:
+        return service.verify(proposal_id)
+
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Remediation verification failed: {exc}",
         ) from exc

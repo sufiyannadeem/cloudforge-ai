@@ -252,7 +252,12 @@ def initialize_database() -> None:
                 updated_at TIMESTAMPTZ NOT NULL,
                 approved_at TIMESTAMPTZ,
                 rejected_at TIMESTAMPTZ,
-                executed_at TIMESTAMPTZ
+                executed_at TIMESTAMPTZ,
+                expires_at TIMESTAMPTZ,
+                verification_started_at TIMESTAMPTZ,
+                verified_at TIMESTAMPTZ,
+                verification_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+                execution_idempotency_key VARCHAR(255)
             )
             """
         )
@@ -270,6 +275,60 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS
             idx_aiops_remediation_status
             ON aiops_remediation_proposals (status)
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verification_started_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verification_result JSONB
+            NOT NULL DEFAULT '{}'::jsonb
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS execution_idempotency_key VARCHAR(255)
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            uq_aiops_remediation_execution_idempotency
+            ON aiops_remediation_proposals (execution_idempotency_key)
+            WHERE execution_idempotency_key IS NOT NULL
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_remediation_expires_at
+            ON aiops_remediation_proposals (expires_at)
+            WHERE expires_at IS NOT NULL
             """
         )
 

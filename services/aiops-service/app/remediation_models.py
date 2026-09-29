@@ -23,6 +23,8 @@ class RemediationStatus(str, Enum):
     EXECUTING = "EXECUTING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    VERIFYING = "VERIFYING"
+    EXPIRED = "EXPIRED"
 
 
 class PolicyDecision(str, Enum):
@@ -49,6 +51,7 @@ class RemediationRejectionRequest(BaseModel):
 
 class RemediationExecutionRequest(BaseModel):
     executed_by: str = Field(min_length=1, max_length=255)
+    idempotency_key: str = Field(min_length=8, max_length=255)
 
 
 class RemediationProposal(BaseModel):
@@ -72,6 +75,11 @@ class RemediationProposal(BaseModel):
     approved_at: datetime | None = None
     rejected_at: datetime | None = None
     executed_at: datetime | None = None
+    expires_at: datetime | None = None
+    verification_started_at: datetime | None = None
+    verified_at: datetime | None = None
+    verification_result: dict | None = None
+    execution_idempotency_key: str | None = None
 
 
 class RemediationResponse(BaseModel):

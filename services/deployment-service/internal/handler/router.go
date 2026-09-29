@@ -148,8 +148,15 @@ func RegisterDeploymentRunRoute(
 	mux *http.ServeMux,
 	h *QueuedDeploymentHandler,
 ) {
+	// Normal deployment execution.
 	mux.HandleFunc(
 		"POST /api/v1/deployments/{id}/run",
 		h.Run,
+	)
+
+	// Controlled AIOps remediation execution.
+	mux.HandleFunc(
+		"POST /api/v1/deployments/{id}/remediation-run",
+		h.RunRemediation,
 	)
 }
