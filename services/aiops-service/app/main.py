@@ -11,6 +11,7 @@ from .finops_routes import router as finops_router
 from .aws_finops_routes import (
     router as aws_finops_router,
 )
+from .finops_optimization_routes import router as finops_optimization_router
 
 from .analyzer import analyze_alert
 from .database import initialize_database
@@ -60,6 +61,9 @@ app.include_router(
 )
 app.include_router(
     aws_finops_router
+)
+app.include_router(
+    finops_optimization_router
 )
 class AcknowledgeIncidentRequest(BaseModel):
     acknowledged_by: str

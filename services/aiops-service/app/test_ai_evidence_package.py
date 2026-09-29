@@ -88,9 +88,8 @@ def build_tools():
 
 
 def build_knowledge_base():
-    return OperationalKnowledgeBase(
-        Path("/app/knowledge")
-    )
+    knowledge_dir = Path(__file__).resolve().parent.parent / "knowledge"
+    return OperationalKnowledgeBase(knowledge_dir)
 
 
 def test_package_contains_operational_evidence():

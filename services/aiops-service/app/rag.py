@@ -28,9 +28,7 @@ class OperationalKnowledgeBase:
         self,
         knowledge_dir: str | Path,
     ) -> None:
-        self.knowledge_dir = Path(
-            knowledge_dir
-        )
+        self.knowledge_dir = Path(knowledge_dir)
 
         self.documents = self._load_documents()
         self.chunks = self._chunk_documents()
@@ -155,14 +153,72 @@ class OperationalKnowledgeBase:
         return sections
 
     @staticmethod
+    def _normalize_token(
+        token: str,
+    ) -> str:
+        """
+        Normalize simple English operational terms.
+
+        This is deliberately lightweight and deterministic.
+        It is not intended to be a full linguistic stemmer.
+
+        Examples:
+            errors       -> error
+            deployments  -> deployment
+            incidents    -> incident
+            failures     -> failure
+            restarted    -> restart
+        """
+
+        value = token.lower().strip()
+
+        if len(value) <= 2:
+            return value
+
+        # Common plural forms.
+        if value.endswith("ies") and len(value) > 4:
+            value = value[:-3] + "y"
+
+        elif value.endswith("sses"):
+            value = value[:-2]
+
+        elif (
+            value.endswith("ses")
+            and len(value) > 4
+        ):
+            value = value[:-2]
+
+        elif (
+            value.endswith("s")
+            and not value.endswith("ss")
+            and len(value) > 3
+        ):
+            value = value[:-1]
+
+        # Common simple past tense used in
+        # operational documentation.
+        if (
+            value.endswith("ied")
+            and len(value) > 4
+        ):
+            value = value[:-3] + "y"
+
+        elif (
+            value.endswith("ed")
+            and len(value) > 4
+        ):
+            value = value[:-2]
+
+        return value
+
+    @classmethod
     def _tokens(
+        cls,
         text: str,
     ) -> set[str]:
         return {
-            token.lower()
-            for token in _WORD_RE.findall(
-                text
-            )
+            cls._normalize_token(token)
+            for token in _WORD_RE.findall(text)
             if len(token) > 2
         }
 
@@ -177,8 +233,12 @@ class OperationalKnowledgeBase:
 
         Scoring:
 
-        - term overlap contributes to relevance
+        - normalized term overlap contributes to relevance
         - title matches receive additional weight
+        - exact query terms remain deterministic
+        - simple plural/past-tense normalization prevents
+          avoidable misses such as error/errors or
+          deployment/deployments
         """
 
         query_terms = self._tokens(query)
@@ -193,24 +253,24 @@ class OperationalKnowledgeBase:
                 chunk.content
             )
 
+            title_terms = self._tokens(
+                chunk.title
+            )
+
             matched = query_terms.intersection(
                 content_terms
             )
 
-            if not matched:
+            title_matches = query_terms.intersection(
+                title_terms
+            )
+
+            if not matched and not title_matches:
                 continue
 
             score = float(
                 len(matched)
                 / max(len(query_terms), 1)
-            )
-
-            title_terms = self._tokens(
-                chunk.title
-            )
-
-            title_matches = matched.intersection(
-                title_terms
             )
 
             score += (
@@ -223,7 +283,10 @@ class OperationalKnowledgeBase:
                     chunk=chunk,
                     score=score,
                     matched_terms=tuple(
-                        sorted(matched)
+                        sorted(
+                            matched
+                            | title_matches
+                        )
                     ),
                 )
             )

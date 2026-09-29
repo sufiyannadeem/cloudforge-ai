@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+import pytest
+
 from .ai_enrichment_models import EnrichmentStatus
 from .ai_enrichment_service import AIEnrichmentService
 from .ai_provider import AIProviderResult
@@ -148,6 +150,27 @@ def find_existing_incident() -> dict[str, Any]:
         )
 
     return incident
+
+
+@pytest.fixture(scope="module")
+def incident_id() -> str:
+    """
+    Pytest fixture backed by an existing incident.
+
+    The fixture is read-only and does not create, update,
+    acknowledge, or otherwise mutate incident state.
+    """
+
+    incident = find_existing_incident()
+
+    value = incident.get("id")
+
+    if not value:
+        raise AssertionError(
+            "Existing incident does not contain an ID."
+        )
+
+    return str(value)
 
 
 def run_mode(
@@ -459,15 +482,12 @@ def run() -> None:
         incident_id
     )
     print(
-        "FALLBACK PRESERVES DETERMINISTIC "
-        "EVIDENCE: PASS"
+        "DETERMINISTIC EVIDENCE PRESERVED: PASS"
     )
 
-    print()
-    print(
-        "ALL AI ENRICHMENT FAILURE-MODE "
-        "TESTS PASSED"
-    )
+    print("========================================")
+    print("ALL FAILURE-MODE CHECKS PASSED")
+    print("========================================")
 
 
 if __name__ == "__main__":

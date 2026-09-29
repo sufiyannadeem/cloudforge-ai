@@ -36,18 +36,14 @@ class AWSFinOpsClient:
     """
     Read-only AWS FinOps adapter.
 
-    This class:
-      - reads AWS account identity
-      - reads Cost Explorer data
-      - reads tagged resource inventory
-
-    It never:
+    This class never:
       - creates resources
       - deletes resources
       - modifies resources
       - changes tags
       - changes Terraform
       - changes Kubernetes
+      - creates or changes budgets
     """
 
     def __init__(
@@ -55,7 +51,6 @@ class AWSFinOpsClient:
         *,
         region: str = "eu-west-1",
     ) -> None:
-
         self.region = region
 
         self.sts = boto3.client(
@@ -63,9 +58,15 @@ class AWSFinOpsClient:
             region_name=region,
         )
 
-        # Cost Explorer API uses the us-east-1 endpoint.
+        # Cost Explorer is queried through us-east-1.
         self.cost_explorer = boto3.client(
             "ce",
+            region_name="us-east-1",
+        )
+
+        # AWS Budgets is a global account-level billing API.
+        self.budgets = boto3.client(
+            "budgets",
             region_name="us-east-1",
         )
 
@@ -75,15 +76,10 @@ class AWSFinOpsClient:
         )
 
     def get_account_id(self) -> str:
-
         try:
-            response = (
-                self.sts.get_caller_identity()
-            )
+            response = self.sts.get_caller_identity()
 
-            account_id = response.get(
-                "Account"
-            )
+            account_id = response.get("Account")
 
             if not account_id:
                 raise AWSFinOpsError(
@@ -101,48 +97,85 @@ class AWSFinOpsClient:
                 f"Unable to determine AWS account: {exc}"
             ) from exc
 
+    def _get_cost_and_usage(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        granularity: str = "DAILY",
+        group_by: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        next_token: str | None = None
+
+        while True:
+            request: dict[str, Any] = {
+                "TimePeriod": {
+                    "Start": start_date,
+                    "End": end_date,
+                },
+                "Granularity": granularity,
+                "Metrics": ["UnblendedCost"],
+            }
+
+            if group_by:
+                request["GroupBy"] = group_by
+
+            if next_token:
+                request["NextPageToken"] = next_token
+
+            try:
+                response = (
+                    self.cost_explorer
+                    .get_cost_and_usage(**request)
+                )
+
+            except (
+                ClientError,
+                BotoCoreError,
+            ) as exc:
+                raise AWSFinOpsError(
+                    "Unable to query AWS Cost Explorer: "
+                    f"{exc}"
+                ) from exc
+
+            results.extend(
+                response.get(
+                    "ResultsByTime",
+                    [],
+                )
+            )
+
+            next_token = response.get(
+                "NextPageToken"
+            )
+
+            if not next_token:
+                break
+
+        return results
+
     def get_service_costs(
         self,
         *,
         start_date: str,
         end_date: str,
     ) -> list[AWSServiceCost]:
-
-        try:
-            response = (
-                self.cost_explorer
-                .get_cost_and_usage(
-                    TimePeriod={
-                        "Start": start_date,
-                        "End": end_date,
-                    },
-                    Granularity="DAILY",
-                    Metrics=[
-                        "UnblendedCost"
-                    ],
-                    GroupBy=[
-                        {
-                            "Type": "DIMENSION",
-                            "Key": "SERVICE",
-                        }
-                    ],
-                )
-            )
-
-        except (
-            ClientError,
-            BotoCoreError,
-        ) as exc:
-            raise AWSFinOpsError(
-                f"Unable to query AWS Cost Explorer: {exc}"
-            ) from exc
+        results = self._get_cost_and_usage(
+            start_date=start_date,
+            end_date=end_date,
+            granularity="DAILY",
+            group_by=[
+                {
+                    "Type": "DIMENSION",
+                    "Key": "SERVICE",
+                }
+            ],
+        )
 
         totals: dict[str, float] = {}
 
-        for result in response.get(
-            "ResultsByTime",
-            [],
-        ):
+        for result in results:
             for group in result.get(
                 "Groups",
                 [],
@@ -155,18 +188,16 @@ class AWSFinOpsClient:
                 if not keys:
                     continue
 
-                service = str(
-                    keys[0]
-                )
+                service = str(keys[0])
 
                 amount = float(
                     group.get(
                         "Metrics",
-                        {}
+                        {},
                     )
                     .get(
                         "UnblendedCost",
-                        {}
+                        {},
                     )
                     .get(
                         "Amount",
@@ -194,18 +225,269 @@ class AWSFinOpsClient:
                 start_date=start_date,
                 end_date=end_date,
             )
-            for service, amount
-            in sorted(
+            for service, amount in sorted(
                 totals.items(),
                 key=lambda item: item[1],
                 reverse=True,
             )
         ]
 
+    def get_daily_cost_history(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        results = self._get_cost_and_usage(
+            start_date=start_date,
+            end_date=end_date,
+            granularity="DAILY",
+        )
+
+        history: list[dict[str, Any]] = []
+
+        for result in results:
+            period = result.get(
+                "TimePeriod",
+                {},
+            )
+
+            start = str(
+                period.get(
+                    "Start",
+                    "",
+                )
+            )
+
+            amount = float(
+                result.get(
+                    "Total",
+                    {},
+                )
+                .get(
+                    "UnblendedCost",
+                    {},
+                )
+                .get(
+                    "Amount",
+                    0,
+                )
+                or 0
+            )
+
+            history.append(
+                {
+                    "date": start,
+                    "amount": round(
+                        amount,
+                        6,
+                    ),
+                    "currency": "USD",
+                }
+            )
+
+        return history
+
+    def get_tag_costs(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        tag_key: str,
+    ) -> list[dict[str, Any]]:
+        tag_key = tag_key.strip()
+
+        if not tag_key:
+            raise AWSFinOpsError(
+                "Cost allocation tag key is required."
+            )
+
+        results = self._get_cost_and_usage(
+            start_date=start_date,
+            end_date=end_date,
+            granularity="DAILY",
+            group_by=[
+                {
+                    "Type": "TAG",
+                    "Key": tag_key,
+                }
+            ],
+        )
+
+        totals: dict[str, float] = {}
+
+        for result in results:
+            for group in result.get(
+                "Groups",
+                [],
+            ):
+                keys = group.get(
+                    "Keys",
+                    [],
+                )
+
+                if not keys:
+                    continue
+
+                raw_value = str(keys[0])
+
+                if "$" in raw_value:
+                    _, value = raw_value.split(
+                        "$",
+                        1,
+                    )
+                else:
+                    value = raw_value
+
+                value = value or "(untagged)"
+
+                amount = float(
+                    group.get(
+                        "Metrics",
+                        {},
+                    )
+                    .get(
+                        "UnblendedCost",
+                        {},
+                    )
+                    .get(
+                        "Amount",
+                        0,
+                    )
+                    or 0
+                )
+
+                totals[value] = (
+                    totals.get(
+                        value,
+                        0.0,
+                    )
+                    + amount
+                )
+
+        return [
+            {
+                "value": value,
+                "amount": round(
+                    amount,
+                    6,
+                ),
+                "currency": "USD",
+            }
+            for value, amount in sorted(
+                totals.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ]
+
+    def get_budgets(
+        self,
+        *,
+        account_id: str,
+    ) -> list[dict[str, Any]]:
+        budgets: list[dict[str, Any]] = []
+        next_token: str | None = None
+
+        while True:
+            request: dict[str, Any] = {
+                "AccountId": account_id,
+                "MaxResults": 100,
+            }
+
+            if next_token:
+                request["NextToken"] = next_token
+
+            try:
+                response = self.budgets.describe_budgets(
+                    **request
+                )
+
+            except (
+                ClientError,
+                BotoCoreError,
+            ) as exc:
+                raise AWSFinOpsError(
+                    "Unable to query AWS Budgets: "
+                    f"{exc}"
+                ) from exc
+
+            budgets.extend(
+                response.get(
+                    "Budgets",
+                    [],
+                )
+            )
+
+            next_token = response.get(
+                "NextToken"
+            )
+
+            if not next_token:
+                break
+
+        return budgets
+
+    def get_cost_forecast(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        prediction_interval_level: int = 85,
+    ) -> dict[str, Any]:
+        try:
+            response = (
+                self.cost_explorer.get_cost_forecast(
+                    TimePeriod={
+                        "Start": start_date,
+                        "End": end_date,
+                    },
+                    Granularity="DAILY",
+                    Metric="UNBLENDED_COST",
+                    PredictionIntervalLevel=(
+                        prediction_interval_level
+                    ),
+                )
+            )
+
+        except (
+            ClientError,
+            BotoCoreError,
+        ) as exc:
+            raise AWSFinOpsError(
+                "Unable to query AWS cost forecast: "
+                f"{exc}"
+            ) from exc
+
+        total = response.get(
+            "Total",
+            {},
+        )
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "amount": float(
+                total.get(
+                    "Amount",
+                    0,
+                )
+                or 0
+            ),
+            "currency": str(
+                total.get(
+                    "Unit",
+                    "USD",
+                )
+            ),
+            "prediction_interval_level": (
+                prediction_interval_level
+            ),
+        }
+
     def get_tagged_resources(
         self,
     ) -> list[AWSResource]:
-
         resources: list[AWSResource] = []
 
         paginator = self.tagging.get_paginator(
@@ -232,12 +514,16 @@ class AWSFinOpsClient:
                     if not arn:
                         continue
 
-                    raw_type = self._resource_type_from_arn(
-                        arn
+                    raw_type = (
+                        self._resource_type_from_arn(
+                            arn
+                        )
                     )
 
                     tags = {
-                        str(tag.get("Key")): str(tag.get("Value"))
+                        str(tag.get("Key")): str(
+                            tag.get("Value")
+                        )
                         for tag in item.get(
                             "Tags",
                             [],
@@ -275,7 +561,6 @@ class AWSFinOpsClient:
         start_date: str,
         end_date: str,
     ) -> AWSFinOpsSnapshot:
-
         account_id = self.get_account_id()
 
         service_costs = self.get_service_costs(
@@ -296,7 +581,6 @@ class AWSFinOpsClient:
 
     @staticmethod
     def default_date_range() -> tuple[str, str]:
-
         end = date.today()
 
         start = end - timedelta(
@@ -312,7 +596,6 @@ class AWSFinOpsClient:
     def _resource_type_from_arn(
         arn: str,
     ) -> ResourceType:
-
         if ":ec2:" in arn:
             return ResourceType.EC2
 
@@ -328,10 +611,7 @@ class AWSFinOpsClient:
         if ":eks:" in arn:
             return ResourceType.EKS
 
-        if (
-            ":elasticloadbalancing:"
-            in arn
-        ):
+        if ":elasticloadbalancing:" in arn:
             return ResourceType.LOAD_BALANCER
 
         return ResourceType.UNKNOWN
@@ -340,7 +620,6 @@ class AWSFinOpsClient:
     def _service_from_arn(
         arn: str,
     ) -> str:
-
         parts = arn.split(":")
 
         if len(parts) >= 3:
