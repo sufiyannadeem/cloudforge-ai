@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from .access_control import require_finops_access
 
 from .finops_optimization_models import (
     AWSOptimizationObservation,
@@ -12,6 +14,7 @@ from .finops_optimization_service import (
 
 
 router = APIRouter(
+    dependencies=[Depends(require_finops_access)],
     prefix="/api/v1/finops/optimization",
     tags=["FinOps Optimization"],
 )

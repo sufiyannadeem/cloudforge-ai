@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from .access_control import require_finops_access
 
 from .aws_finops_client import AWSFinOpsError
 from .aws_finops_service import AWSFinOpsService
@@ -15,6 +17,7 @@ from .finops_models import FinOpsReport
 
 
 router = APIRouter(
+    dependencies=[Depends(require_finops_access)],
     prefix="/api/v1/finops/aws",
     tags=["AWS FinOps"],
 )

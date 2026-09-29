@@ -18,6 +18,7 @@ export const navigationGroups: NavigationGroup[] = [
         href: "/dashboard",
         icon: "▦",
       },
+
       {
         label: "Projects",
         href: "/projects",
@@ -27,6 +28,11 @@ export const navigationGroups: NavigationGroup[] = [
         label: "Infrastructure",
         href: "/infrastructure",
         icon: "⌘",
+      },
+      {
+    label: "FinOps",
+    href: "/finops",
+    icon: "$",
       },
       {
         label: "Deployments",

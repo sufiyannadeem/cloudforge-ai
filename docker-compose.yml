@@ -212,6 +212,43 @@ services:
       start_period: 10s
       retries: 5
 
+  finops-service:
+    build:
+      context: ./services/finops-service
+    image: cloudforge-finops-service:local
+    container_name: cloudforge-finops-service
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_TIMEOUT_SECONDS: "5"
+
+      AWS_PROFILE: cloudforge
+      AWS_REGION: eu-west-1
+      AWS_DEFAULT_REGION: eu-west-1
+      AWS_CONFIG_FILE: /home/appuser/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/appuser/.aws/credentials
+
+      FINOPS_ALLOWED_ROLES: "platform-engineer,devops,sre"
+    volumes:
+      - ${HOME}/.cloudforge-aws-container:/home/appuser/.aws:ro
+    ports:
+      - "8091:8091"
+    depends_on:
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=5)"
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
 volumes:
   postgres_data:
   prometheus_data:

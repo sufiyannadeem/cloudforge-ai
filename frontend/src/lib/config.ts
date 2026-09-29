@@ -41,4 +41,8 @@ export const serviceConfig = {
     "AIOPS_SERVICE_URL",
     "http://localhost:8090",
   ),
+  finops: getRequiredEnv(
+  "FINOPS_SERVICE_URL",
+  "http://localhost:8091",
+  ),
 } as const;

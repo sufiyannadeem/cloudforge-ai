@@ -5,7 +5,8 @@ type SupportedService =
   | "project"
   | "infrastructure"
   | "deployment"
-  | "aiops";
+  | "aiops"
+  | "finops";
 
 interface RouteContext {
   params: Promise<{
@@ -19,6 +20,7 @@ const serviceUrls: Record<SupportedService, string> = {
   infrastructure: serviceConfig.infrastructure,
   deployment: serviceConfig.deployment,
   aiops: serviceConfig.aiops,
+  finops: serviceConfig.finops,
 };
 
 const allowedMethods = new Set([
@@ -84,6 +86,13 @@ async function proxyRequest(
   });
 
   const headers = new Headers();
+
+  if (service === "finops") {
+    const finopsRole =
+      process.env.CLOUDFORGE_FINOPS_ROLE ?? "platform-engineer";
+
+    headers.set("X-CloudForge-Role", finopsRole);
+  }
 
   const contentType = request.headers.get("content-type");
 

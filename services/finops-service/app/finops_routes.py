@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from .access_control import require_finops_access
 
 from .finops_analyzer import FinOpsAnalyzer
 from .finops_models import FinOpsReport
 
 
 router = APIRouter(
+    dependencies=[Depends(require_finops_access)],
     prefix="/api/v1/finops",
     tags=["FinOps"],
 )
