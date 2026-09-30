@@ -10,6 +10,7 @@ from .finops_routes import router as finops_router
 from .terraform_plan_cost_routes import router as terraform_plan_cost_router
 from .terraform_cost_routes import router as terraform_cost_router
 from .terraform_pricing_routes import router as terraform_pricing_router
+from .terraform_cost_policy_routes import router as terraform_cost_policy_router
 from .terraform_plan_artifact_routes import (
     router as terraform_plan_artifact_router,
 )
@@ -37,6 +38,7 @@ app.include_router(finops_optimization_router)
 app.include_router(terraform_plan_cost_router)
 app.include_router(terraform_cost_router)
 app.include_router(terraform_pricing_router)
+app.include_router(terraform_cost_policy_router)
 app.include_router(terraform_plan_artifact_router)
 
 
