@@ -58,12 +58,16 @@ func TestCreateResourceSuccess(t *testing.T) {
 	resourceService := NewResourceService(store)
 
 	input := model.CreateResourceInput{
-		Name:               "Production VPC",
-		Description:        "Production network infrastructure",
-		Provider:           model.ProviderAWS,
-		Region:             "eu-west-1",
-		Environment:        "production",
-		TerraformDirectory: "terraform/aws/vpc",
+		ProjectID:    uuid.New().String(),
+		Name:         "Production VPC",
+		Description:  "Production network infrastructure",
+		ResourceType: "aws_vpc",
+		Provider:     model.ProviderAWS,
+		Region:       "eu-west-1",
+		Environment:  "production",
+		Configuration: map[string]any{
+			"cidr_block": "10.0.0.0/16",
+		},
 	}
 
 	resource, err := resourceService.Create(context.Background(), input)
@@ -83,8 +87,8 @@ func TestCreateResourceSuccess(t *testing.T) {
 		t.Fatalf("expected resource name, got %s", resource.Name)
 	}
 
-	if resource.Status != model.ResourceStatusActive {
-		t.Fatalf("expected active status, got %s", resource.Status)
+	if resource.Status != model.ResourceStatusPending {
+		t.Fatalf("expected pending status, got %s", resource.Status)
 	}
 }
 

@@ -16,10 +16,15 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/service"
+	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/terraform"
 )
 
 func main() {
-	logger := log.New(os.Stdout, "infrastructure-service: ", log.LstdFlags)
+	logger := log.New(
+		os.Stdout,
+		"infrastructure-service: ",
+		log.LstdFlags,
+	)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -43,8 +48,59 @@ func main() {
 	}
 
 	resourceRepository := repository.NewResourceRepository(pool)
-	resourceService := service.NewResourceService(resourceRepository)
-	resourceHandler := handler.NewResourceHandler(resourceService)
+
+	resourceService := service.NewResourceService(
+		resourceRepository,
+	)
+
+	workspaceRoot := getEnv(
+		"TERRAFORM_WORKSPACE_ROOT",
+		"/var/lib/cloudforge/terraform",
+	)
+
+	stateBucket := getEnv(
+		"TERRAFORM_STATE_BUCKET",
+		"",
+	)
+
+	terraformBinary := getEnv(
+		"TERRAFORM_BINARY",
+		"terraform",
+	)
+
+	planTimeout := getDurationEnv(
+		"TERRAFORM_PLAN_TIMEOUT",
+		10*time.Minute,
+	)
+
+	applyTimeout := getDurationEnv(
+		"TERRAFORM_APPLY_TIMEOUT",
+		30*time.Minute,
+	)
+
+	terraformGenerator := terraform.NewGenerator(
+		workspaceRoot,
+		stateBucket,
+	)
+
+	terraformRunner := terraform.NewRunner(
+		terraformGenerator,
+	)
+
+	terraformRunner.TerraformBin = terraformBinary
+	terraformRunner.PlanTimeout = planTimeout
+	terraformRunner.ApplyTimeout = applyTimeout
+
+	provisioningService := service.NewProvisioningService(
+		resourceRepository,
+		terraformRunner,
+	)
+
+	resourceHandler := handler.NewResourceHandler(
+		resourceService,
+		provisioningService,
+	)
+
 	router := handler.NewRouter(resourceHandler)
 
 	server := &http.Server{
@@ -59,7 +115,10 @@ func main() {
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		logger.Printf("server listening on port %s", cfg.ServerPort)
+		logger.Printf(
+			"server listening on port %s",
+			cfg.ServerPort,
+		)
 
 		if err := server.ListenAndServe(); err != nil &&
 			!errors.Is(err, http.ErrServerClosed) {
@@ -89,12 +148,46 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownContext); err != nil {
-		logger.Printf("graceful shutdown failed: %v", err)
+		logger.Printf(
+			"graceful shutdown failed: %v",
+			err,
+		)
 
 		if closeErr := server.Close(); closeErr != nil {
-			logger.Printf("force server close failed: %v", closeErr)
+			logger.Printf(
+				"force server close failed: %v",
+				closeErr,
+			)
 		}
 	}
 
 	logger.Println("server stopped")
+}
+
+func getEnv(key string, fallback string) string {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func getDurationEnv(
+	key string,
+	fallback time.Duration,
+) time.Duration {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+
+	return duration
 }

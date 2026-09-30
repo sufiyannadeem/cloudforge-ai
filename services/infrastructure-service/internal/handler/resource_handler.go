@@ -16,14 +16,17 @@ import (
 )
 
 type ResourceHandler struct {
-	resourceManager service.ResourceManager
+	resourceManager     service.ResourceManager
+	provisioningManager service.ProvisioningManager
 }
 
 func NewResourceHandler(
 	resourceManager service.ResourceManager,
+	provisioningManager service.ProvisioningManager,
 ) *ResourceHandler {
 	return &ResourceHandler{
-		resourceManager: resourceManager,
+		resourceManager:     resourceManager,
+		provisioningManager: provisioningManager,
 	}
 }
 
@@ -148,11 +151,76 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *ResourceHandler) Plan(w http.ResponseWriter, r *http.Request) {
+	id, err := parseResourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resource, err := h.provisioningManager.Plan(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrResourceNotFound) {
+			writeError(w, http.StatusNotFound, "resource not found")
+			return
+		}
+
+		if errors.Is(err, service.ErrInvalidProvisioningState) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resource)
+}
+
+func (h *ResourceHandler) Apply(w http.ResponseWriter, r *http.Request) {
+	id, err := parseResourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input model.ApplyResourceInput
+
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resource, err := h.provisioningManager.Apply(
+		r.Context(),
+		id,
+		input.PlanHash,
+	)
+	if err != nil {
+		if errors.Is(err, repository.ErrResourceNotFound) {
+			writeError(w, http.StatusNotFound, "resource not found")
+			return
+		}
+
+		if errors.Is(err, service.ErrInvalidProvisioningState) ||
+			errors.Is(err, service.ErrApprovalExpired) ||
+			errors.Is(err, service.ErrPlanHashMismatch) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resource)
 }
 
 func decodeJSON(r *http.Request, destination interface{}) error {

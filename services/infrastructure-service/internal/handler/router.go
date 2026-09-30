@@ -32,5 +32,15 @@ func NewRouter(resourceHandler *ResourceHandler) http.Handler {
 		resourceHandler.Delete,
 	)
 
+	mux.HandleFunc(
+		"POST /api/v1/resources/{id}/plan",
+		resourceHandler.Plan,
+	)
+
+	mux.HandleFunc(
+		"POST /api/v1/resources/{id}/apply",
+		resourceHandler.Apply,
+	)
+
 	return mux
 }

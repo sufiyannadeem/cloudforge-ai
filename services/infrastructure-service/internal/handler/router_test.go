@@ -11,9 +11,18 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 )
 
+func newRouterTestHandler(
+	manager *mockResourceManager,
+) *ResourceHandler {
+	return NewResourceHandler(
+		manager,
+		&mockProvisioningManager{},
+	)
+}
+
 func TestNewRouterHealthRoute(t *testing.T) {
 	manager := &mockResourceManager{}
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -32,7 +41,7 @@ func TestNewRouterHealthRoute(t *testing.T) {
 
 func TestNewRouterCreateResourceRoute(t *testing.T) {
 	manager := &mockResourceManager{}
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	body := `{
@@ -65,7 +74,7 @@ func TestNewRouterListResourceRoute(t *testing.T) {
 		resource: createRouterTestResource(),
 	}
 
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -97,7 +106,7 @@ func TestNewRouterGetResourceRoute(t *testing.T) {
 		resource: resource,
 	}
 
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -117,7 +126,7 @@ func TestNewRouterGetResourceRoute(t *testing.T) {
 
 func TestNewRouterGetResourceInvalidUUID(t *testing.T) {
 	manager := &mockResourceManager{}
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -142,7 +151,7 @@ func TestNewRouterUpdateResourceRoute(t *testing.T) {
 		resource: resource,
 	}
 
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	body := `{
@@ -172,7 +181,7 @@ func TestNewRouterDeleteResourceRoute(t *testing.T) {
 		resource: resource,
 	}
 
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -190,9 +199,123 @@ func TestNewRouterDeleteResourceRoute(t *testing.T) {
 	}
 }
 
+func TestNewRouterPlanResourceRoute(t *testing.T) {
+	resource := createRouterTestResource()
+
+	manager := &mockResourceManager{
+		resource: resource,
+	}
+
+	provisioning := &mockProvisioningManager{
+		resource: resource,
+	}
+
+	resourceHandler := NewResourceHandler(
+		manager,
+		provisioning,
+	)
+	router := NewRouter(resourceHandler)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+resource.ID.String()+"/plan",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status 200, got %d",
+			recorder.Code,
+		)
+	}
+
+	if provisioning.planCallCount != 1 {
+		t.Fatalf(
+			"expected one plan call, got %d",
+			provisioning.planCallCount,
+		)
+	}
+
+	if provisioning.lastPlanID != resource.ID {
+		t.Fatalf(
+			"expected plan ID %s, got %s",
+			resource.ID,
+			provisioning.lastPlanID,
+		)
+	}
+}
+
+func TestNewRouterApplyResourceRoute(t *testing.T) {
+	resource := createRouterTestResource()
+
+	manager := &mockResourceManager{
+		resource: resource,
+	}
+
+	provisioning := &mockProvisioningManager{
+		resource: resource,
+	}
+
+	resourceHandler := NewResourceHandler(
+		manager,
+		provisioning,
+	)
+	router := NewRouter(resourceHandler)
+
+	planHash := "test-plan-hash"
+
+	body := `{"plan_hash":"` + planHash + `"}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+resource.ID.String()+"/apply",
+		strings.NewReader(body),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status 200, got %d",
+			recorder.Code,
+		)
+	}
+
+	if provisioning.applyCallCount != 1 {
+		t.Fatalf(
+			"expected one apply call, got %d",
+			provisioning.applyCallCount,
+		)
+	}
+
+	if provisioning.lastApplyID != resource.ID {
+		t.Fatalf(
+			"expected apply ID %s, got %s",
+			resource.ID,
+			provisioning.lastApplyID,
+		)
+	}
+
+	if provisioning.lastPlanHash != planHash {
+		t.Fatalf(
+			"expected plan hash %s, got %s",
+			planHash,
+			provisioning.lastPlanHash,
+		)
+	}
+}
+
 func TestNewRouterUnsupportedMethod(t *testing.T) {
 	manager := &mockResourceManager{}
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -206,13 +329,16 @@ func TestNewRouterUnsupportedMethod(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("expected status 405, got %d", recorder.Code)
+		t.Fatalf(
+			"expected status 405, got %d",
+			recorder.Code,
+		)
 	}
 }
 
 func TestNewRouterUnknownRoute(t *testing.T) {
 	manager := &mockResourceManager{}
-	resourceHandler := NewResourceHandler(manager)
+	resourceHandler := newRouterTestHandler(manager)
 	router := NewRouter(resourceHandler)
 
 	request := httptest.NewRequest(
@@ -226,7 +352,10 @@ func TestNewRouterUnknownRoute(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("expected status 404, got %d", recorder.Code)
+		t.Fatalf(
+			"expected status 404, got %d",
+			recorder.Code,
+		)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
+	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/service"
 )
 
 type mockResourceManager struct {
@@ -79,9 +80,58 @@ func (m *mockResourceManager) Delete(
 	return nil
 }
 
+type mockProvisioningManager struct {
+	resource       model.InfrastructureResource
+	planCallCount  int
+	applyCallCount int
+	lastPlanID     uuid.UUID
+	lastApplyID    uuid.UUID
+	lastPlanHash   string
+	planError      error
+	applyError     error
+}
+
+func (m *mockProvisioningManager) Plan(
+	ctx context.Context,
+	id uuid.UUID,
+) (model.InfrastructureResource, error) {
+	m.planCallCount++
+	m.lastPlanID = id
+
+	if m.planError != nil {
+		return model.InfrastructureResource{}, m.planError
+	}
+
+	return m.resource, nil
+}
+
+func (m *mockProvisioningManager) Apply(
+	ctx context.Context,
+	id uuid.UUID,
+	planHash string,
+) (model.InfrastructureResource, error) {
+	m.applyCallCount++
+	m.lastApplyID = id
+	m.lastPlanHash = planHash
+
+	if m.applyError != nil {
+		return model.InfrastructureResource{}, m.applyError
+	}
+
+	return m.resource, nil
+}
+
+func newTestHandler(
+	manager *mockResourceManager,
+	provisioning *mockProvisioningManager,
+) *ResourceHandler {
+	return NewResourceHandler(manager, provisioning)
+}
+
 func TestHealthHandler(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(http.MethodGet, "/health", nil)
 	recorder := httptest.NewRecorder()
@@ -105,7 +155,8 @@ func TestHealthHandler(t *testing.T) {
 
 func TestCreateHandler(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	body := `{
 		"name": "Production VPC",
@@ -136,7 +187,8 @@ func TestCreateHandler(t *testing.T) {
 
 func TestCreateHandlerInvalidJSON(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -154,13 +206,15 @@ func TestCreateHandlerInvalidJSON(t *testing.T) {
 
 func TestGetByIDHandlerInvalidUUID(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources/invalid-id",
 		nil,
 	)
+
 	request.SetPathValue("id", "invalid-id")
 
 	recorder := httptest.NewRecorder()
@@ -181,13 +235,15 @@ func TestListHandlerDefaultPagination(t *testing.T) {
 		},
 	}
 
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -211,13 +267,15 @@ func TestListHandlerDefaultPagination(t *testing.T) {
 
 func TestListHandlerValidPagination(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?limit=10&offset=5",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -237,13 +295,15 @@ func TestListHandlerValidPagination(t *testing.T) {
 
 func TestListHandlerInvalidLimit(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?limit=abc",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -259,13 +319,15 @@ func TestListHandlerInvalidLimit(t *testing.T) {
 
 func TestListHandlerLimitBelowMinimum(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?limit=0",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -281,13 +343,15 @@ func TestListHandlerLimitBelowMinimum(t *testing.T) {
 
 func TestListHandlerLimitAboveMaximum(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?limit=101",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -303,13 +367,15 @@ func TestListHandlerLimitAboveMaximum(t *testing.T) {
 
 func TestListHandlerInvalidOffset(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?offset=abc",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -325,13 +391,15 @@ func TestListHandlerInvalidOffset(t *testing.T) {
 
 func TestListHandlerNegativeOffset(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
 		"/api/v1/resources?offset=-1",
 		nil,
 	)
+
 	recorder := httptest.NewRecorder()
 
 	handler.List(recorder, request)
@@ -352,7 +420,8 @@ func TestDeleteHandlerNotFound(t *testing.T) {
 		},
 	}
 
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	unknownID := uuid.New().String()
 
@@ -375,7 +444,8 @@ func TestDeleteHandlerNotFound(t *testing.T) {
 
 func TestDeleteHandlerInvalidUUID(t *testing.T) {
 	manager := &mockResourceManager{}
-	handler := NewResourceHandler(manager)
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
 		http.MethodDelete,
@@ -394,36 +464,368 @@ func TestDeleteHandlerInvalidUUID(t *testing.T) {
 	}
 }
 
-func TestGetByIDHandlerNotFound(t *testing.T) {
-	manager := &mockResourceManager{
+func TestPlanHandlerSuccess(t *testing.T) {
+	id := uuid.New()
+
+	manager := &mockResourceManager{}
+
+	provisioning := &mockProvisioningManager{
 		resource: model.InfrastructureResource{
-			ID: uuid.New(),
+			ID:     id,
+			Name:   "Production VPC",
+			Status: model.ResourceStatusAwaitingApproval,
 		},
 	}
 
-	handler := NewResourceHandler(manager)
-
-	unknownID := uuid.New().String()
+	handler := newTestHandler(manager, provisioning)
 
 	request := httptest.NewRequest(
-		http.MethodGet,
-		"/api/v1/resources/"+unknownID,
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/plan",
 		nil,
 	)
 
-	request.SetPathValue("id", unknownID)
+	request.SetPathValue("id", id.String())
 
 	recorder := httptest.NewRecorder()
 
-	handler.GetByID(recorder, request)
+	handler.Plan(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	if provisioning.planCallCount != 1 {
+		t.Fatalf(
+			"expected one plan call, got %d",
+			provisioning.planCallCount,
+		)
+	}
+
+	if provisioning.lastPlanID != id {
+		t.Fatalf(
+			"expected plan ID %s, got %s",
+			id,
+			provisioning.lastPlanID,
+		)
+	}
+}
+
+func TestPlanHandlerInvalidUUID(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/invalid-id/plan",
+		nil,
+	)
+
+	request.SetPathValue("id", "invalid-id")
+
+	recorder := httptest.NewRecorder()
+
+	handler.Plan(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if provisioning.planCallCount != 0 {
+		t.Fatal("provisioning service should not be called")
+	}
+}
+
+func TestPlanHandlerNotFound(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		planError: repository.ErrResourceNotFound,
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/plan",
+		nil,
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Plan(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("expected status 404, got %d", recorder.Code)
 	}
 }
 
-func TestHandlerUsesRepositoryNotFoundError(t *testing.T) {
-	if !errors.Is(repository.ErrResourceNotFound, repository.ErrResourceNotFound) {
-		t.Fatal("repository not-found error is not comparable with itself")
+func TestPlanHandlerConflict(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		planError: service.ErrInvalidProvisioningState,
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/plan",
+		nil,
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Plan(recorder, request)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", recorder.Code)
+	}
+}
+
+func TestPlanHandlerInternalError(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		planError: errors.New("terraform plan failed"),
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/plan",
+		nil,
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Plan(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status 500, got %d",
+			recorder.Code,
+		)
+	}
+}
+
+func TestApplyHandlerSuccess(t *testing.T) {
+	id := uuid.New()
+	planHash := "abcdef123456"
+
+	manager := &mockResourceManager{}
+
+	provisioning := &mockProvisioningManager{
+		resource: model.InfrastructureResource{
+			ID:     id,
+			Name:   "Production VPC",
+			Status: model.ResourceStatusActive,
+		},
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	body := `{"plan_hash":"` + planHash + `"}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/apply",
+		strings.NewReader(body),
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Apply(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", recorder.Code)
+	}
+
+	if provisioning.applyCallCount != 1 {
+		t.Fatalf(
+			"expected one apply call, got %d",
+			provisioning.applyCallCount,
+		)
+	}
+
+	if provisioning.lastApplyID != id {
+		t.Fatalf(
+			"expected apply ID %s, got %s",
+			id,
+			provisioning.lastApplyID,
+		)
+	}
+
+	if provisioning.lastPlanHash != planHash {
+		t.Fatalf(
+			"expected plan hash %s, got %s",
+			planHash,
+			provisioning.lastPlanHash,
+		)
+	}
+}
+
+func TestApplyHandlerInvalidUUID(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/invalid-id/apply",
+		strings.NewReader(`{"plan_hash":"abc"}`),
+	)
+
+	request.SetPathValue("id", "invalid-id")
+
+	recorder := httptest.NewRecorder()
+
+	handler.Apply(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if provisioning.applyCallCount != 0 {
+		t.Fatal("provisioning service should not be called")
+	}
+}
+
+func TestApplyHandlerInvalidJSON(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/apply",
+		strings.NewReader(`{"plan_hash":`),
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Apply(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+
+	if provisioning.applyCallCount != 0 {
+		t.Fatal("provisioning service should not be called")
+	}
+}
+
+func TestApplyHandlerNotFound(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		applyError: repository.ErrResourceNotFound,
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/apply",
+		strings.NewReader(`{"plan_hash":"abc"}`),
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Apply(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", recorder.Code)
+	}
+}
+
+func TestApplyHandlerConflictErrors(t *testing.T) {
+	conflictErrors := []error{
+		service.ErrInvalidProvisioningState,
+		service.ErrApprovalExpired,
+		service.ErrPlanHashMismatch,
+	}
+
+	for _, testErr := range conflictErrors {
+		t.Run(testErr.Error(), func(t *testing.T) {
+			manager := &mockResourceManager{}
+			provisioning := &mockProvisioningManager{
+				applyError: testErr,
+			}
+
+			handler := newTestHandler(manager, provisioning)
+
+			id := uuid.New()
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/v1/resources/"+id.String()+"/apply",
+				strings.NewReader(`{"plan_hash":"abc"}`),
+			)
+
+			request.SetPathValue("id", id.String())
+
+			recorder := httptest.NewRecorder()
+
+			handler.Apply(recorder, request)
+
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf(
+					"expected status 409, got %d",
+					recorder.Code,
+				)
+			}
+		})
+	}
+}
+
+func TestApplyHandlerInternalError(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		applyError: errors.New("terraform apply failed"),
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/resources/"+id.String()+"/apply",
+		strings.NewReader(`{"plan_hash":"abc"}`),
+	)
+
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+
+	handler.Apply(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status 500, got %d",
+			recorder.Code,
+		)
 	}
 }

@@ -61,18 +61,28 @@ func newTestRepository() *ResourceRepository {
 	return NewResourceRepository(testPool)
 }
 
+func testProjectID() *uuid.UUID {
+	id := uuid.New()
+	return &id
+}
+
 func newTestResource() model.InfrastructureResource {
 	now := time.Now().UTC()
 
 	return model.InfrastructureResource{
-		ID:                 uuid.New(),
-		Name:               "Test VPC",
-		Description:        "Repository integration test resource",
-		Provider:           model.ProviderAWS,
-		Region:             "eu-west-1",
-		Environment:        "testing",
-		Status:             model.ResourceStatusActive,
-		TerraformDirectory: "terraform/test/vpc",
+		ID:           uuid.New(),
+		ProjectID:    func() *uuid.UUID { id := uuid.New(); return &id }(),
+		Name:         "Test VPC",
+		Description:  "Repository integration test resource",
+		ResourceType: "aws_vpc",
+		Provider:     model.ProviderAWS,
+		Region:       "eu-west-1",
+		Environment:  "testing",
+		Configuration: map[string]any{
+			"cidr_block": "10.0.0.0/16",
+		},
+		Status:             model.ResourceStatusPending,
+		TerraformDirectory: "",
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}

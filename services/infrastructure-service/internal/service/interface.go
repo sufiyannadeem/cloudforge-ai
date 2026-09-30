@@ -36,3 +36,16 @@ type ResourceManager interface {
 		id uuid.UUID,
 	) error
 }
+
+type ProvisioningManager interface {
+	Plan(
+		ctx context.Context,
+		id uuid.UUID,
+	) (model.InfrastructureResource, error)
+
+	Apply(
+		ctx context.Context,
+		id uuid.UUID,
+		planHash string,
+	) (model.InfrastructureResource, error)
+}

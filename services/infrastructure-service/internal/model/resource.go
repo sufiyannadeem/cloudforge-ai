@@ -27,20 +27,28 @@ func (p Provider) IsValid() bool {
 type ResourceStatus string
 
 const (
-	ResourceStatusActive       ResourceStatus = "active"
-	ResourceStatusInactive     ResourceStatus = "inactive"
-	ResourceStatusProvisioning ResourceStatus = "provisioning"
-	ResourceStatusDestroying   ResourceStatus = "destroying"
-	ResourceStatusFailed       ResourceStatus = "failed"
+	ResourceStatusPending          ResourceStatus = "pending"
+	ResourceStatusPlanning         ResourceStatus = "planning"
+	ResourceStatusAwaitingApproval ResourceStatus = "awaiting_approval"
+	ResourceStatusProvisioning     ResourceStatus = "provisioning"
+	ResourceStatusActive           ResourceStatus = "active"
+	ResourceStatusInactive         ResourceStatus = "inactive"
+	ResourceStatusDestroying       ResourceStatus = "destroying"
+	ResourceStatusFailed           ResourceStatus = "failed"
+	ResourceStatusDestroyed        ResourceStatus = "destroyed"
 )
 
 func (s ResourceStatus) IsValid() bool {
 	switch s {
-	case ResourceStatusActive,
-		ResourceStatusInactive,
+	case ResourceStatusPending,
+		ResourceStatusPlanning,
+		ResourceStatusAwaitingApproval,
 		ResourceStatusProvisioning,
+		ResourceStatusActive,
+		ResourceStatusInactive,
 		ResourceStatusDestroying,
-		ResourceStatusFailed:
+		ResourceStatusFailed,
+		ResourceStatusDestroyed:
 		return true
 	default:
 		return false
@@ -49,24 +57,34 @@ func (s ResourceStatus) IsValid() bool {
 
 type InfrastructureResource struct {
 	ID                 uuid.UUID      `json:"id"`
+	ProjectID          *uuid.UUID     `json:"project_id,omitempty"`
 	Name               string         `json:"name"`
 	Description        string         `json:"description,omitempty"`
+	ResourceType       string         `json:"resource_type"`
 	Provider           Provider       `json:"provider"`
 	Region             string         `json:"region"`
 	Environment        string         `json:"environment"`
+	Configuration      map[string]any `json:"configuration"`
 	Status             ResourceStatus `json:"status"`
-	TerraformDirectory string         `json:"terraform_directory"`
+	TerraformDirectory string         `json:"terraform_directory,omitempty"`
+	PlanPath           string         `json:"plan_path,omitempty"`
+	PlanHash           string         `json:"plan_hash,omitempty"`
+	PlanCreatedAt      *time.Time     `json:"plan_created_at,omitempty"`
+	ApprovalExpiresAt  *time.Time     `json:"approval_expires_at,omitempty"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 type CreateResourceInput struct {
-	Name               string   `json:"name"`
-	Description        string   `json:"description"`
-	Provider           Provider `json:"provider"`
-	Region             string   `json:"region"`
-	Environment        string   `json:"environment"`
-	TerraformDirectory string   `json:"terraform_directory"`
+	ProjectID          string         `json:"project_id"`
+	Name               string         `json:"name"`
+	Description        string         `json:"description"`
+	ResourceType       string         `json:"resource_type"`
+	Provider           Provider       `json:"provider"`
+	Region             string         `json:"region"`
+	Environment        string         `json:"environment"`
+	Configuration      map[string]any `json:"configuration"`
+	TerraformDirectory string         `json:"terraform_directory,omitempty"`
 }
 
 type UpdateResourceInput struct {
@@ -76,4 +94,9 @@ type UpdateResourceInput struct {
 	Environment        *string         `json:"environment,omitempty"`
 	Status             *ResourceStatus `json:"status,omitempty"`
 	TerraformDirectory *string         `json:"terraform_directory,omitempty"`
+	Configuration      map[string]any  `json:"configuration,omitempty"`
+}
+
+type ApplyResourceInput struct {
+	PlanHash string `json:"plan_hash"`
 }
