@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from .aws_finops_routes import router as aws_finops_router
 from .finops_optimization_routes import router as finops_optimization_router
 from .finops_routes import router as finops_router
+from .terraform_plan_cost_routes import router as terraform_plan_cost_router
 from .terraform_cost_routes import router as terraform_cost_router
 
 
@@ -29,6 +30,7 @@ app = FastAPI(
 app.include_router(finops_router)
 app.include_router(aws_finops_router)
 app.include_router(finops_optimization_router)
+app.include_router(terraform_plan_cost_router)
 app.include_router(terraform_cost_router)
 
 
