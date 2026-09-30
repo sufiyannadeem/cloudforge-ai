@@ -9,6 +9,9 @@ from .finops_optimization_routes import router as finops_optimization_router
 from .finops_routes import router as finops_router
 from .terraform_plan_cost_routes import router as terraform_plan_cost_router
 from .terraform_cost_routes import router as terraform_cost_router
+from .terraform_plan_artifact_routes import (
+    router as terraform_plan_artifact_router,
+)
 
 
 @asynccontextmanager
@@ -32,6 +35,7 @@ app.include_router(aws_finops_router)
 app.include_router(finops_optimization_router)
 app.include_router(terraform_plan_cost_router)
 app.include_router(terraform_cost_router)
+app.include_router(terraform_plan_artifact_router)
 
 
 @app.get("/health")
