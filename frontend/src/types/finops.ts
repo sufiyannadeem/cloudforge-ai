@@ -122,3 +122,43 @@ export interface OptimizationReport {
   total_potential_monthly_savings_usd: number;
   finding_count: number;
 }
+
+export interface TerraformCostEstimate {
+  resource_type: string;
+  resource_id: string;
+  action: string;
+  region: string;
+  current_monthly_usd: number;
+  proposed_monthly_usd: number;
+  monthly_delta_usd: number;
+  pricing_source?: string | null;
+  confidence: string;
+  evidence_available: boolean;
+  calculation: string;
+  assumptions: string[];
+}
+
+export interface TerraformCostEstimateReport {
+  estimates: TerraformCostEstimate[];
+  total_current_monthly_usd: number;
+  total_proposed_monthly_usd: number;
+  total_monthly_delta_usd: number;
+  evidence_complete: boolean;
+  resource_count: number;
+  generated_by: string;
+}
+
+export interface TerraformPlanCostEstimateResponse {
+  cost_report: TerraformCostEstimateReport;
+  parse_issues: string[];
+  unsupported_resources: string[];
+  parsed_resource_count: number;
+}
+
+export interface TerraformPricingEvidenceRequest {
+  unit_monthly_usd: number;
+  source: string;
+  evidence_available?: boolean;
+  confidence?: string;
+  assumptions?: string[];
+}

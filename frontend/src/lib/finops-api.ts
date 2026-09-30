@@ -7,10 +7,15 @@ import type {
   CostTrendResponse,
   FinOpsReport,
   OptimizationReport,
+  TerraformPlanCostEstimateResponse,
+  TerraformPricingEvidenceRequest,
 } from "@/types/finops";
 
 const proxy = (path: string): string =>
   `/api/proxy/finops/api/v1/finops${path}`;
+
+const terraformProxy = (path: string): string =>
+  `/api/proxy/finops/api/v1/terraform${path}`;
 
 export async function getFinOpsReport(): Promise<FinOpsReport> {
   return apiGet<FinOpsReport>(
@@ -71,5 +76,18 @@ export async function getKubernetesOptimization(): Promise<OptimizationReport> {
 export async function getAllOptimization(): Promise<OptimizationReport> {
   return apiPost<OptimizationReport>(
     proxy("/optimization/all"),
+  );
+}
+
+export async function estimateTerraformPlanCost(
+  plan: Record<string, unknown>,
+  pricing: Record<string, TerraformPricingEvidenceRequest> = {},
+): Promise<TerraformPlanCostEstimateResponse> {
+  return apiPost<TerraformPlanCostEstimateResponse>(
+    terraformProxy("/plan-cost-estimate"),
+    {
+      plan,
+      pricing,
+    },
   );
 }
