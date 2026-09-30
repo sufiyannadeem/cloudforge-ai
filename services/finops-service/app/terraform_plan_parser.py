@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
-
-from pydantic import BaseModel, Field
 
 from .terraform_cost_models import (
     TerraformChangeAction,
@@ -12,119 +10,139 @@ from .terraform_cost_models import (
 )
 
 
-class TerraformPlanParseIssue(BaseModel):
-    resource_address: str | None = None
+SUPPORTED_RESOURCE_TYPES = {
+    resource_type.value for resource_type in TerraformResourceType
+}
+
+
+@dataclass(frozen=True)
+class TerraformPlanParseIssue:
+    resource_address: str | None
     message: str
 
+    @property
+    def address(self) -> str | None:
+        """Backward-compatible alias."""
+        return self.resource_address
 
-class TerraformPlanParseResult(BaseModel):
-    changes: list[TerraformResourceChange] = Field(default_factory=list)
-    issues: list[TerraformPlanParseIssue] = Field(default_factory=list)
-    unsupported_resources: list[str] = Field(default_factory=list)
-    resource_count: int = 0
+
+@dataclass(frozen=True)
+class TerraformPlanParseResult:
+    changes: list[TerraformResourceChange]
+    issues: list[TerraformPlanParseIssue]
+    unsupported_resources: list[str]
+
+    @property
+    def resource_count(self) -> int:
+        """Number of successfully parsed supported resources."""
+        return len(self.changes)
 
 
 class TerraformPlanParser:
     """
-    Converts Terraform plan JSON resource_changes into the normalized
-    TerraformResourceChange model used by the FinOps cost estimator.
+    Normalize terraform show -json resource_changes into the domain model.
 
-    This parser:
-    - does not execute Terraform;
-    - does not call AWS;
-    - does not query pricing APIs;
-    - does not infer cloud prices;
-    - does not mutate infrastructure.
-
-    Pricing evidence must be supplied separately.
+    This parser never executes Terraform, calls AWS, queries pricing APIs,
+    or mutates infrastructure.
     """
 
-    SUPPORTED_RESOURCE_TYPES = {
-        resource_type.value: resource_type
-        for resource_type in TerraformResourceType
-    }
-
-    def parse(
-        self,
-        plan: Mapping[str, Any],
-    ) -> TerraformPlanParseResult:
+    def parse(self, plan: dict[str, Any]) -> TerraformPlanParseResult:
         issues: list[TerraformPlanParseIssue] = []
         changes: list[TerraformResourceChange] = []
         unsupported_resources: list[str] = []
 
-        resource_changes = plan.get("resource_changes", [])
-
-        if resource_changes is None:
-            resource_changes = []
+        resource_changes = plan.get("resource_changes")
 
         if not isinstance(resource_changes, list):
+            issues.append(
+                TerraformPlanParseIssue(
+                    resource_address=None,
+                    message="resource_changes must be a list",
+                )
+            )
             return TerraformPlanParseResult(
-                issues=[
-                    TerraformPlanParseIssue(
-                        message="Terraform plan field 'resource_changes' must be a list."
-                    )
-                ]
+                changes=changes,
+                issues=issues,
+                unsupported_resources=unsupported_resources,
             )
 
-        for resource_change in resource_changes:
-            if not isinstance(resource_change, Mapping):
+        for index, resource_change in enumerate(resource_changes):
+            if not isinstance(resource_change, dict):
                 issues.append(
                     TerraformPlanParseIssue(
-                        message="Terraform resource change must be an object."
+                        resource_address=None,
+                        message=f"resource_changes[{index}] must be an object",
                     )
                 )
                 continue
 
             address = resource_change.get("address")
+            resource_type = resource_change.get("type")
+            change = resource_change.get("change")
 
             if not isinstance(address, str) or not address.strip():
                 issues.append(
                     TerraformPlanParseIssue(
-                        message="Terraform resource change is missing a valid address."
+                        resource_address=None,
+                        message=f"resource_changes[{index}] has no valid address",
                     )
                 )
                 continue
 
-            resource_type = resource_change.get("type")
+            address = address.strip()
 
-            if resource_type not in self.SUPPORTED_RESOURCE_TYPES:
-                unsupported_resources.append(address)
-                continue
-
-            change = resource_change.get("change")
-
-            if not isinstance(change, Mapping):
+            if not isinstance(resource_type, str) or not resource_type.strip():
                 issues.append(
                     TerraformPlanParseIssue(
                         resource_address=address,
-                        message="Terraform resource change is missing a valid 'change' object.",
+                        message="resource type is missing",
+                    )
+                )
+                continue
+
+            resource_type = resource_type.strip()
+
+            if resource_type not in SUPPORTED_RESOURCE_TYPES:
+                unsupported_resources.append(address)
+                continue
+
+            if not isinstance(change, dict):
+                issues.append(
+                    TerraformPlanParseIssue(
+                        resource_address=address,
+                        message="change must be an object",
                     )
                 )
                 continue
 
             actions = change.get("actions")
-
-            action = self._parse_action(
-                actions,
-                resource_address=address,
-                issues=issues,
-            )
+            action = self._parse_action(address, actions, issues)
 
             if action is None:
                 continue
 
+            before = change.get("before")
+            after = change.get("after")
+
+            region = self._extract_region(before, after)
+
+            current_quantity = self._extract_quantity(
+                resource_type,
+                before,
+            )
+            proposed_quantity = self._extract_quantity(
+                resource_type,
+                after,
+            )
+
             changes.append(
                 TerraformResourceChange(
-                    resource_type=self.SUPPORTED_RESOURCE_TYPES[resource_type],
+                    resource_type=TerraformResourceType(resource_type),
                     resource_id=address,
                     action=action,
-                    region=self._extract_region(change),
-                    current_quantity=self._quantity(
-                        change.get("before")
-                    ),
-                    proposed_quantity=self._quantity(
-                        change.get("after")
-                    ),
+                    region=region,
+                    current_quantity=current_quantity,
+                    proposed_quantity=proposed_quantity,
                 )
             )
 
@@ -132,62 +150,44 @@ class TerraformPlanParser:
             changes=changes,
             issues=issues,
             unsupported_resources=unsupported_resources,
-            resource_count=len(resource_changes),
         )
 
-    @staticmethod
     def _parse_action(
+        self,
+        address: str,
         actions: Any,
-        *,
-        resource_address: str,
         issues: list[TerraformPlanParseIssue],
     ) -> TerraformChangeAction | None:
         if not isinstance(actions, list) or not actions:
             issues.append(
                 TerraformPlanParseIssue(
-                    resource_address=resource_address,
-                    message="Terraform change is missing a valid actions list.",
+                    resource_address=address,
+                    message="change.actions must be a non-empty list",
                 )
             )
             return None
 
-        normalized = tuple(
-            action
-            for action in actions
-            if isinstance(action, str)
-        )
+        normalized = [str(action).strip().lower() for action in actions]
 
-        if normalized == ("create",):
+        if normalized == ["create"]:
             return TerraformChangeAction.CREATE
 
-        if normalized == ("update",):
+        if normalized == ["update"]:
             return TerraformChangeAction.UPDATE
 
-        if normalized == ("delete",):
+        if normalized == ["delete"]:
             return TerraformChangeAction.DELETE
 
-        if normalized == ("no-op",):
+        if normalized == ["no-op"]:
             return TerraformChangeAction.NOOP
 
-        if normalized == ("delete", "create"):
+        if set(normalized) == {"create", "delete"}:
             issues.append(
                 TerraformPlanParseIssue(
-                    resource_address=resource_address,
+                    resource_address=address,
                     message=(
-                        "Terraform replacement action 'delete/create' is not "
-                        "supported by the current cost model."
-                    ),
-                )
-            )
-            return None
-
-        if normalized == ("create", "delete"):
-            issues.append(
-                TerraformPlanParseIssue(
-                    resource_address=resource_address,
-                    message=(
-                        "Terraform replacement action 'create/delete' is not "
-                        "supported by the current cost model."
+                        "replacement actions ['create', 'delete'] are not "
+                        "supported by the deterministic parser"
                     ),
                 )
             )
@@ -195,70 +195,96 @@ class TerraformPlanParser:
 
         issues.append(
             TerraformPlanParseIssue(
-                resource_address=resource_address,
-                message=f"Unsupported Terraform actions: {list(normalized)}.",
+                resource_address=address,
+                message=f"unsupported change actions: {normalized}",
             )
         )
         return None
 
     @staticmethod
-    def _extract_region(change: Mapping[str, Any]) -> str:
-        after = change.get("after")
+    def _extract_region(before: Any, after: Any) -> str:
+        for attributes in (after, before):
+            if not isinstance(attributes, dict):
+                continue
 
-        if isinstance(after, Mapping):
             for key in ("region", "aws_region"):
-                value = after.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-
-        before = change.get("before")
-
-        if isinstance(before, Mapping):
-            for key in ("region", "aws_region"):
-                value = before.get(key)
+                value = attributes.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
 
         return "unknown"
 
-    @staticmethod
-    def _quantity(value: Any) -> float:
+    def _extract_quantity(
+        self,
+        resource_type: str,
+        attributes: Any,
+    ) -> float:
         """
-        Extract a deterministic quantity from Terraform values.
+        Extract the billable quantity relevant to the resource/pricing unit.
 
-        Terraform plans do not have a universal quantity field. The parser
-        therefore uses conservative resource-value conventions and falls
-        back to 1 for an existing resource representation.
+        This is intentionally resource-specific. A Terraform attribute is
+        only treated as quantity when it represents a meaningful billing
+        dimension for the supported resource.
+
+        Resource-count resources:
+          - aws_instance
+          - aws_nat_gateway
+          - aws_db_instance
+          - aws_lb
+          - aws_s3_bucket
+
+        Capacity/count resources:
+          - aws_ebs_volume -> volume size
+          - aws_eks_node_group -> desired node count
         """
-        if value is None:
+        if not isinstance(attributes, dict):
             return 0.0
 
-        if isinstance(value, bool):
-            return 1.0 if value else 0.0
-
-        if isinstance(value, (int, float)):
-            return float(value)
-
-        if isinstance(value, Mapping):
-            for key in (
-                "quantity",
-                "count",
-                "size",
-                "volume_size",
-                "desired_size",
-                "node_count",
-            ):
-                candidate = value.get(key)
-
-                if isinstance(candidate, bool):
-                    continue
-
-                if isinstance(candidate, (int, float)):
-                    return float(candidate)
-
+        if resource_type == TerraformResourceType.AWS_INSTANCE.value:
             return 1.0
 
-        if isinstance(value, list):
-            return float(len(value))
+        if resource_type == TerraformResourceType.AWS_EBS_VOLUME.value:
+            return self._numeric_attribute(
+                attributes,
+                "volume_size",
+                "size",
+                default=1.0,
+            )
 
-        return 1.0
+        if resource_type == TerraformResourceType.AWS_NAT_GATEWAY.value:
+            return 1.0
+
+        if resource_type == TerraformResourceType.AWS_DB_INSTANCE.value:
+            return 1.0
+
+        if resource_type == TerraformResourceType.AWS_LB.value:
+            return 1.0
+
+        if resource_type == TerraformResourceType.AWS_S3_BUCKET.value:
+            return 1.0
+
+        if resource_type == TerraformResourceType.AWS_EKS_NODE_GROUP.value:
+            return self._numeric_attribute(
+                attributes,
+                "desired_size",
+                default=1.0,
+            )
+
+        return 0.0
+
+    @staticmethod
+    def _numeric_attribute(
+        attributes: dict[str, Any],
+        *keys: str,
+        default: float,
+    ) -> float:
+        for key in keys:
+            value = attributes.get(key)
+
+            if isinstance(value, bool):
+                continue
+
+            if isinstance(value, (int, float)):
+                return max(0.0, float(value))
+
+        return default

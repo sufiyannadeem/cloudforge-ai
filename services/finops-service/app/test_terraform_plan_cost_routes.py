@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .terraform_plan_cost_routes import (
+from app.terraform_plan_cost_routes import (
     TerraformPlanCostEstimateRequest,
     TerraformPricingEvidenceRequest,
     estimate_plan_cost,
@@ -59,10 +59,11 @@ def test_plan_cost_route_reports_unsupported_resources() -> None:
 
     response = estimate_plan_cost(request)
 
-    assert response.parsed_resource_count == 1
+    assert response.parsed_resource_count == 0
     assert response.unsupported_resources == [
         "aws_lambda_function.api"
     ]
+    assert response.parse_issues == []
     assert response.cost_report.estimates == []
 
 
@@ -85,6 +86,8 @@ def test_plan_cost_route_reports_parse_issues() -> None:
 
     response = estimate_plan_cost(request)
 
-    assert response.cost_report.estimates == []
+    assert response.parsed_resource_count == 0
+    assert response.unsupported_resources == []
     assert len(response.parse_issues) == 1
-    assert "replacement" in response.parse_issues[0].lower()
+    assert "aws_instance.broken" in response.parse_issues[0]
+    assert "replacement actions" in response.parse_issues[0]
