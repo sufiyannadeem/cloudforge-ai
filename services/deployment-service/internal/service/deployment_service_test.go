@@ -18,6 +18,7 @@ type mockDeploymentStore struct {
 	listFunc    func(context.Context, int, int) ([]model.Deployment, error)
 	updateFunc  func(context.Context, model.Deployment) error
 	deleteFunc  func(context.Context, uuid.UUID) error
+	getPreviousFunc func(context.Context, uuid.UUID, string, uuid.UUID) (model.Deployment, error)
 
 	createdDeployment model.Deployment
 	updatedDeployment model.Deployment
@@ -86,6 +87,19 @@ func (m *mockDeploymentStore) Delete(
 	}
 
 	return nil
+}
+
+func (m *mockDeploymentStore) GetPreviousSuccessfulDeployment(
+	ctx context.Context,
+	projectID uuid.UUID,
+	environment string,
+	excludeDeploymentID uuid.UUID,
+) (model.Deployment, error) {
+	if m.getPreviousFunc != nil {
+		return m.getPreviousFunc(ctx, projectID, environment, excludeDeploymentID)
+	}
+
+	return model.Deployment{}, repository.ErrDeploymentNotFound
 }
 
 func validCreateInput() model.CreateDeploymentInput {
@@ -426,5 +440,112 @@ func TestDeleteDeploymentRejectsNilID(t *testing.T) {
 
 	if !errors.Is(err, ErrInvalidDeploymentID) {
 		t.Fatalf("expected ErrInvalidDeploymentID, got %v", err)
+	}
+}
+
+func TestRollbackSuccess(t *testing.T) {
+	currentID := uuid.New()
+	prevID := uuid.New()
+	projectID := uuid.New()
+
+	current := model.Deployment{
+		ID:           currentID,
+		ProjectID:    projectID,
+		Environment:  "production",
+		Image:        "nginx:1.28-buggy",
+		GitCommitSHA: "badcommit1234",
+		Namespace:    "production",
+		Status:       model.DeploymentStatusFailed,
+	}
+
+	previous := model.Deployment{
+		ID:           prevID,
+		ProjectID:    projectID,
+		Environment:  "production",
+		Image:        "nginx:1.27-stable",
+		GitCommitSHA: "goodcommit1234",
+		Namespace:    "production",
+		Status:       model.DeploymentStatusSucceeded,
+	}
+
+	store := &mockDeploymentStore{
+		getByIDFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			if id == currentID {
+				return current, nil
+			}
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+		getPreviousFunc: func(ctx context.Context, pID uuid.UUID, env string, exclude uuid.UUID) (model.Deployment, error) {
+			if pID == projectID && env == "production" && exclude == currentID {
+				return previous, nil
+			}
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+	}
+
+	svc := NewDeploymentService(store)
+
+	rollback, err := svc.Rollback(context.Background(), currentID)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if rollback.Image != "nginx:1.27-stable" {
+		t.Fatalf("expected rolled back image %s, got %s", "nginx:1.27-stable", rollback.Image)
+	}
+	if rollback.GitCommitSHA != "goodcommit1234" {
+		t.Fatalf("expected commit %s, got %s", "goodcommit1234", rollback.GitCommitSHA)
+	}
+	if rollback.Status != model.DeploymentStatusPending {
+		t.Fatalf("expected status pending, got %s", rollback.Status)
+	}
+	if rollback.Environment != "production" {
+		t.Fatalf("expected environment production, got %s", rollback.Environment)
+	}
+}
+
+func TestRollbackRejectsNilID(t *testing.T) {
+	store := &mockDeploymentStore{}
+	svc := NewDeploymentService(store)
+
+	_, err := svc.Rollback(context.Background(), uuid.Nil)
+	if !errors.Is(err, ErrInvalidDeploymentID) {
+		t.Fatalf("expected ErrInvalidDeploymentID, got %v", err)
+	}
+}
+
+func TestRollbackNotFound(t *testing.T) {
+	store := &mockDeploymentStore{
+		getByIDFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+	}
+	svc := NewDeploymentService(store)
+
+	_, err := svc.Rollback(context.Background(), uuid.New())
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestRollbackNoPreviousSuccessfulDeployment(t *testing.T) {
+	currentID := uuid.New()
+	store := &mockDeploymentStore{
+		getByIDFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			return model.Deployment{
+				ID:          currentID,
+				ProjectID:   uuid.New(),
+				Environment: "development",
+			}, nil
+		},
+		getPreviousFunc: func(ctx context.Context, pID uuid.UUID, env string, exclude uuid.UUID) (model.Deployment, error) {
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+	}
+	svc := NewDeploymentService(store)
+
+	_, err := svc.Rollback(context.Background(), currentID)
+	if !errors.Is(err, ErrNoPreviousSuccessfulDeployment) {
+		t.Fatalf("expected ErrNoPreviousSuccessfulDeployment, got %v", err)
 	}
 }

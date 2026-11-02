@@ -32,6 +32,13 @@ type DeploymentStore interface {
 		ctx context.Context,
 		id uuid.UUID,
 	) error
+
+	GetPreviousSuccessfulDeployment(
+		ctx context.Context,
+		projectID uuid.UUID,
+		environment string,
+		excludeDeploymentID uuid.UUID,
+	) (model.Deployment, error)
 }
 
 type DeploymentQueueStore interface {

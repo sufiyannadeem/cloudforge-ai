@@ -152,6 +152,25 @@ func (h *DeploymentHandler) Delete(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *DeploymentHandler) Rollback(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	id, err := parseDeploymentID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	deployment, err := h.service.Rollback(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, deployment)
+}
+
 func decodeJSON(
 	r *http.Request,
 	target interface{},
@@ -237,6 +256,9 @@ func writeServiceError(
 	switch {
 	case errors.Is(err, repository.ErrDeploymentNotFound):
 		writeError(w, http.StatusNotFound, "deployment not found")
+
+	case errors.Is(err, service.ErrNoPreviousSuccessfulDeployment):
+		writeError(w, http.StatusConflict, err.Error())
 
 	case errors.Is(err, service.ErrInvalidProjectID),
 		errors.Is(err, service.ErrInvalidEnvironment),

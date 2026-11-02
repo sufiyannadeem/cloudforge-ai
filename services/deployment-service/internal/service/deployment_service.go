@@ -50,6 +50,10 @@ var (
 	ErrInvalidDeploymentTransition = errors.New(
 		"invalid deployment status transition",
 	)
+
+	ErrNoPreviousSuccessfulDeployment = errors.New(
+		"no previous successful deployment found for rollback",
+	)
 )
 
 type DeploymentService struct {
@@ -257,6 +261,50 @@ func (s *DeploymentService) Delete(
 	}
 
 	return nil
+}
+
+func (s *DeploymentService) Rollback(
+	ctx context.Context,
+	id uuid.UUID,
+) (model.Deployment, error) {
+	if id == uuid.Nil {
+		return model.Deployment{}, ErrInvalidDeploymentID
+	}
+
+	current, err := s.store.GetByID(ctx, id)
+	if err != nil {
+		return model.Deployment{}, fmt.Errorf(
+			"get deployment for rollback: %w",
+			err,
+		)
+	}
+
+	prev, err := s.store.GetPreviousSuccessfulDeployment(
+		ctx,
+		current.ProjectID,
+		current.Environment,
+		current.ID,
+	)
+	if err != nil {
+		if errors.Is(err, repository.ErrDeploymentNotFound) {
+			return model.Deployment{}, ErrNoPreviousSuccessfulDeployment
+		}
+
+		return model.Deployment{}, fmt.Errorf(
+			"find previous deployment for rollback: %w",
+			err,
+		)
+	}
+
+	rollbackInput := model.CreateDeploymentInput{
+		ProjectID:    current.ProjectID,
+		Environment:  current.Environment,
+		Image:        prev.Image,
+		GitCommitSHA: prev.GitCommitSHA,
+		Namespace:    current.Namespace,
+	}
+
+	return s.Create(ctx, rollbackInput)
 }
 
 func validateCreateInput(

@@ -382,3 +382,67 @@ func (r *DeploymentRepository) ReleaseQueuedDeployment(
 
 	return ErrDeploymentNotFound
 }
+
+func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
+	ctx context.Context,
+	projectID uuid.UUID,
+	environment string,
+	excludeDeploymentID uuid.UUID,
+) (model.Deployment, error) {
+	if r.pool == nil {
+		return model.Deployment{}, errors.New("database pool is nil")
+	}
+
+	const query = `
+		SELECT
+			id,
+			project_id,
+			environment,
+			image,
+			git_commit_sha,
+			namespace,
+			status,
+			created_at,
+			updated_at
+		FROM deployments
+		WHERE project_id = $1
+		  AND environment = $2
+		  AND status = 'succeeded'
+		  AND id != $3
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	var deployment model.Deployment
+
+	err := r.pool.QueryRow(
+		ctx,
+		query,
+		projectID,
+		environment,
+		excludeDeploymentID,
+	).Scan(
+		&deployment.ID,
+		&deployment.ProjectID,
+		&deployment.Environment,
+		&deployment.Image,
+		&deployment.GitCommitSHA,
+		&deployment.Namespace,
+		&deployment.Status,
+		&deployment.CreatedAt,
+		&deployment.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Deployment{}, ErrDeploymentNotFound
+		}
+
+		return model.Deployment{}, fmt.Errorf(
+			"get previous successful deployment: %w",
+			err,
+		)
+	}
+
+	return deployment, nil
+}

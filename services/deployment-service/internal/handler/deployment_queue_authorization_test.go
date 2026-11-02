@@ -7,6 +7,7 @@ import (
 )
 
 func TestAuthorizeRemediationRequest(t *testing.T) {
+	t.Setenv("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
 	tests := []struct {
 		name        string
 		actor       string
@@ -78,6 +79,11 @@ func TestAuthorizeRemediationRequest(t *testing.T) {
 				http.MethodPost,
 				"/api/v1/deployments/00000000-0000-0000-0000-000000000001/remediation-run",
 				nil,
+			)
+
+			request.Header.Set(
+				cloudForgeInternalTokenHeader,
+				"test-only-internal-token-32-bytes-minimum",
 			)
 
 			if tt.actor != "" {
@@ -174,5 +180,16 @@ func TestQueuedDeploymentHandlerNormalRunDoesNotRequireRemediationAuthorization(
 			http.StatusBadRequest,
 			response.Code,
 		)
+	}
+}
+
+func TestAuthorizeRemediationRequestRejectsMissingInternalToken(t *testing.T) {
+	t.Setenv("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/id/remediation-run", nil)
+	request.Header.Set(cloudForgeActorHeader, "forged-operator")
+	request.Header.Set(cloudForgeIncidentHeader, "incident-123")
+	request.Header.Set(cloudForgeRemediationHeader, cloudForgeHumanApproved)
+	if err := authorizeRemediationRequest(request); err == nil {
+		t.Fatal("expected missing internal service token to be rejected")
 	}
 }

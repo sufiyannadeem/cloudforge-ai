@@ -14,6 +14,7 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 )
 
 type mockDeploymentManager struct {
@@ -22,6 +23,7 @@ type mockDeploymentManager struct {
 	listFunc    func(context.Context, int, int) ([]model.Deployment, error)
 	updateFunc  func(context.Context, uuid.UUID, model.UpdateDeploymentInput) (model.Deployment, error)
 	deleteFunc  func(context.Context, uuid.UUID) error
+	rollbackFunc func(context.Context, uuid.UUID) (model.Deployment, error)
 }
 
 func (m *mockDeploymentManager) Create(
@@ -79,6 +81,17 @@ func (m *mockDeploymentManager) Delete(
 	}
 
 	return nil
+}
+
+func (m *mockDeploymentManager) Rollback(
+	ctx context.Context,
+	id uuid.UUID,
+) (model.Deployment, error) {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx, id)
+	}
+
+	return model.Deployment{}, nil
 }
 
 func testDeployment() model.Deployment {
@@ -489,5 +502,102 @@ func TestWriteServiceErrorInternalError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected status 500, got %d", rec.Code)
+	}
+}
+
+func TestRollbackHandlerSuccess(t *testing.T) {
+	deploymentID := uuid.New()
+	expected := testDeployment()
+	expected.Image = "nginx:1.27-rollback"
+
+	manager := &mockDeploymentManager{
+		rollbackFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			if id == deploymentID {
+				return expected, nil
+			}
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+	}
+
+	h := NewDeploymentHandler(manager)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/deployments/"+deploymentID.String()+"/rollback",
+		nil,
+	)
+	req.SetPathValue("id", deploymentID.String())
+
+	rec := httptest.NewRecorder()
+	h.Rollback(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", rec.Code)
+	}
+
+	var response model.Deployment
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if response.Image != expected.Image {
+		t.Fatalf("expected image %s, got %s", expected.Image, response.Image)
+	}
+}
+
+func TestRollbackHandlerInvalidUUID(t *testing.T) {
+	manager := &mockDeploymentManager{}
+	h := NewDeploymentHandler(manager)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/invalid/rollback", nil)
+	req.SetPathValue("id", "invalid")
+
+	rec := httptest.NewRecorder()
+	h.Rollback(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestRollbackHandlerNotFound(t *testing.T) {
+	manager := &mockDeploymentManager{
+		rollbackFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			return model.Deployment{}, repository.ErrDeploymentNotFound
+		},
+	}
+
+	h := NewDeploymentHandler(manager)
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/"+id.String()+"/rollback", nil)
+	req.SetPathValue("id", id.String())
+
+	rec := httptest.NewRecorder()
+	h.Rollback(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", rec.Code)
+	}
+}
+
+func TestRollbackHandlerNoPrevious(t *testing.T) {
+	manager := &mockDeploymentManager{
+		rollbackFunc: func(ctx context.Context, id uuid.UUID) (model.Deployment, error) {
+			return model.Deployment{}, service.ErrNoPreviousSuccessfulDeployment
+		},
+	}
+
+	h := NewDeploymentHandler(manager)
+
+	id := uuid.New()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/"+id.String()+"/rollback", nil)
+	req.SetPathValue("id", id.String())
+
+	rec := httptest.NewRecorder()
+	h.Rollback(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", rec.Code)
 	}
 }

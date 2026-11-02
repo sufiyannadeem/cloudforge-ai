@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -13,9 +15,10 @@ import (
 )
 
 const (
-	cloudForgeActorHeader       = "X-CloudForge-Actor"
-	cloudForgeIncidentHeader    = "X-CloudForge-Incident"
-	cloudForgeRemediationHeader = "X-CloudForge-Remediation"
+	cloudForgeActorHeader         = "X-CloudForge-Actor"
+	cloudForgeIncidentHeader      = "X-CloudForge-Incident"
+	cloudForgeRemediationHeader   = "X-CloudForge-Remediation"
+	cloudForgeInternalTokenHeader = "X-CloudForge-Internal-Token"
 
 	cloudForgeHumanApproved = "human-approved"
 )
@@ -40,6 +43,13 @@ func NewQueuedDeploymentHandler(
 }
 
 func authorizeRemediationRequest(r *http.Request) error {
+	expectedToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
+	providedToken := strings.TrimSpace(r.Header.Get(cloudForgeInternalTokenHeader))
+	if len(expectedToken) < 32 || strings.Contains(strings.ToLower(expectedToken), "replace-with") || len(providedToken) != len(expectedToken) ||
+		subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
+		return errors.New("trusted remediation service authentication required")
+	}
+
 	actor := strings.TrimSpace(
 		r.Header.Get(cloudForgeActorHeader),
 	)

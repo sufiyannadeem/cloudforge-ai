@@ -123,15 +123,22 @@ func main() {
 		promhttp.HandlerOpts{},
 	)
 
-	simulatedExecutor := executor.SimulatedExecutor{
-		ExecutionDelay: 2 * time.Second,
-		ShouldFail:     false,
+	var deploymentExec executor.Executor
+	if os.Getenv("DEPLOYMENT_EXECUTOR") == "kubernetes" || os.Getenv("KUBECONFIG") != "" {
+		deploymentExec = executor.NewKubernetesExecutor(deploymentService)
+		logger.Info("configured Kubernetes deployment executor", "executor", "kubernetes")
+	} else {
+		deploymentExec = executor.SimulatedExecutor{
+			ExecutionDelay: 2 * time.Second,
+			ShouldFail:     false,
+		}
+		logger.Info("configured local deployment executor", "executor", "simulated")
 	}
 
 	deploymentRunner, err := service.NewDeploymentRunnerWithAttemptsAndMetrics(
 		deploymentService,
 		attemptRepository,
-		simulatedExecutor,
+		deploymentExec,
 		logger,
 		deploymentMetrics,
 	)
@@ -192,9 +199,15 @@ func main() {
 		metricsHandler,
 	)
 
+	internalToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
+	authenticatedRouter := handler.NewRouterWithInternalToken(
+		router,
+		internalToken,
+	)
+
 	instrumentedRouter := metrics.Middleware(
 		serviceMetrics,
-	)(router)
+	)(authenticatedRouter)
 
 	server := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.ServerPort),

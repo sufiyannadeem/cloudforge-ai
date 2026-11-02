@@ -205,6 +205,41 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /api/v1/deployments/{id}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/DeploymentID"
+
+    post:
+      tags:
+        - Deployments
+      summary: Rollback deployment to previous successful release
+      operationId: rollbackDeployment
+      responses:
+        "201":
+          description: Rollback deployment created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: No previous successful deployment available for rollback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: no previous successful deployment found for rollback
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /api/v1/deployments/{id}/attempts:
     parameters:
       - $ref: "#/components/parameters/DeploymentID"
@@ -530,6 +565,24 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
           example:
             error: deployment not found
+
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: unauthorized
+
+    Forbidden:
+      description: Insufficient permissions for requested action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: forbidden
 
     InternalServerError:
       description: Internal server error
