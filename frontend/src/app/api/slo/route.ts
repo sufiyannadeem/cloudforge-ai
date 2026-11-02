@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const AIOPS_URL =
-  process.env.AIOPS_URL ?? "http://localhost:8090";
+  process.env.AIOPS_SERVICE_URL ??
+  process.env.AIOPS_URL ??
+  "http://localhost:8090";
 
 export async function GET(
   request: NextRequest,

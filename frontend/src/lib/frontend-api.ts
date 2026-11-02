@@ -9,10 +9,20 @@ import type {
   ProjectListResponse,
 } from "@/types/api";
 
+const readCookie = (name: string): string | undefined => {
+  if (typeof document === "undefined") return undefined;
+  const prefix = `${name}=`;
+  const entry = document.cookie.split(";").map((item) => item.trim())
+    .find((item) => item.startsWith(prefix));
+  return entry ? decodeURIComponent(entry.slice(prefix.length)) : undefined;
+};
+
 const frontendApiRequest = async <T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> => {
+  const csrfToken = readCookie("cf_csrf");
+  const isMutation = Boolean(options.method && options.method.toUpperCase() !== "GET");
   const response = await fetch(path, {
     ...options,
     headers: {
@@ -20,6 +30,7 @@ const frontendApiRequest = async <T>(
       ...(options.body
         ? { "Content-Type": "application/json" }
         : {}),
+      ...(isMutation && csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...options.headers,
     },
     cache: "no-store",

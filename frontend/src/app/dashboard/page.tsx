@@ -40,6 +40,13 @@ const initialServices: ServiceHealth[] = [
     latencyMs: null,
   },
   {
+    name: "FinOps Service",
+    description: "Cloud cost analysis and optimization",
+    port: 8091,
+    status: "not-checked",
+    latencyMs: null,
+  },
+  {
     name: "Prometheus",
     description: "Metrics collection and querying",
     port: 9090,
@@ -49,7 +56,7 @@ const initialServices: ServiceHealth[] = [
   {
     name: "Grafana",
     description: "Observability dashboards",
-    port: 3000,
+    port: 3001,
     status: "not-checked",
     latencyMs: null,
   },

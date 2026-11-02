@@ -64,6 +64,15 @@ const commandCards: CommandCard[] = [
     icon: "⌘",
     accentClass: "bg-cyan-950/60 text-cyan-400",
   },
+  {
+    eyebrow: "Cost Intelligence",
+    title: "FinOps & Cloud Cost",
+    description:
+      "Monitor AWS cloud spend, forecast costs, and review workload right-sizing recommendations.",
+    href: "/finops",
+    icon: "❖",
+    accentClass: "bg-teal-950/60 text-teal-400",
+  },
 ];
 
 export default function PlatformCommandCenter() {

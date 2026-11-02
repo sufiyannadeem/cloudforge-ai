@@ -1,4 +1,6 @@
-import { serviceConfig } from "@/lib/config";
+import { cookies } from "next/headers";
+import { serviceConfig } from "@/lib/server-config";
+import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import {
   getDeploymentProgress,
   getErrorRate,
@@ -21,11 +23,13 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 async function requestJson<T>(
   url: string,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
   const response = await fetch(url, {
     method: "GET",
     headers: {
       Accept: "application/json",
+      ...extraHeaders,
     },
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -43,8 +47,9 @@ async function requestJson<T>(
 async function getCount<T>(
   url: string,
   extractCount: (data: T) => number,
+  extraHeaders: Record<string, string> = {},
 ): Promise<number> {
-  const data = await requestJson<T>(url);
+  const data = await requestJson<T>(url, extraHeaders);
 
   return extractCount(data);
 }
@@ -136,21 +141,36 @@ async function getObservabilityData(): Promise<{
 
 export async function getDashboardData(): Promise<DashboardData> {
   const errors: string[] = [];
+  const cookieStore = await cookies();
+  const session = verifySessionToken(
+    cookieStore.get(SESSION_COOKIE)?.value,
+  );
+
+  const infrastructureHeaders: Record<string, string> = {
+    "X-CloudForge-Internal-Token":
+      process.env.CLOUDFORGE_INTERNAL_API_TOKEN ?? "",
+  };
+
+  if (session) {
+    infrastructureHeaders["X-CloudForge-Role"] = session.role;
+    infrastructureHeaders["X-CloudForge-Actor"] = session.sub;
+  }
 
   const results = await Promise.allSettled([
     getCount<ProjectListResponse>(
       `${serviceConfig.project}/projects?limit=100&offset=0`,
-      (data) => data.count ?? data.data.length,
+      (data) => data.count ?? data.data?.length ?? 0,
     ),
 
     getCount<InfrastructureListResponse>(
       `${serviceConfig.infrastructure}/api/v1/resources?limit=100&offset=0`,
-      (data) => data.items.length,
+      (data) => data.items?.length ?? 0,
+      infrastructureHeaders,
     ),
 
     getCount<DeploymentListResponse>(
       `${serviceConfig.deployment}/api/v1/deployments?limit=100&offset=0`,
-      (data) => data.items.length,
+      (data) => data.items?.length ?? 0,
     ),
 
     getCount<IncidentListResponse>(

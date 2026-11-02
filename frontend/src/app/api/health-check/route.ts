@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { serviceConfig } from "@/lib/config";
+import { serviceConfig } from "@/lib/server-config";
 
 export const dynamic = "force-dynamic";
 
@@ -45,16 +45,22 @@ const healthTargets: HealthTarget[] = [
     port: 8090,
   },
   {
+    name: "FinOps Service",
+    description: "Cloud cost analysis and optimization",
+    url: `${serviceConfig.finops}/health`,
+    port: 8091,
+  },
+  {
     name: "Prometheus",
     description: "Metrics collection and querying",
-    url: "http://localhost:9090/-/healthy",
+    url: `${serviceConfig.prometheus}/-/healthy`,
     port: 9090,
   },
   {
     name: "Grafana",
     description: "Observability dashboards",
-    url: "http://localhost:3000/api/health",
-    port: 3000,
+    url: `${serviceConfig.grafana}/api/health`,
+    port: 3001,
   },
 ];
 

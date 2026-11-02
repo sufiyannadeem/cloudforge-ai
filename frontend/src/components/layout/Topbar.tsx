@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import ThemeSwitcher from "@/components/theme/ThemeSwitcher";
 
 interface TopbarProps {
@@ -9,6 +10,22 @@ interface TopbarProps {
 export default function Topbar({
   onMenuClick,
 }: TopbarProps) {
+  const router = useRouter();
+
+  async function logout() {
+    const csrfCookie = typeof document === "undefined"
+      ? ""
+      : document.cookie.split(";").map((item) => item.trim())
+          .find((item) => item.startsWith("cf_csrf="))
+          ?.slice("cf_csrf=".length) ?? "";
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      headers: { "X-CSRF-Token": decodeURIComponent(csrfCookie) },
+      cache: "no-store",
+    });
+    router.replace("/login");
+  }
+
   return (
     <header
       className={[
@@ -50,6 +67,13 @@ export default function Topbar({
 
       <div className="flex items-center gap-2 sm:gap-3">
         <ThemeSwitcher />
+        <button
+          type="button"
+          onClick={logout}
+          className="rounded-lg border border-[var(--cf-border)] px-3 py-2 text-xs text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)]"
+        >
+          Sign out
+        </button>
 
         <div
           className={[

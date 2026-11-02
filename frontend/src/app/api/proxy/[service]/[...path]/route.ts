@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serviceConfig } from "@/lib/config";
+import { serviceConfig } from "@/lib/server-config";
+import {
+  CSRF_COOKIE,
+  internalApiToken,
+  originMatchesRequest,
+  SESSION_COOKIE,
+  verifySessionToken,
+} from "@/lib/auth";
 
 type SupportedService =
   | "project"
@@ -34,8 +41,42 @@ const allowedMethods = new Set([
 const isSupportedService = (
   service: string,
 ): service is SupportedService => {
-  return service in serviceUrls;
+  return Object.hasOwn(serviceUrls, service);
 };
+
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+function isAuthorizedForRoute(
+  role: string,
+  service: SupportedService,
+  path: string[],
+  method: string,
+): boolean {
+  if (role === "admin") return true;
+  if (!MUTATING_METHODS.has(method)) return true;
+  if (role === "viewer") return false;
+
+  if (service === "finops") {
+    return ["platform-engineer", "devops", "sre"].includes(role);
+  }
+
+  if (service === "infrastructure") {
+    const joinedPath = path.join("/");
+    const highRiskMutation =
+      method === "DELETE" ||
+      joinedPath.endsWith("/apply") ||
+      joinedPath.endsWith("/destroy/apply");
+    if (highRiskMutation) return role === "platform-engineer";
+    return ["platform-engineer", "devops", "sre"].includes(role);
+  }
+
+  if (service === "deployment") {
+    if (method === "DELETE") return role === "platform-engineer";
+    return ["platform-engineer", "devops", "sre"].includes(role);
+  }
+
+  return ["platform-engineer", "devops", "sre"].includes(role);
+}
 
 const createErrorResponse = (
   message: string,
@@ -71,6 +112,44 @@ async function proxyRequest(
     );
   }
 
+  const session = verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
+  if (!session) {
+    return createErrorResponse("Authentication required", 401);
+  }
+
+  const serviceToken = internalApiToken();
+  if (!serviceToken) {
+    return createErrorResponse("Backend authentication is not configured", 503);
+  }
+
+  if (!isAuthorizedForRoute(session.role, service, path, request.method)) {
+    return createErrorResponse("Insufficient permissions for this operation", 403);
+  }
+
+  if (MUTATING_METHODS.has(request.method)) {
+    const csrfCookie = request.cookies.get(CSRF_COOKIE)?.value;
+    const csrfHeader = request.headers.get("x-csrf-token");
+    const csrfChecks = {
+      originMatches: originMatchesRequest(
+        request.headers.get("origin"),
+        request.url,
+        request.headers.get("host"),
+      ),
+      sessionHasCsrf: Boolean(session.csrf),
+      cookieMatchesSession: Boolean(csrfCookie && csrfCookie === session.csrf),
+      headerMatchesSession: Boolean(csrfHeader && csrfHeader === session.csrf),
+    };
+
+    if (Object.values(csrfChecks).some((passed) => !passed)) {
+      console.warn("[CloudForge CSRF] Validation failed", {
+        method: request.method,
+        service,
+        checks: csrfChecks,
+      });
+      return createErrorResponse("CSRF validation failed", 403);
+    }
+  }
+
   const serviceUrl = serviceUrls[service];
 
   const targetPath = path
@@ -86,13 +165,9 @@ async function proxyRequest(
   });
 
   const headers = new Headers();
-
-  if (service === "finops") {
-    const finopsRole =
-      process.env.CLOUDFORGE_FINOPS_ROLE ?? "platform-engineer";
-
-    headers.set("X-CloudForge-Role", finopsRole);
-  }
+  headers.set("X-CloudForge-Internal-Token", serviceToken);
+  headers.set("X-CloudForge-Actor", session.sub);
+  headers.set("X-CloudForge-Role", session.role);
 
   const contentType = request.headers.get("content-type");
 
@@ -114,13 +189,18 @@ async function proxyRequest(
     body = await request.arrayBuffer();
   }
 
+  const isProvisioningOperation =
+    service === "infrastructure" &&
+    path.some((segment) => segment === "plan" || segment === "apply");
+  const requestTimeoutMs = isProvisioningOperation ? 600_000 : 10_000;
+
   try {
     const response = await fetch(targetUrl, {
       method: request.method,
       headers,
       body,
       cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
 
     const responseHeaders = new Headers();
