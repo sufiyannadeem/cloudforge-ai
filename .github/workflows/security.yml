@@ -28,6 +28,7 @@ jobs:
   secret-scan:
     name: Secret Scan
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     steps:
       - name: Checkout repository
@@ -45,6 +46,7 @@ jobs:
   trivy-filesystem:
     name: Trivy Filesystem Security Scan
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     steps:
       - name: Checkout repository
@@ -66,6 +68,7 @@ jobs:
   trivy-config:
     name: Trivy IaC and Configuration Scan
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     steps:
       - name: Checkout repository
@@ -85,6 +88,7 @@ jobs:
   image-security:
     name: Build and Scan Images
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     strategy:
       fail-fast: false
@@ -110,6 +114,16 @@ jobs:
             dockerfile: services/aiops-service/Dockerfile
             image: cloudforge-aiops-service:security
 
+          - name: finops-service
+            context: services/finops-service
+            dockerfile: services/finops-service/Dockerfile
+            image: cloudforge-finops-service:security
+
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+            image: cloudforge-frontend:security
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,7 +135,12 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          tags: ${{ matrix.image }}
+          tags: |
+            ${{ matrix.image }}
+            cloudforge-${{ matrix.name }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.repository }}
           load: true
           push: false
           provenance: false
@@ -155,6 +174,7 @@ jobs:
   sbom:
     name: Generate Repository SBOM
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     steps:
       - name: Checkout repository
@@ -189,16 +209,79 @@ jobs:
       - sbom
 
     runs-on: ubuntu-latest
+    if: always()
 
     steps:
-      - name: Security gate passed
+      - name: Security gate evaluation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RESULTS: ${{ toJson(needs) }}
         run: |
+          set -euo pipefail
           echo "=========================================="
-          echo "CLOUDFORGE AI SECURITY GATE"
+          echo "CLOUDFORGE AI SECURITY GATE EVALUATION"
           echo "=========================================="
-          echo "Secret scan: PASS"
-          echo "Filesystem vulnerability scan: PASS"
-          echo "IaC/configuration scan: PASS"
-          echo "Application image scans: PASS"
-          echo "SBOM generation: PASS"
-          echo "=========================================="
+
+          python3 -c "import textwrap; exec(textwrap.dedent('''
+          import json, os, sys
+
+          event_name = os.environ.get('EVENT_NAME', '')
+          commit_msg = os.environ.get('COMMIT_MSG', '')
+          results = json.loads(os.environ.get('RESULTS', '{}'))
+
+          is_intentional_skip = False
+          if event_name == 'push':
+              if '[skip ci]' in commit_msg or '[ci skip]' in commit_msg:
+                  is_intentional_skip = True
+
+          required_jobs = [
+              'secret-scan',
+              'trivy-filesystem',
+              'trivy-config',
+              'image-security',
+              'sbom',
+          ]
+
+          failed = []
+          unexpected_skipped = []
+          passed = []
+
+          for job in required_jobs:
+              status = results.get(job, {}).get('result', 'missing')
+              print(f'  - {job}: {status}')
+              if status == 'success':
+                  passed.append(job)
+              elif status in ('failure', 'cancelled'):
+                  failed.append((job, status))
+              elif status == 'skipped':
+                  if not is_intentional_skip:
+                      unexpected_skipped.append(job)
+              else:
+                  failed.append((job, status))
+
+          if failed:
+              print('\n[ERROR] Security checks failed or were cancelled:')
+              for job, status in failed:
+                  print(f'  ❌ {job} (status: {status})')
+              sys.exit(1)
+
+          if unexpected_skipped:
+              print('\n[ERROR] Security checks were unexpectedly skipped:')
+              for job in unexpected_skipped:
+                  print(f'  ⚠️ {job}')
+              sys.exit(1)
+
+          if is_intentional_skip and len(passed) == 0:
+              print('\n[NOTICE] Security scan was intentionally skipped via commit message directive ([skip ci] / [ci skip]).')
+              sys.exit(0)
+
+          if len(passed) == len(required_jobs):
+              print('\n==========================================')
+              print('CLOUDFORGE AI SECURITY GATE: ALL PASSED')
+              print('==========================================')
+              sys.exit(0)
+          else:
+              print(f'\n[ERROR] Security gate incomplete. Passed: {len(passed)}/{len(required_jobs)}')
+              sys.exit(1)
+          '''))"

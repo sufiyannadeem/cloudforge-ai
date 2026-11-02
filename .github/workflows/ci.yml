@@ -6,7 +6,7 @@ on:
       - main
       - develop
       - "feature/**"
-
+      - "feat/**"
   pull_request:
     branches:
       - main
@@ -15,10 +15,91 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ============================================================
+  # 1. Secret & Filesystem Security Gate
+  # ============================================================
+  security-gate-ci:
+    name: Secret & Dependency Security Gates
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+      - name: Trivy Filesystem & Dependency Vulnerability Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  # ============================================================
+  # 2. Terraform IaC Formatting, Validation & Policy Checks
+  # ============================================================
+  terraform-ci:
+    name: Terraform IaC & Policy CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.16.2"
+
+      - name: Verify Terraform formatting
+        run: terraform fmt -check -recursive infrastructure/terraform
+
+      - name: Validate Bootstrap Configuration
+        run: |
+          terraform -chdir=infrastructure/terraform/bootstrap init -backend=false
+          terraform -chdir=infrastructure/terraform/bootstrap validate
+
+      - name: Validate Dev Environment Configuration
+        run: |
+          terraform -chdir=infrastructure/terraform/environments/dev init -backend=false
+          terraform -chdir=infrastructure/terraform/environments/dev validate
+
+      - name: Trivy IaC Policy & Security Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infrastructure/terraform
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+
+  # ============================================================
+  # 3. Project Service (Go 1.25)
+  # ============================================================
   project-service-ci:
     name: Project Service CI
     runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
 
     services:
       postgres:
@@ -45,6 +126,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -52,16 +135,9 @@ jobs:
           go-version-file: services/project-service/go.mod
           cache-dependency-path: services/project-service/go.sum
 
-      - name: Display tool versions
-        run: |
-          go version
-          git --version
-          docker --version
-
       - name: Verify Go formatting
         run: |
           unformatted_files=$(gofmt -l .)
-
           if [ -n "$unformatted_files" ]; then
             echo "The following files are not formatted:"
             echo "$unformatted_files"
@@ -80,33 +156,437 @@ jobs:
       - name: Create test database
         working-directory: .
         run: |
-          psql \
-            -h localhost \
-            -U cloudforge \
-            -d cloudforge \
-            -c "CREATE DATABASE cloudforge_test;"
-
-      - name: Apply database schema
-        working-directory: .
-        run: |
-          psql \
-            -h localhost \
-            -U cloudforge \
-            -d cloudforge_test \
-            -f services/project-service/migrations/001_create_projects_table.sql
+          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/project-service/migrations/001_create_projects_table.sql
 
       - name: Run tests
         run: go test -v ./...
 
-      - name: Build application
-        run: go build ./...
-
       - name: Run Go vet
         run: go vet ./...
 
-      - name: Build Docker image
+      - name: Build application
+        run: go build ./...
+
+      - name: Build Docker image with traceable tags
         working-directory: .
         run: |
           docker build \
             -t cloudforge-project-service:ci \
+            -t cloudforge-project-service:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
             ./services/project-service
+
+  # ============================================================
+  # 4. Infrastructure Service (Go 1.25 + Terraform Engine)
+  # ============================================================
+  infrastructure-service-ci:
+    name: Infrastructure Service CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cloudforge
+          POSTGRES_USER: cloudforge
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudforge -d cloudforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: services/infrastructure-service
+
+    env:
+      TEST_DATABASE_URL: postgres://cloudforge@localhost:5432/cloudforge_test?sslmode=disable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/infrastructure-service/go.mod
+          cache-dependency-path: services/infrastructure-service/go.sum
+
+      - name: Verify Go formatting
+        run: |
+          unformatted_files=$(gofmt -l .)
+          if [ -n "$unformatted_files" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted_files"
+            exit 1
+          fi
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Install PostgreSQL client
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Create test database
+        working-directory: .
+        run: |
+          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/001_create_infrastructure_resources.sql
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/002_add_provisioning_fields.sql
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/003_add_core_resource_types.sql
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/004_add_destroy_lifecycle.sql
+
+      - name: Run unit & integration tests
+        run: go test -v ./...
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Build application
+        run: go build ./...
+
+      - name: Build Docker image with traceable tags
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-infrastructure-service:ci \
+            -t cloudforge-infrastructure-service:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            ./services/infrastructure-service
+
+  # ============================================================
+  # 5. Deployment Service (Go 1.25 + SRE Engine)
+  # ============================================================
+  deployment-service-ci:
+    name: Deployment Service CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cloudforge
+          POSTGRES_USER: cloudforge
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudforge -d cloudforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: services/deployment-service
+
+    env:
+      TEST_DATABASE_URL: postgres://cloudforge@localhost:5432/cloudforge_test?sslmode=disable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/deployment-service/go.mod
+          cache-dependency-path: services/deployment-service/go.sum
+
+      - name: Verify Go formatting
+        run: |
+          unformatted_files=$(gofmt -l .)
+          if [ -n "$unformatted_files" ]; then
+            echo "The following files are not formatted:"
+            echo "$unformatted_files"
+            exit 1
+          fi
+
+      - name: Download Go dependencies
+        run: go mod download
+
+      - name: Install PostgreSQL client
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Create test database
+        working-directory: .
+        run: |
+          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/deployment-service/internal/migration/migrations/001_create_deployments_table.sql
+          psql -h localhost -U cloudforge -d cloudforge_test -f services/deployment-service/internal/migration/migrations/002_create_deployment_attempts_table.sql
+
+      - name: Run unit & integration tests
+        run: go test -v ./...
+
+      - name: Run Go vet
+        run: go vet ./...
+
+      - name: Build application
+        run: go build ./...
+
+      - name: Build Docker image with traceable tags
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-deployment-service:ci \
+            -t cloudforge-deployment-service:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            ./services/deployment-service
+
+  # ============================================================
+  # 6. AIOps Service (Python 3.12 + FastAPI + RAG)
+  # ============================================================
+  aiops-service-ci:
+    name: AIOps Service CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    defaults:
+      run:
+        working-directory: services/aiops-service
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/aiops-service/requirements.lock
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
+          python -m pip install pytest
+
+      - name: Verify Python syntax
+        run: python -m compileall -q app
+
+      - name: Run test suite
+        run: pytest app -v
+
+      - name: Build Docker image with traceable tags
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-aiops-service:ci \
+            -t cloudforge-aiops-service:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            ./services/aiops-service
+
+  # ============================================================
+  # 7. FinOps Service (Python 3.12 + FastAPI + Cost Engine)
+  # ============================================================
+  finops-service-ci:
+    name: FinOps Service CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    defaults:
+      run:
+        working-directory: services/finops-service
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/finops-service/requirements.lock
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --only-binary=:all: --require-hashes -r requirements.lock
+          python -m pip install pytest
+
+      - name: Verify Python syntax
+        run: python -m compileall -q app
+
+      - name: Run test suite
+        run: pytest app -v
+
+      - name: Build Docker image with traceable tags
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-finops-service:ci \
+            -t cloudforge-finops-service:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            ./services/finops-service
+
+  # ============================================================
+  # 8. Frontend Service (Next.js 16 + TypeScript + Tailwind)
+  # ============================================================
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    if: "github.event_name != 'push' || (!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]'))"
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@60edb5dd545a775178f5252478332d3be8ffb6fb # v4.0.2
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Build Next.js application
+        run: npm run build
+
+      - name: Build Docker image with traceable tags
+        working-directory: .
+        run: |
+          docker build \
+            -t cloudforge-frontend:ci \
+            -t cloudforge-frontend:${{ github.sha }} \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.source=${{ github.repository }}" \
+            ./frontend
+
+  # ============================================================
+  # 9. CI Gate Aggregator (Single branch-protection status check)
+  # ============================================================
+  ci-gate:
+    name: All CI Checks Passed
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - security-gate-ci
+      - terraform-ci
+      - project-service-ci
+      - infrastructure-service-ci
+      - deployment-service-ci
+      - aiops-service-ci
+      - finops-service-ci
+      - frontend-ci
+    steps:
+      - name: Gate evaluation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RESULTS: ${{ toJson(needs) }}
+        run: |
+          set -euo pipefail
+          echo "================================================="
+          echo "Evaluating CloudForge AI CI Gate Results..."
+          echo "Event: ${EVENT_NAME}"
+          echo "================================================="
+
+          python3 -c "import textwrap; exec(textwrap.dedent('''
+          import json, os, sys
+
+          event_name = os.environ.get('EVENT_NAME', '')
+          commit_msg = os.environ.get('COMMIT_MSG', '')
+          results = json.loads(os.environ.get('RESULTS', '{}'))
+
+          is_intentional_skip = False
+          if event_name == 'push':
+              if '[skip ci]' in commit_msg or '[ci skip]' in commit_msg:
+                  is_intentional_skip = True
+
+          required_jobs = [
+              'security-gate-ci',
+              'terraform-ci',
+              'project-service-ci',
+              'infrastructure-service-ci',
+              'deployment-service-ci',
+              'aiops-service-ci',
+              'finops-service-ci',
+              'frontend-ci',
+          ]
+
+          failed = []
+          unexpected_skipped = []
+          passed = []
+
+          print('Detailed Job Status:')
+          for job in required_jobs:
+              status = results.get(job, {}).get('result', 'missing')
+              print(f'  - {job}: {status}')
+              if status == 'success':
+                  passed.append(job)
+              elif status in ('failure', 'cancelled'):
+                  failed.append((job, status))
+              elif status == 'skipped':
+                  if not is_intentional_skip:
+                      unexpected_skipped.append(job)
+              else:
+                  failed.append((job, status))
+
+          if failed:
+              print('\n[ERROR] The following required CI jobs failed or were cancelled:')
+              for job, status in failed:
+                  print(f'  ❌ {job} (status: {status})')
+              sys.exit(1)
+
+          if unexpected_skipped:
+              print('\n[ERROR] The following required CI jobs were unexpectedly skipped:')
+              for job in unexpected_skipped:
+                  print(f'  ⚠️ {job}')
+              sys.exit(1)
+
+          if is_intentional_skip and len(passed) == 0:
+              print('\n[NOTICE] All CI checks were intentionally skipped via commit message directive ([skip ci] / [ci skip]).')
+              sys.exit(0)
+
+          if len(passed) == len(required_jobs):
+              print('\n=================================================')
+              print('All CloudForge AI security gates, Terraform IaC,')
+              print('microservices, and frontend CI checks successfully')
+              print('passed!')
+              print('=================================================')
+              sys.exit(0)
+          else:
+              print(f'\n[ERROR] Incomplete CI execution. Passed: {len(passed)}/{len(required_jobs)}')
+              sys.exit(1)
+          '''))"

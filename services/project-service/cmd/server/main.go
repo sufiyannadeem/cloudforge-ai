@@ -60,6 +60,9 @@ func main() {
 		Addr:              ":" + cfg.ServerPort,
 		Handler:           requestIDMiddleware(loggingMiddleware(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
