@@ -34,8 +34,11 @@ const (
 	ResourceStatusActive           ResourceStatus = "active"
 	ResourceStatusInactive         ResourceStatus = "inactive"
 	ResourceStatusDestroying       ResourceStatus = "destroying"
-	ResourceStatusFailed           ResourceStatus = "failed"
-	ResourceStatusDestroyed        ResourceStatus = "destroyed"
+	// ResourceStatusAwaitingDestroyApproval means a hashed destroy plan exists
+	// and a human must approve it before terraform destroy is applied.
+	ResourceStatusAwaitingDestroyApproval ResourceStatus = "awaiting_destroy_approval"
+	ResourceStatusFailed                  ResourceStatus = "failed"
+	ResourceStatusDestroyed               ResourceStatus = "destroyed"
 )
 
 func (s ResourceStatus) IsValid() bool {
@@ -47,6 +50,7 @@ func (s ResourceStatus) IsValid() bool {
 		ResourceStatusActive,
 		ResourceStatusInactive,
 		ResourceStatusDestroying,
+		ResourceStatusAwaitingDestroyApproval,
 		ResourceStatusFailed,
 		ResourceStatusDestroyed:
 		return true
@@ -70,6 +74,9 @@ type InfrastructureResource struct {
 	PlanPath           string         `json:"plan_path,omitempty"`
 	PlanHash           string         `json:"plan_hash,omitempty"`
 	PlanCreatedAt      *time.Time     `json:"plan_created_at,omitempty"`
+	PlanSummary        string         `json:"plan_summary,omitempty"`
+	DestroyPlanPath    string         `json:"destroy_plan_path,omitempty"`
+	DestroyPlanHash    string         `json:"destroy_plan_hash,omitempty"`
 	ApprovalExpiresAt  *time.Time     `json:"approval_expires_at,omitempty"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
@@ -99,4 +106,20 @@ type UpdateResourceInput struct {
 
 type ApplyResourceInput struct {
 	PlanHash string `json:"plan_hash"`
+}
+
+type PlanDetails struct {
+	ResourceID        uuid.UUID      `json:"resource_id"`
+	ResourceName      string         `json:"resource_name"`
+	ResourceType      string         `json:"resource_type"`
+	Provider          Provider       `json:"provider"`
+	Region            string         `json:"region"`
+	Environment       string         `json:"environment"`
+	Status            ResourceStatus `json:"status"`
+	PlanHash          string         `json:"plan_hash"`
+	PlanCreatedAt     *time.Time     `json:"plan_created_at,omitempty"`
+	ApprovalExpiresAt *time.Time     `json:"approval_expires_at,omitempty"`
+	IsExpired         bool           `json:"is_expired"`
+	PlanSummary       string         `json:"plan_summary"`
+	Configuration     map[string]any `json:"configuration"`
 }

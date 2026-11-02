@@ -1,9 +1,11 @@
 package terraform
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,15 +19,20 @@ import (
 )
 
 const (
-	terraformVersion = "1.16.4"
-	awsProvider      = "~> 6.62"
+	awsProvider = "~> 6.62"
 
 	resourceVPC = "aws_vpc"
 	resourceEC2 = "aws_ec2"
 	resourceS3  = "aws_s3"
+	resourceRDS = "aws_rds"
+	resourceEKS = "aws_eks"
+	resourceLB  = "aws_lb"
 )
 
 var (
+	rdsEnginePattern = regexp.MustCompile(
+		`^(postgres|mysql|mariadb)$`,
+	)
 	s3BucketNamePattern = regexp.MustCompile(
 		`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`,
 	)
@@ -92,7 +99,7 @@ func (g *Generator) Generate(
 	}
 
 	switch resource.ResourceType {
-	case resourceVPC, resourceEC2, resourceS3:
+	case resourceVPC, resourceEC2, resourceS3, resourceRDS, resourceEKS, resourceLB:
 	default:
 		return GeneratedWorkspace{}, fmt.Errorf(
 			"unsupported resource type: %s",
@@ -148,7 +155,7 @@ func (g *Generator) Generate(
 
 func (g *Generator) versionsFile() string {
 	return fmt.Sprintf(`terraform {
-  required_version = "=%s"
+  required_version = ">= 1.10.0, < 2.0.0"
 
   required_providers {
     aws = {
@@ -169,7 +176,7 @@ provider "aws" {
     }
   }
 }
-`, terraformVersion, awsProvider)
+`, awsProvider)
 }
 
 func (g *Generator) backendFile(
@@ -179,12 +186,12 @@ func (g *Generator) backendFile(
   backend "s3" {
     bucket       = %q
     key          = "cloudforge/resources/%s/terraform.tfstate"
-    region       = var.aws_region
+    region       = %q
     encrypt      = true
     use_lockfile = true
   }
 }
-`, g.StateBucket, resource.ID.String())
+`, g.StateBucket, resource.ID.String(), resource.Region)
 }
 
 func (g *Generator) variablesFile(
@@ -207,7 +214,7 @@ variable "resource_id" {
   type        = string
   default     = %q
 }
-`, resource.Region, resource.Name, resource.ID.String())
+`, resource.Region, hclEscape(resource.Name), resource.ID.String())
 }
 
 func (g *Generator) outputsFile() string {
@@ -233,6 +240,12 @@ func (g *Generator) mainFile(
 		return g.ec2File(resource)
 	case resourceS3:
 		return g.s3File(resource)
+	case resourceRDS:
+		return g.rdsFile(resource)
+	case resourceEKS:
+		return g.eksFile(resource)
+	case resourceLB:
+		return g.lbFile(resource)
 	default:
 		return "", fmt.Errorf(
 			"unsupported resource type: %s",
@@ -340,14 +353,14 @@ func (g *Generator) ec2File(
 		)
 	}
 
-	subnetID, ok := stringValue(
+	subnetID, hasSubnet := stringValue(
 		resource.Configuration,
 		"subnet_id",
 	)
 
-	if !ok || !subnetPattern.MatchString(subnetID) {
+	if hasSubnet && subnetID != "" && !subnetPattern.MatchString(subnetID) {
 		return "", errors.New(
-			"aws_ec2 requires a valid configuration.subnet_id",
+			"configuration.subnet_id must be a valid subnet ID (subnet-*)",
 		)
 	}
 
@@ -395,9 +408,17 @@ func (g *Generator) ec2File(
 resource "aws_instance" "this" {
   ami                         = %q
   instance_type               = %q
-  subnet_id                   = %q
   associate_public_ip_address = %t
-`, amiID, instanceType, subnetID, associatePublicIP))
+`, amiID, instanceType, associatePublicIP))
+
+	if hasSubnet && subnetID != "" {
+		builder.WriteString(
+			fmt.Sprintf(
+				"  subnet_id                   = %q\n",
+				subnetID,
+			),
+		)
+	}
 
 	if keyName != "" {
 		builder.WriteString(
@@ -550,6 +571,449 @@ func versioningStatus(enabled bool) string {
 	return "Suspended"
 }
 
+func (g *Generator) rdsFile(
+	resource model.InfrastructureResource,
+) (string, error) {
+	engine, ok := stringValue(resource.Configuration, "engine")
+	if !ok {
+		engine = "postgres"
+	}
+	if !rdsEnginePattern.MatchString(engine) {
+		return "", fmt.Errorf("unsupported or invalid database engine: %s", engine)
+	}
+
+	engineVersion, ok := stringValue(resource.Configuration, "engine_version")
+	if !ok {
+		if engine == "postgres" {
+			engineVersion = "16.3"
+		} else {
+			engineVersion = "8.0"
+		}
+	}
+
+	instanceClass, ok := stringValue(resource.Configuration, "instance_class")
+	if !ok {
+		instanceClass = "db.t4g.micro"
+	}
+
+	allocatedStorage := intValue(resource.Configuration, "allocated_storage", 20)
+	if allocatedStorage < 20 || allocatedStorage > 1000 {
+		return "", errors.New("allocated_storage must be between 20 and 1000 GB")
+	}
+
+	databaseName, ok := stringValue(resource.Configuration, "database_name")
+	if !ok {
+		databaseName = "cloudforge"
+	}
+
+	username, ok := stringValue(resource.Configuration, "username")
+	if !ok {
+		username = "cloudforge_admin"
+	}
+
+	password, ok := stringValue(resource.Configuration, "password")
+	if !ok {
+		generated, err := generateSecurePassword()
+		if err != nil {
+			return "", fmt.Errorf("generate RDS master password: %w", err)
+		}
+		password = generated
+	}
+
+	subnetIDs, err := stringSliceValue(resource.Configuration, "subnet_ids")
+	if err != nil {
+		return "", err
+	}
+
+	skipFinalSnapshot := boolValue(resource.Configuration, "skip_final_snapshot", true)
+	multiAZ := boolValue(resource.Configuration, "multi_az", false)
+
+	tags, err := tagsValue(resource.Configuration)
+	if err != nil {
+		return "", err
+	}
+
+	var builder strings.Builder
+	builder.WriteString(`locals {
+  resource_id   = var.resource_id
+  resource_type = "aws_rds"
+}
+`)
+
+	builder.WriteString(fmt.Sprintf(`
+variable "db_master_password" {
+  description = "Master password for the CloudForge managed RDS instance."
+  type        = string
+  sensitive   = true
+  default     = %q
+}
+`, hclEscape(password)))
+
+	if len(subnetIDs) >= 2 {
+		builder.WriteString(fmt.Sprintf(`
+resource "aws_db_subnet_group" "this" {
+  name        = "cloudforge-db-subnet-${var.resource_name}"
+  description = "Subnet group for CloudForge managed RDS instance"
+  subnet_ids  = %s
+
+  tags = merge(
+    {
+      Name = var.resource_name
+    },
+    %s
+  )
+}
+`, renderStringList(subnetIDs), renderTags(tags)))
+	}
+
+	builder.WriteString(fmt.Sprintf(`
+resource "aws_db_instance" "this" {
+  identifier          = replace(lower(var.resource_name), "_", "-")
+  allocated_storage   = %d
+  engine              = %q
+  engine_version      = %q
+  instance_class      = %q
+  db_name             = %q
+  username            = %q
+  password            = var.db_master_password
+  skip_final_snapshot = %t
+  multi_az            = %t
+`, allocatedStorage, engine, engineVersion, instanceClass, databaseName, username, skipFinalSnapshot, multiAZ))
+
+	if len(subnetIDs) >= 2 {
+		builder.WriteString("  db_subnet_group_name = aws_db_subnet_group.this.name\n")
+	}
+
+	builder.WriteString(fmt.Sprintf(`
+  tags = merge(
+    {
+      Name = var.resource_name
+    },
+    %s
+  )
+}
+
+output "db_instance_id" {
+  description = "Created RDS instance identifier."
+  value       = aws_db_instance.this.id
+}
+
+output "db_instance_endpoint" {
+  description = "Connection endpoint for the RDS database."
+  value       = aws_db_instance.this.endpoint
+}
+
+output "db_instance_address" {
+  description = "Hostname of the RDS instance."
+  value       = aws_db_instance.this.address
+}
+
+output "db_instance_port" {
+  description = "Database listening port."
+  value       = aws_db_instance.this.port
+}
+`, renderTags(tags)))
+
+	return builder.String(), nil
+}
+
+func (g *Generator) eksFile(
+	resource model.InfrastructureResource,
+) (string, error) {
+	clusterVersion, ok := stringValue(resource.Configuration, "cluster_version")
+	if !ok {
+		clusterVersion = "1.30"
+	}
+
+	subnetIDs, err := stringSliceValue(resource.Configuration, "subnet_ids")
+	if err != nil {
+		return "", err
+	}
+	if len(subnetIDs) < 2 {
+		return "", errors.New("aws_eks requires at least two subnet_ids across multiple availability zones")
+	}
+
+	nodeInstanceTypes, err := stringSliceValue(resource.Configuration, "node_instance_types")
+	if err != nil {
+		return "", err
+	}
+	if len(nodeInstanceTypes) == 0 {
+		nodeInstanceTypes = []string{"t3.medium"}
+	}
+
+	desiredCapacity := intValue(resource.Configuration, "desired_capacity", 2)
+	minCapacity := intValue(resource.Configuration, "min_capacity", 1)
+	maxCapacity := intValue(resource.Configuration, "max_capacity", 4)
+
+	tags, err := tagsValue(resource.Configuration)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf(`locals {
+  resource_id   = var.resource_id
+  resource_type = "aws_eks"
+}
+
+resource "aws_iam_role" "cluster" {
+  name = "cloudforge-eks-cluster-role-${var.resource_name}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = %s
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.cluster.name
+}
+
+resource "aws_eks_cluster" "this" {
+  name     = replace(lower(var.resource_name), "_", "-")
+  role_arn = aws_iam_role.cluster.arn
+  version  = %q
+
+  vpc_config {
+    subnet_ids = %s
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_policy
+  ]
+
+  tags = merge(
+    {
+      Name = var.resource_name
+    },
+    %s
+  )
+}
+
+resource "aws_iam_role" "node" {
+  name = "cloudforge-eks-node-role-${var.resource_name}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = %s
+}
+
+resource "aws_iam_role_policy_attachment" "worker_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.node.name
+}
+
+resource "aws_iam_role_policy_attachment" "cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.node.name
+}
+
+resource "aws_iam_role_policy_attachment" "registry_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.node.name
+}
+
+resource "aws_eks_node_group" "this" {
+  cluster_name    = aws_eks_cluster.this.name
+  node_group_name = "default-pool"
+  node_role_arn   = aws_iam_role.node.arn
+  subnet_ids      = %s
+  instance_types  = %s
+
+  scaling_config {
+    desired_size = %d
+    min_size     = %d
+    max_size     = %d
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.worker_node_policy,
+    aws_iam_role_policy_attachment.cni_policy,
+    aws_iam_role_policy_attachment.registry_policy
+  ]
+
+  tags = merge(
+    {
+      Name = "${var.resource_name}-nodepool"
+    },
+    %s
+  )
+}
+
+output "cluster_id" {
+  description = "EKS Cluster ID."
+  value       = aws_eks_cluster.this.id
+}
+
+output "cluster_endpoint" {
+  description = "Kubernetes API server endpoint."
+  value       = aws_eks_cluster.this.endpoint
+}
+
+output "cluster_arn" {
+  description = "EKS Cluster ARN."
+  value       = aws_eks_cluster.this.arn
+}
+
+output "cluster_version" {
+  description = "Kubernetes version."
+  value       = aws_eks_cluster.this.version
+}
+`, renderTags(tags), clusterVersion, renderStringList(subnetIDs), renderTags(tags), renderTags(tags), renderStringList(subnetIDs), renderStringList(nodeInstanceTypes), desiredCapacity, minCapacity, maxCapacity, renderTags(tags)), nil
+}
+
+func (g *Generator) lbFile(
+	resource model.InfrastructureResource,
+) (string, error) {
+	lbType, ok := stringValue(resource.Configuration, "load_balancer_type")
+	if !ok {
+		lbType = "application"
+	}
+
+	subnetIDs, err := stringSliceValue(resource.Configuration, "subnet_ids")
+	if err != nil {
+		return "", err
+	}
+	if len(subnetIDs) < 2 {
+		return "", errors.New("aws_lb requires at least two subnet_ids across availability zones")
+	}
+
+	securityGroups, err := stringSliceValue(resource.Configuration, "security_groups")
+	if err != nil {
+		return "", err
+	}
+
+	internal := boolValue(resource.Configuration, "internal", false)
+	port := intValue(resource.Configuration, "port", 80)
+	protocol, ok := stringValue(resource.Configuration, "protocol")
+	if !ok {
+		protocol = "HTTP"
+	}
+
+	tags, err := tagsValue(resource.Configuration)
+	if err != nil {
+		return "", err
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf(`locals {
+  resource_id   = var.resource_id
+  resource_type = "aws_lb"
+}
+
+resource "aws_lb" "this" {
+  name               = replace(lower(var.resource_name), "_", "-")
+  internal           = %t
+  load_balancer_type = %q
+  subnets            = %s
+`, internal, lbType, renderStringList(subnetIDs)))
+
+	if len(securityGroups) > 0 {
+		builder.WriteString(fmt.Sprintf("  security_groups    = %s\n", renderStringList(securityGroups)))
+	}
+
+	builder.WriteString(fmt.Sprintf(`
+  tags = merge(
+    {
+      Name = var.resource_name
+    },
+    %s
+  )
+}
+
+resource "aws_lb_target_group" "this" {
+  name     = "tg-${replace(lower(var.resource_name), "_", "-")}"
+  port     = %d
+  protocol = %q
+  vpc_id   = var.resource_id
+
+  tags = %s
+}
+
+resource "aws_lb_listener" "this" {
+  load_balancer_arn = aws_lb.this.arn
+  port              = %d
+  protocol          = %q
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.this.arn
+  }
+}
+
+output "lb_id" {
+  description = "Load Balancer ID."
+  value       = aws_lb.this.id
+}
+
+output "lb_arn" {
+  description = "Load Balancer ARN."
+  value       = aws_lb.this.arn
+}
+
+output "lb_dns_name" {
+  description = "Public or internal DNS name of the Load Balancer."
+  value       = aws_lb.this.dns_name
+}
+
+output "target_group_arn" {
+  description = "Target Group ARN for service attachments."
+  value       = aws_lb_target_group.this.arn
+}
+`, renderTags(tags), port, protocol, renderTags(tags), port, protocol))
+
+	return builder.String(), nil
+}
+
+func intValue(
+	configuration map[string]any,
+	key string,
+	defaultValue int,
+) int {
+	value, exists := configuration[key]
+	if !exists {
+		return defaultValue
+	}
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return defaultValue
+	}
+}
+
+func renderStringList(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	parts := make([]string, len(items))
+	for i, item := range items {
+		parts[i] = fmt.Sprintf("%q", item)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
 func stringValue(
 	configuration map[string]any,
 	key string,
@@ -572,7 +1036,38 @@ func stringValue(
 		return "", false
 	}
 
-	return text, true
+	return hclEscape(text), true
+}
+
+// hclEscape neutralizes Terraform's string-template interpolation syntax
+// ("${...}" and "%{...}") so user-supplied values embedded as HCL string
+// literals cannot trigger function evaluation (e.g. file(), templatefile())
+// at terraform plan/apply time. Go's %q only escapes quotes/backslashes,
+// not these HCL-specific sequences.
+func hclEscape(s string) string {
+	s = strings.ReplaceAll(s, "$", "$$")
+	s = strings.ReplaceAll(s, "%", "%%")
+	return s
+}
+
+func generateSecurePassword() (string, error) {
+	const (
+		charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+		length  = 32
+	)
+
+	password := make([]byte, length)
+
+	for i := range password {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+
+		password[i] = charset[n.Int64()]
+	}
+
+	return string(password), nil
 }
 
 func boolValue(
@@ -622,7 +1117,7 @@ func stringSliceValue(
 
 			result = append(
 				result,
-				strings.TrimSpace(text),
+				hclEscape(strings.TrimSpace(text)),
 			)
 		}
 
@@ -650,7 +1145,7 @@ func stringSliceValue(
 			)
 		}
 
-		result = append(result, item)
+		result = append(result, hclEscape(item))
 	}
 
 	return result, nil
@@ -680,7 +1175,7 @@ func tagsValue(
 				)
 			}
 
-			result[key] = text
+			result[hclEscape(key)] = hclEscape(text)
 		}
 
 		return result, nil
@@ -697,7 +1192,7 @@ func tagsValue(
 	result := make(map[string]string, len(rawStrings))
 
 	for key, value := range rawStrings {
-		result[key] = value
+		result[hclEscape(key)] = hclEscape(value)
 	}
 
 	return result, nil

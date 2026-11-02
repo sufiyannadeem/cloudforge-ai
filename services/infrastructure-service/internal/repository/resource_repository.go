@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,7 +15,10 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 )
 
-var ErrResourceNotFound = errors.New("infrastructure resource not found")
+var (
+	ErrResourceNotFound = errors.New("infrastructure resource not found")
+	ErrResourceConflict = errors.New("infrastructure resource state changed concurrently")
+)
 
 type ResourceRepository struct {
 	pool *pgxpool.Pool
@@ -109,6 +113,8 @@ func (r *ResourceRepository) GetByID(
 			plan_hash,
 			plan_created_at,
 			approval_expires_at,
+			destroy_plan_path,
+			destroy_plan_hash,
 			created_at,
 			updated_at
 		FROM infrastructure_resources
@@ -122,6 +128,8 @@ func (r *ResourceRepository) GetByID(
 	var planHash *string
 	var planCreatedAt *time.Time
 	var approvalExpiresAt *time.Time
+	var destroyPlanPath *string
+	var destroyPlanHash *string
 
 	err := r.pool.QueryRow(ctx, query, id).Scan(
 		&resource.ID,
@@ -139,6 +147,8 @@ func (r *ResourceRepository) GetByID(
 		&planHash,
 		&planCreatedAt,
 		&approvalExpiresAt,
+		&destroyPlanPath,
+		&destroyPlanHash,
 		&resource.CreatedAt,
 		&resource.UpdatedAt,
 	)
@@ -164,6 +174,14 @@ func (r *ResourceRepository) GetByID(
 
 	if planHash != nil {
 		resource.PlanHash = *planHash
+	}
+
+	if destroyPlanPath != nil {
+		resource.DestroyPlanPath = *destroyPlanPath
+	}
+
+	if destroyPlanHash != nil {
+		resource.DestroyPlanHash = *destroyPlanHash
 	}
 
 	resource.PlanCreatedAt = planCreatedAt
@@ -198,6 +216,8 @@ func (r *ResourceRepository) List(
 			plan_hash,
 			plan_created_at,
 			approval_expires_at,
+			destroy_plan_path,
+			destroy_plan_hash,
 			created_at,
 			updated_at
 		FROM infrastructure_resources
@@ -221,6 +241,8 @@ func (r *ResourceRepository) List(
 		var planHash *string
 		var planCreatedAt *time.Time
 		var approvalExpiresAt *time.Time
+		var destroyPlanPath *string
+		var destroyPlanHash *string
 
 		if err := rows.Scan(
 			&resource.ID,
@@ -238,6 +260,8 @@ func (r *ResourceRepository) List(
 			&planHash,
 			&planCreatedAt,
 			&approvalExpiresAt,
+			&destroyPlanPath,
+			&destroyPlanHash,
 			&resource.CreatedAt,
 			&resource.UpdatedAt,
 		); err != nil {
@@ -257,6 +281,14 @@ func (r *ResourceRepository) List(
 
 		if planHash != nil {
 			resource.PlanHash = *planHash
+		}
+
+		if destroyPlanPath != nil {
+			resource.DestroyPlanPath = *destroyPlanPath
+		}
+
+		if destroyPlanHash != nil {
+			resource.DestroyPlanHash = *destroyPlanHash
 		}
 
 		resource.PlanCreatedAt = planCreatedAt
@@ -341,13 +373,177 @@ func (r *ResourceRepository) Update(
 	return nil
 }
 
-func (r *ResourceRepository) Delete(
+// TransitionStatus performs a compare-and-set transition so concurrent requests
+// cannot both claim the same provisioning state.
+func (r *ResourceRepository) TransitionStatus(
+	ctx context.Context,
+	id uuid.UUID,
+	from []model.ResourceStatus,
+	to model.ResourceStatus,
+) error {
+	if len(from) == 0 {
+		return ErrResourceConflict
+	}
+
+	args := []any{to, time.Now().UTC(), id}
+	placeholders := make([]string, 0, len(from))
+	for _, status := range from {
+		args = append(args, status)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE infrastructure_resources
+		SET status = $1, updated_at = $2
+		WHERE id = $3 AND status IN (%s)
+	`, strings.Join(placeholders, ", "))
+
+	result, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("transition infrastructure resource status: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrResourceConflict
+	}
+	return nil
+}
+
+// SavePlan writes plan metadata and opens the approval window atomically.
+func (r *ResourceRepository) SavePlan(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) error {
+	const query = `
+		UPDATE infrastructure_resources
+		SET terraform_directory = $1,
+		    plan_path = $2,
+		    plan_hash = $3,
+		    plan_created_at = $4,
+		    approval_expires_at = $5,
+		    status = $6,
+		    updated_at = $7
+		WHERE id = $8 AND status = $9
+	`
+	result, err := r.pool.Exec(
+		ctx, query,
+		resource.TerraformDirectory,
+		nullableString(resource.PlanPath),
+		nullableString(resource.PlanHash),
+		resource.PlanCreatedAt,
+		resource.ApprovalExpiresAt,
+		model.ResourceStatusAwaitingApproval,
+		time.Now().UTC(),
+		resource.ID,
+		model.ResourceStatusPlanning,
+	)
+	if err != nil {
+		return fmt.Errorf("persist terraform plan: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrResourceConflict
+	}
+	return nil
+}
+
+// SaveDestroyPlan persists the destroy plan artifact and opens the destroy
+// approval window. It only succeeds while the resource is claimed in planning.
+func (r *ResourceRepository) SaveDestroyPlan(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) error {
+	const query = `
+		UPDATE infrastructure_resources
+		SET destroy_plan_path = $1,
+		    destroy_plan_hash = $2,
+		    approval_expires_at = $3,
+		    status = $4,
+		    updated_at = $5
+		WHERE id = $6 AND status = $7
+	`
+	result, err := r.pool.Exec(
+		ctx, query,
+		nullableString(resource.DestroyPlanPath),
+		nullableString(resource.DestroyPlanHash),
+		resource.ApprovalExpiresAt,
+		model.ResourceStatusAwaitingDestroyApproval,
+		time.Now().UTC(),
+		resource.ID,
+		model.ResourceStatusPlanning,
+	)
+	if err != nil {
+		return fmt.Errorf("persist terraform destroy plan: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrResourceConflict
+	}
+	return nil
+}
+
+// UpdateEditable updates only fields present in the request. The expected
+// status predicate prevents a stale edit from racing with a Plan/Apply claim.
+func (r *ResourceRepository) UpdateEditable(
+	ctx context.Context,
+	id uuid.UUID,
+	input model.UpdateResourceInput,
+	expectedStatus model.ResourceStatus,
+) error {
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	add := func(column string, value any) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
+	}
+	if input.Name != nil {
+		add("name", *input.Name)
+	}
+	if input.Description != nil {
+		add("description", *input.Description)
+	}
+	if input.Region != nil {
+		add("region", *input.Region)
+	}
+	if input.Environment != nil {
+		add("environment", *input.Environment)
+	}
+	if input.TerraformDirectory != nil {
+		add("terraform_directory", *input.TerraformDirectory)
+	}
+	if input.Configuration != nil {
+		configuration, err := json.Marshal(input.Configuration)
+		if err != nil {
+			return fmt.Errorf("marshal resource configuration: %w", err)
+		}
+		add("configuration", configuration)
+	}
+	add("updated_at", time.Now().UTC())
+	args = append(args, id, expectedStatus)
+	query := fmt.Sprintf(`UPDATE infrastructure_resources SET %s WHERE id = $%d AND status = $%d`,
+		strings.Join(sets, ", "), len(args)-1, len(args))
+	result, err := r.pool.Exec(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("update editable infrastructure resource fields: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrResourceConflict
+	}
+	return nil
+}
+
+func (r *ResourceRepository) DeleteIfStatusAllowed(
 	ctx context.Context,
 	id uuid.UUID,
 ) error {
 	const query = `
 		DELETE FROM infrastructure_resources
 		WHERE id = $1
+		  AND status NOT IN (
+			'planning',
+			'awaiting_approval',
+			'provisioning',
+			'active',
+			'destroying',
+			'awaiting_destroy_approval'
+		  )
 	`
 
 	result, err := r.pool.Exec(ctx, query, id)
@@ -356,7 +552,13 @@ func (r *ResourceRepository) Delete(
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrResourceNotFound
+		// Distinguish a missing resource from a resource whose status
+		// prevents deletion.
+		_, err := r.GetByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		return ErrResourceConflict
 	}
 
 	return nil

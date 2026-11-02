@@ -48,4 +48,24 @@ type ProvisioningManager interface {
 		id uuid.UUID,
 		planHash string,
 	) (model.InfrastructureResource, error)
+
+	// PlanDestroy creates a hashed destroy plan for an active resource.
+	PlanDestroy(
+		ctx context.Context,
+		id uuid.UUID,
+	) (model.InfrastructureResource, error)
+
+	// ApplyDestroy applies the destroy plan only if planHash matches the
+	// stored, unexpired plan.
+	ApplyDestroy(
+		ctx context.Context,
+		id uuid.UUID,
+		planHash string,
+	) (model.InfrastructureResource, error)
+
+	// GetPlan returns the plan summary and details for a planned resource.
+	GetPlan(
+		ctx context.Context,
+		id uuid.UUID,
+	) (model.PlanDetails, error)
 }

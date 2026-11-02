@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -184,6 +185,27 @@ func (h *ResourceHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resource)
 }
 
+func (h *ResourceHandler) GetPlan(w http.ResponseWriter, r *http.Request) {
+	id, err := parseResourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	planDetails, err := h.provisioningManager.GetPlan(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, repository.ErrResourceNotFound) {
+			writeError(w, http.StatusNotFound, "resource not found")
+			return
+		}
+
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, planDetails)
+}
+
 func (h *ResourceHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	id, err := parseResourceID(r)
 	if err != nil {
@@ -198,6 +220,8 @@ func (h *ResourceHandler) Apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actor := strings.TrimSpace(r.Header.Get("X-CloudForge-Actor"))
+	log.Printf("terraform_apply_requested actor=%q resource_id=%q plan_hash=%q", actor, id.String(), input.PlanHash)
 	resource, err := h.provisioningManager.Apply(
 		r.Context(),
 		id,
@@ -221,6 +245,67 @@ func (h *ResourceHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resource)
+}
+
+// PlanDestroy handles POST /api/v1/resources/{id}/destroy/plan.
+func (h *ResourceHandler) PlanDestroy(w http.ResponseWriter, r *http.Request) {
+	id, err := parseResourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	resource, err := h.provisioningManager.PlanDestroy(r.Context(), id)
+	if err != nil {
+		writeProvisioningError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resource)
+}
+
+// ApplyDestroy handles POST /api/v1/resources/{id}/destroy/apply. The body
+// must carry the plan_hash the human reviewed.
+func (h *ResourceHandler) ApplyDestroy(w http.ResponseWriter, r *http.Request) {
+	id, err := parseResourceID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var input model.ApplyResourceInput
+
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	actor := strings.TrimSpace(r.Header.Get("X-CloudForge-Actor"))
+	log.Printf("terraform_destroy_apply_requested actor=%q resource_id=%q plan_hash=%q", actor, id.String(), input.PlanHash)
+	resource, err := h.provisioningManager.ApplyDestroy(
+		r.Context(),
+		id,
+		input.PlanHash,
+	)
+	if err != nil {
+		writeProvisioningError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resource)
+}
+
+func writeProvisioningError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, repository.ErrResourceNotFound):
+		writeError(w, http.StatusNotFound, "resource not found")
+	case errors.Is(err, service.ErrInvalidProvisioningState),
+		errors.Is(err, service.ErrApprovalExpired),
+		errors.Is(err, service.ErrPlanHashMismatch):
+		writeError(w, http.StatusConflict, err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, err.Error())
+	}
 }
 
 func decodeJSON(r *http.Request, destination interface{}) error {

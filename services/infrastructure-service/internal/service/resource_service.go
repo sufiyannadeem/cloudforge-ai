@@ -13,6 +13,15 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
 )
 
+var (
+	ErrResourceStatusManaged = errors.New(
+		"resource status is managed by the provisioning workflow",
+	)
+	ErrProvisioningFieldsLocked = errors.New(
+		"provisioning-sensitive fields cannot be changed in the current state",
+	)
+)
+
 type ResourceService struct {
 	store repository.ResourceStore
 }
@@ -123,6 +132,18 @@ func (s *ResourceService) Update(
 		return model.InfrastructureResource{}, err
 	}
 
+	// Only the provisioning workflow may transition resource status.
+	if input.Status != nil {
+		return model.InfrastructureResource{}, ErrResourceStatusManaged
+	}
+
+	// Prevent edits that could invalidate a generated plan or misrepresent
+	// infrastructure that is already provisioned.
+	if !canUpdateProvisioningFields(resource.Status) &&
+		hasProvisioningSensitiveUpdate(input) {
+		return model.InfrastructureResource{}, ErrProvisioningFieldsLocked
+	}
+
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
 
@@ -163,16 +184,6 @@ func (s *ResourceService) Update(
 		resource.Environment = environment
 	}
 
-	if input.Status != nil {
-		if !input.Status.IsValid() {
-			return model.InfrastructureResource{}, errors.New(
-				"invalid resource status",
-			)
-		}
-
-		resource.Status = *input.Status
-	}
-
 	if input.TerraformDirectory != nil {
 		directory := strings.TrimSpace(*input.TerraformDirectory)
 
@@ -191,7 +202,7 @@ func (s *ResourceService) Update(
 
 	resource.UpdatedAt = time.Now().UTC()
 
-	if err := s.store.Update(ctx, resource); err != nil {
+	if err := s.store.UpdateEditable(ctx, id, input, resource.Status); err != nil {
 		return model.InfrastructureResource{}, err
 	}
 
@@ -215,13 +226,15 @@ func (s *ResourceService) Delete(
 	case model.ResourceStatusActive,
 		model.ResourceStatusProvisioning,
 		model.ResourceStatusPlanning,
-		model.ResourceStatusAwaitingApproval:
+		model.ResourceStatusAwaitingApproval,
+		model.ResourceStatusAwaitingDestroyApproval,
+		model.ResourceStatusDestroying:
 		return errors.New(
 			"cannot delete an infrastructure resource while it is active or provisioning",
 		)
 	}
 
-	return s.store.Delete(ctx, id)
+	return s.store.DeleteIfStatusAllowed(ctx, id)
 }
 
 func validateCreateInput(input model.CreateResourceInput) error {
@@ -255,7 +268,7 @@ func validateCreateInput(input model.CreateResourceInput) error {
 	}
 
 	switch strings.TrimSpace(input.ResourceType) {
-	case "aws_vpc", "aws_ec2", "aws_s3":
+	case "aws_vpc", "aws_ec2", "aws_s3", "aws_rds", "aws_eks", "aws_lb":
 	default:
 		return fmt.Errorf(
 			"unsupported resource type: %s",
@@ -264,4 +277,17 @@ func validateCreateInput(input model.CreateResourceInput) error {
 	}
 
 	return nil
+}
+
+func canUpdateProvisioningFields(status model.ResourceStatus) bool {
+	return status == model.ResourceStatusPending ||
+		status == model.ResourceStatusFailed
+}
+
+func hasProvisioningSensitiveUpdate(input model.UpdateResourceInput) bool {
+	return input.Name != nil ||
+		input.Region != nil ||
+		input.Environment != nil ||
+		input.TerraformDirectory != nil ||
+		input.Configuration != nil
 }

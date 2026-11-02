@@ -23,6 +23,11 @@ const (
 	defaultApplyTimeout = 30 * time.Minute
 
 	planFileName = "cloudforge.tfplan"
+
+	// destroyPlanFileName is kept separate from planFileName so a destroy
+	// plan can never be applied through the create/update Apply path (and
+	// vice versa).
+	destroyPlanFileName = "destroy.tfplan"
 )
 
 type Provisioner interface {
@@ -35,6 +40,20 @@ type Provisioner interface {
 		ctx context.Context,
 		resource model.InfrastructureResource,
 	) error
+
+	// PlanDestroy produces a hashed `terraform plan -destroy` artifact.
+	// It never mutates AWS.
+	PlanDestroy(
+		ctx context.Context,
+		resource model.InfrastructureResource,
+	) (PlanResult, error)
+
+	// ApplyDestroy applies only the previously approved destroy plan whose
+	// SHA-256 matches resource.DestroyPlanHash.
+	ApplyDestroy(
+		ctx context.Context,
+		resource model.InfrastructureResource,
+	) error
 }
 
 type PlanResult struct {
@@ -42,6 +61,7 @@ type PlanResult struct {
 	PlanPath           string
 	PlanHash           string
 	PlanCreatedAt      time.Time
+	PlanSummary        string
 }
 
 type Runner struct {
@@ -66,6 +86,23 @@ func (r *Runner) Plan(
 	ctx context.Context,
 	resource model.InfrastructureResource,
 ) (PlanResult, error) {
+	return r.plan(ctx, resource, false)
+}
+
+// PlanDestroy runs init, validate and `plan -destroy` in the resource
+// workspace and returns the SHA-256 of destroy.tfplan for human approval.
+func (r *Runner) PlanDestroy(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) (PlanResult, error) {
+	return r.plan(ctx, resource, true)
+}
+
+func (r *Runner) plan(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+	destroy bool,
+) (PlanResult, error) {
 	if r.Generator == nil {
 		return PlanResult{}, errors.New(
 			"terraform generator cannot be nil",
@@ -81,9 +118,24 @@ func (r *Runner) Plan(
 		return PlanResult{}, err
 	}
 
+	fileName := planFileName
+	planArgs := []string{
+		"plan",
+		"-input=false",
+		"-no-color",
+		"-lock-timeout=5m",
+	}
+
+	if destroy {
+		fileName = destroyPlanFileName
+		planArgs = append(planArgs, "-destroy")
+	}
+
+	planArgs = append(planArgs, "-out="+fileName)
+
 	planPath := filepath.Join(
 		workspace.Directory,
-		planFileName,
+		fileName,
 	)
 
 	if err := removeIfExists(planPath); err != nil {
@@ -124,11 +176,7 @@ func (r *Runner) Plan(
 	if err := r.run(
 		planContext,
 		workspace.Directory,
-		"plan",
-		"-input=false",
-		"-no-color",
-		"-lock-timeout=5m",
-		"-out="+planFileName,
+		planArgs...,
 	); err != nil {
 		return PlanResult{}, fmt.Errorf(
 			"terraform plan failed: %w",
@@ -157,11 +205,33 @@ func (r *Runner) Plan(
 
 	createdAt := time.Now().UTC()
 
+	var summary string
+	showOut, showErr := r.runWithOutput(
+		planContext,
+		workspace.Directory,
+		"show",
+		"-no-color",
+		fileName,
+	)
+	if showErr == nil && strings.TrimSpace(showOut) != "" {
+		summary = sanitizeTerraformOutput(showOut)
+	} else {
+		if destroy {
+			summary = fmt.Sprintf("Terraform destroy plan: 1 to destroy (%s: %s)", resource.ResourceType, resource.Name)
+		} else {
+			summary = fmt.Sprintf("Terraform plan: 1 to add, 0 to change, 0 to destroy (%s: %s)", resource.ResourceType, resource.Name)
+		}
+	}
+
+	summaryPath := planPath + ".summary"
+	_ = os.WriteFile(summaryPath, []byte(summary), 0o600)
+
 	return PlanResult{
 		WorkspaceDirectory: workspace.Directory,
 		PlanPath:           planPath,
 		PlanHash:           hash,
 		PlanCreatedAt:      createdAt,
+		PlanSummary:        summary,
 	}, nil
 }
 
@@ -169,27 +239,59 @@ func (r *Runner) Apply(
 	ctx context.Context,
 	resource model.InfrastructureResource,
 ) error {
+	return r.apply(
+		ctx,
+		resource,
+		resource.PlanPath,
+		resource.PlanHash,
+		planFileName,
+	)
+}
+
+// ApplyDestroy verifies the approved destroy plan hash and then applies
+// exactly that saved plan file; nothing is re-planned at apply time.
+func (r *Runner) ApplyDestroy(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) error {
+	return r.apply(
+		ctx,
+		resource,
+		resource.DestroyPlanPath,
+		resource.DestroyPlanHash,
+		destroyPlanFileName,
+	)
+}
+
+func (r *Runner) apply(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+	rawPlanPath string,
+	approvedHash string,
+	fileName string,
+) error {
 	if err := validateResourceForExecution(resource); err != nil {
 		return err
 	}
 
-	if strings.TrimSpace(resource.PlanPath) == "" {
+	if strings.TrimSpace(rawPlanPath) == "" {
 		return errors.New(
 			"terraform plan is required before apply",
 		)
 	}
 
-	if strings.TrimSpace(resource.PlanHash) == "" {
+	if strings.TrimSpace(approvedHash) == "" {
 		return errors.New(
 			"terraform plan hash is required before apply",
 		)
 	}
 
-	planPath := filepath.Clean(resource.PlanPath)
+	planPath := filepath.Clean(rawPlanPath)
 
 	if err := r.validatePlanPath(
 		resource.ID,
 		planPath,
+		fileName,
 	); err != nil {
 		return err
 	}
@@ -208,7 +310,7 @@ func (r *Runner) Apply(
 
 	if !strings.EqualFold(
 		actualHash,
-		resource.PlanHash,
+		approvedHash,
 	) {
 		return errors.New(
 			"terraform plan hash does not match approved plan",
@@ -227,7 +329,7 @@ func (r *Runner) Apply(
 		"apply",
 		"-input=false",
 		"-no-color",
-		planFileName,
+		fileName,
 	); err != nil {
 		return fmt.Errorf(
 			"terraform apply failed: %w",
@@ -254,7 +356,7 @@ func validateResourceForExecution(
 	}
 
 	switch resource.ResourceType {
-	case resourceVPC, resourceEC2, resourceS3:
+	case resourceVPC, resourceEC2, resourceS3, resourceRDS, resourceEKS, resourceLB:
 		return nil
 	default:
 		return fmt.Errorf(
@@ -267,6 +369,7 @@ func validateResourceForExecution(
 func (r *Runner) validatePlanPath(
 	resourceID uuid.UUID,
 	planPath string,
+	fileName string,
 ) error {
 	if resourceID == uuid.Nil {
 		return errors.New(
@@ -274,7 +377,7 @@ func (r *Runner) validatePlanPath(
 		)
 	}
 
-	if filepath.Base(planPath) != planFileName {
+	if filepath.Base(planPath) != fileName {
 		return errors.New(
 			"invalid terraform plan filename",
 		)
@@ -293,7 +396,7 @@ func (r *Runner) validatePlanPath(
 
 	expectedPlan := filepath.Join(
 		expectedWorkspace,
-		planFileName,
+		fileName,
 	)
 
 	if filepath.Clean(planPath) != filepath.Clean(expectedPlan) {
@@ -310,8 +413,17 @@ func (r *Runner) run(
 	workspace string,
 	args ...string,
 ) error {
+	_, err := r.runWithOutput(ctx, workspace, args...)
+	return err
+}
+
+func (r *Runner) runWithOutput(
+	ctx context.Context,
+	workspace string,
+	args ...string,
+) (string, error) {
 	if strings.TrimSpace(r.TerraformBin) == "" {
-		return errors.New(
+		return "", errors.New(
 			"terraform binary cannot be empty",
 		)
 	}
@@ -335,21 +447,44 @@ func (r *Runner) run(
 	err := command.Run()
 
 	if ctx.Err() != nil {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"terraform command timed out or was cancelled: %w",
 			ctx.Err(),
 		)
 	}
 
 	if err != nil {
-		return terraformCommandError(
+		return "", terraformCommandError(
 			args,
 			err,
 			stderr.String(),
 		)
 	}
 
-	return nil
+	return stdout.String(), nil
+}
+
+// ShowPlan reads the saved plan summary file or executes terraform show to inspect the plan.
+func (r *Runner) ShowPlan(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) (string, error) {
+	if strings.TrimSpace(resource.PlanPath) == "" {
+		return "", errors.New("terraform plan path is empty")
+	}
+
+	summaryPath := resource.PlanPath + ".summary"
+	if data, err := os.ReadFile(summaryPath); err == nil && len(data) > 0 {
+		return string(data), nil
+	}
+
+	return r.runWithOutput(
+		ctx,
+		filepath.Dir(resource.PlanPath),
+		"show",
+		"-no-color",
+		filepath.Base(resource.PlanPath),
+	)
 }
 
 func terraformCommandError(

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Fatalf("load configuration: %v", err)
+	}
+
+	internalToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
+	if len(internalToken) < 32 || strings.Contains(strings.ToLower(internalToken), "replace-with") {
+		logger.Fatal("CLOUDFORGE_INTERNAL_API_TOKEN must contain at least 32 characters")
 	}
 
 	ctx := context.Background()
@@ -101,14 +107,14 @@ func main() {
 		provisioningService,
 	)
 
-	router := handler.NewRouter(resourceHandler)
+	router := handler.NewRouterWithInternalToken(resourceHandler, internalToken)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.ServerPort,
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		ReadTimeout:       applyTimeout + 5*time.Minute,
+		WriteTimeout:      applyTimeout + 5*time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 

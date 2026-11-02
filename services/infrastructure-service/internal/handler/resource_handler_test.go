@@ -89,6 +89,14 @@ type mockProvisioningManager struct {
 	lastPlanHash   string
 	planError      error
 	applyError     error
+
+	destroyPlanCallCount  int
+	destroyApplyCallCount int
+	lastDestroyPlanID     uuid.UUID
+	lastDestroyApplyID    uuid.UUID
+	lastDestroyPlanHash   string
+	destroyPlanError      error
+	destroyApplyError     error
 }
 
 func (m *mockProvisioningManager) Plan(
@@ -119,6 +127,51 @@ func (m *mockProvisioningManager) Apply(
 	}
 
 	return m.resource, nil
+}
+
+func (m *mockProvisioningManager) PlanDestroy(
+	ctx context.Context,
+	id uuid.UUID,
+) (model.InfrastructureResource, error) {
+	m.destroyPlanCallCount++
+	m.lastDestroyPlanID = id
+
+	if m.destroyPlanError != nil {
+		return model.InfrastructureResource{}, m.destroyPlanError
+	}
+
+	return m.resource, nil
+}
+
+func (m *mockProvisioningManager) ApplyDestroy(
+	ctx context.Context,
+	id uuid.UUID,
+	planHash string,
+) (model.InfrastructureResource, error) {
+	m.destroyApplyCallCount++
+	m.lastDestroyApplyID = id
+	m.lastDestroyPlanHash = planHash
+
+	if m.destroyApplyError != nil {
+		return model.InfrastructureResource{}, m.destroyApplyError
+	}
+
+	return m.resource, nil
+}
+
+func (m *mockProvisioningManager) GetPlan(
+	ctx context.Context,
+	id uuid.UUID,
+) (model.PlanDetails, error) {
+	if m.planError != nil {
+		return model.PlanDetails{}, m.planError
+	}
+	return model.PlanDetails{
+		ResourceID:   id,
+		ResourceName: m.resource.Name,
+		PlanHash:     m.resource.PlanHash,
+		PlanSummary:  m.resource.PlanSummary,
+	}, nil
 }
 
 func newTestHandler(
@@ -618,6 +671,89 @@ func TestPlanHandlerInternalError(t *testing.T) {
 			"expected status 500, got %d",
 			recorder.Code,
 		)
+	}
+}
+
+func TestGetPlanHandlerSuccess(t *testing.T) {
+	id := uuid.New()
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		resource: model.InfrastructureResource{
+			ID:          id,
+			Name:        "Test Plan Resource",
+			PlanHash:    "plan-hash-123",
+			PlanSummary: "Plan: 1 to add",
+		},
+	}
+
+	handler := newTestHandler(manager, provisioning)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources/"+id.String()+"/plan",
+		nil,
+	)
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+	handler.GetPlan(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response model.PlanDetails
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode plan response: %v", err)
+	}
+	if response.ResourceID != id {
+		t.Fatalf("expected resource id %s, got %s", id, response.ResourceID)
+	}
+	if response.PlanHash != "plan-hash-123" {
+		t.Fatalf("expected plan hash %q, got %q", "plan-hash-123", response.PlanHash)
+	}
+}
+
+func TestGetPlanHandlerInvalidUUID(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{}
+	handler := newTestHandler(manager, provisioning)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources/bad-uuid/plan",
+		nil,
+	)
+	request.SetPathValue("id", "bad-uuid")
+
+	recorder := httptest.NewRecorder()
+	handler.GetPlan(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+}
+
+func TestGetPlanHandlerNotFound(t *testing.T) {
+	manager := &mockResourceManager{}
+	provisioning := &mockProvisioningManager{
+		planError: repository.ErrResourceNotFound,
+	}
+	handler := newTestHandler(manager, provisioning)
+
+	id := uuid.New()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources/"+id.String()+"/plan",
+		nil,
+	)
+	request.SetPathValue("id", id.String())
+
+	recorder := httptest.NewRecorder()
+	handler.GetPlan(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", recorder.Code)
 	}
 }
 

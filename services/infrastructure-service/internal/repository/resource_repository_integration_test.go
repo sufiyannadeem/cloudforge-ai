@@ -18,17 +18,18 @@ import (
 var testPool *pgxpool.Pool
 
 func TestMain(m *testing.M) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+
+	if databaseURL == "" {
+		fmt.Println("TEST_DATABASE_URL not set or -short specified; skipping repository integration tests")
+		os.Exit(0)
+	}
+
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
 		10*time.Second,
 	)
 	defer cancel()
-
-	databaseURL := os.Getenv("TEST_DATABASE_URL")
-
-	if databaseURL == "" {
-		databaseURL = "postgres://cloudforge@localhost:5432/cloudforge?sslmode=disable"
-	}
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -354,7 +355,7 @@ func TestResourceRepositoryDelete(t *testing.T) {
 		t.Fatalf("failed to create resource: %v", err)
 	}
 
-	if err := repository.Delete(ctx, resource.ID); err != nil {
+	if err := repository.DeleteIfStatusAllowed(ctx, resource.ID); err != nil {
 		t.Fatalf("failed to delete resource: %v", err)
 	}
 
@@ -377,12 +378,135 @@ func TestResourceRepositoryDeleteNotFound(t *testing.T) {
 	)
 	defer cancel()
 
-	err := repository.Delete(ctx, uuid.New())
+	err := repository.DeleteIfStatusAllowed(ctx, uuid.New())
 
 	if !errors.Is(err, ErrResourceNotFound) {
 		t.Fatalf(
 			"expected ErrResourceNotFound, got %v",
 			err,
 		)
+	}
+}
+
+func TestResourceRepositoryTransitionStatusIsAtomic(t *testing.T) {
+	repository := newTestRepository()
+	resource := newTestResource()
+	t.Cleanup(func() { cleanupTestResource(t, resource.ID) })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := repository.Create(ctx, resource); err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+
+	if err := repository.TransitionStatus(ctx, resource.ID,
+		[]model.ResourceStatus{model.ResourceStatusPending}, model.ResourceStatusPlanning); err != nil {
+		t.Fatalf("first transition should succeed: %v", err)
+	}
+	if err := repository.TransitionStatus(ctx, resource.ID,
+		[]model.ResourceStatus{model.ResourceStatusPending}, model.ResourceStatusPlanning); !errors.Is(err, ErrResourceConflict) {
+		t.Fatalf("expected conflict for stale transition, got %v", err)
+	}
+}
+
+func TestResourceRepositorySavePlanRequiresPlanningStatus(t *testing.T) {
+	repository := newTestRepository()
+	resource := newTestResource()
+	t.Cleanup(func() { cleanupTestResource(t, resource.ID) })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := repository.Create(ctx, resource); err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+
+	resource.TerraformDirectory = "/tmp/workspace"
+	resource.PlanPath = "/tmp/workspace/cloudforge.tfplan"
+	resource.PlanHash = "test-hash"
+	now := time.Now().UTC()
+	expires := now.Add(30 * time.Minute)
+	resource.PlanCreatedAt = &now
+	resource.ApprovalExpiresAt = &expires
+	if err := repository.SavePlan(ctx, resource); !errors.Is(err, ErrResourceConflict) {
+		t.Fatalf("expected conflict unless resource is planning, got %v", err)
+	}
+
+	if err := repository.TransitionStatus(ctx, resource.ID,
+		[]model.ResourceStatus{model.ResourceStatusPending}, model.ResourceStatusPlanning); err != nil {
+		t.Fatalf("claim planning status: %v", err)
+	}
+	if err := repository.SavePlan(ctx, resource); err != nil {
+		t.Fatalf("save plan should succeed while planning: %v", err)
+	}
+	stored, err := repository.GetByID(ctx, resource.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if stored.Status != model.ResourceStatusAwaitingApproval || stored.PlanHash != "test-hash" {
+		t.Fatalf("plan metadata/status not persisted: status=%s hash=%q", stored.Status, stored.PlanHash)
+	}
+}
+
+func TestResourceRepositoryUpdateEditableRejectsStaleStatus(t *testing.T) {
+	repository := newTestRepository()
+	resource := newTestResource()
+	t.Cleanup(func() { cleanupTestResource(t, resource.ID) })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := repository.Create(ctx, resource); err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+	if err := repository.TransitionStatus(ctx, resource.ID,
+		[]model.ResourceStatus{model.ResourceStatusPending}, model.ResourceStatusPlanning); err != nil {
+		t.Fatalf("claim planning status: %v", err)
+	}
+	description := "stale description edit"
+	err := repository.UpdateEditable(ctx, resource.ID,
+		model.UpdateResourceInput{Description: &description}, model.ResourceStatusPending)
+	if !errors.Is(err, ErrResourceConflict) {
+		t.Fatalf("expected conflict for stale edit, got %v", err)
+	}
+	stored, err := repository.GetByID(ctx, resource.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if stored.Description != resource.Description {
+		t.Fatalf("stale edit changed description: %q", stored.Description)
+	}
+}
+
+func TestResourceRepositoryDeleteRejectsPlanningResource(t *testing.T) {
+	repository := newTestRepository()
+	resource := newTestResource()
+	t.Cleanup(func() { cleanupTestResource(t, resource.ID) })
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	if err := repository.Create(ctx, resource); err != nil {
+		t.Fatalf("create resource: %v", err)
+	}
+
+	if err := repository.TransitionStatus(
+		ctx,
+		resource.ID,
+		[]model.ResourceStatus{model.ResourceStatusPending},
+		model.ResourceStatusPlanning,
+	); err != nil {
+		t.Fatalf("transition resource to planning: %v", err)
+	}
+
+	err := repository.DeleteIfStatusAllowed(ctx, resource.ID)
+	if !errors.Is(err, ErrResourceConflict) {
+		t.Fatalf("expected ErrResourceConflict, got %v", err)
+	}
+
+	stored, err := repository.GetByID(ctx, resource.ID)
+	if err != nil {
+		t.Fatalf("resource should still exist: %v", err)
+	}
+	if stored.Status != model.ResourceStatusPlanning {
+		t.Fatalf("expected planning status, got %q", stored.Status)
 	}
 }

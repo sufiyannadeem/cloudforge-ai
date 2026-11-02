@@ -23,7 +23,7 @@ func newRouterTestHandler(
 func TestNewRouterHealthRoute(t *testing.T) {
 	manager := &mockResourceManager{}
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -42,7 +42,7 @@ func TestNewRouterHealthRoute(t *testing.T) {
 func TestNewRouterCreateResourceRoute(t *testing.T) {
 	manager := &mockResourceManager{}
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	body := `{
 		"name": "Production VPC",
@@ -75,7 +75,7 @@ func TestNewRouterListResourceRoute(t *testing.T) {
 	}
 
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -107,7 +107,7 @@ func TestNewRouterGetResourceRoute(t *testing.T) {
 	}
 
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -127,7 +127,7 @@ func TestNewRouterGetResourceRoute(t *testing.T) {
 func TestNewRouterGetResourceInvalidUUID(t *testing.T) {
 	manager := &mockResourceManager{}
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -152,7 +152,7 @@ func TestNewRouterUpdateResourceRoute(t *testing.T) {
 	}
 
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	body := `{
 		"description": "Updated infrastructure description"
@@ -182,7 +182,7 @@ func TestNewRouterDeleteResourceRoute(t *testing.T) {
 	}
 
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodDelete,
@@ -214,7 +214,7 @@ func TestNewRouterPlanResourceRoute(t *testing.T) {
 		manager,
 		provisioning,
 	)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -249,6 +249,30 @@ func TestNewRouterPlanResourceRoute(t *testing.T) {
 	}
 }
 
+func TestNewRouterGetPlanResourceRoute(t *testing.T) {
+	resource := createRouterTestResource()
+	manager := &mockResourceManager{resource: resource}
+	provisioning := &mockProvisioningManager{
+		resource: resource,
+	}
+
+	resourceHandler := NewResourceHandler(manager, provisioning)
+	router := newResourceMux(resourceHandler)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/resources/"+resource.ID.String()+"/plan",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestNewRouterApplyResourceRoute(t *testing.T) {
 	resource := createRouterTestResource()
 
@@ -264,7 +288,7 @@ func TestNewRouterApplyResourceRoute(t *testing.T) {
 		manager,
 		provisioning,
 	)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	planHash := "test-plan-hash"
 
@@ -316,7 +340,7 @@ func TestNewRouterApplyResourceRoute(t *testing.T) {
 func TestNewRouterUnsupportedMethod(t *testing.T) {
 	manager := &mockResourceManager{}
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodPut,
@@ -339,7 +363,7 @@ func TestNewRouterUnsupportedMethod(t *testing.T) {
 func TestNewRouterUnknownRoute(t *testing.T) {
 	manager := &mockResourceManager{}
 	resourceHandler := newRouterTestHandler(manager)
-	router := NewRouter(resourceHandler)
+	router := newResourceMux(resourceHandler)
 
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -366,5 +390,77 @@ func createRouterTestResource() model.InfrastructureResource {
 		Provider: model.ProviderAWS,
 		Region:   "eu-west-1",
 		Status:   model.ResourceStatusActive,
+	}
+}
+
+func TestAuthenticatedRouterRejectsMissingAndInvalidToken(t *testing.T) {
+	resourceHandler := newRouterTestHandler(&mockResourceManager{})
+	router := NewRouterWithInternalToken(resourceHandler, "01234567890123456789012345678901")
+
+	for _, token := range []string{"", "wrong-token"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/resources", nil)
+		if token != "" {
+			request.Header.Set("X-CloudForge-Internal-Token", token)
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("token %q: expected 401, got %d", token, recorder.Code)
+		}
+	}
+}
+
+func TestAuthenticatedRouterAllowsHealthWithoutToken(t *testing.T) {
+	resourceHandler := newRouterTestHandler(&mockResourceManager{})
+	router := NewRouterWithInternalToken(resourceHandler, "01234567890123456789012345678901")
+	request := httptest.NewRequest(http.MethodGet, "/health", nil)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected health endpoint to return 200, got %d", recorder.Code)
+	}
+}
+
+func TestAuthenticatedRouterAllowsValidToken(t *testing.T) {
+	resourceHandler := newRouterTestHandler(&mockResourceManager{})
+	token := "01234567890123456789012345678901"
+	router := NewRouterWithInternalToken(resourceHandler, token)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/resources?limit=10", nil)
+	request.Header.Set("X-CloudForge-Internal-Token", token)
+	request.Header.Set("X-CloudForge-Role", "viewer")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected valid token to return 200, got %d", recorder.Code)
+	}
+}
+
+func TestAuthenticatedRouterRejectsViewerMutation(t *testing.T) {
+	resourceHandler := newRouterTestHandler(&mockResourceManager{})
+	token := "01234567890123456789012345678901"
+	router := NewRouterWithInternalToken(resourceHandler, token)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/resources", strings.NewReader(`{}`))
+	request.Header.Set("X-CloudForge-Internal-Token", token)
+	request.Header.Set("X-CloudForge-Role", "viewer")
+	request.Header.Set("X-CloudForge-Actor", "test-operator")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected viewer mutation to return 403, got %d", recorder.Code)
+	}
+}
+
+func TestAuthenticatedRouterRejectsDevOpsApply(t *testing.T) {
+	resourceHandler := newRouterTestHandler(&mockResourceManager{})
+	token := "01234567890123456789012345678901"
+	router := NewRouterWithInternalToken(resourceHandler, token)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/resources/resource-id/apply", strings.NewReader(`{"plan_hash":"hash"}`))
+	request.Header.Set("X-CloudForge-Internal-Token", token)
+	request.Header.Set("X-CloudForge-Role", "devops")
+	request.Header.Set("X-CloudForge-Actor", "test-operator")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected DevOps apply to return 403, got %d", recorder.Code)
 	}
 }
