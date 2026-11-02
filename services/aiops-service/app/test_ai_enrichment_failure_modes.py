@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -11,9 +10,36 @@ from .ai_enrichment_models import EnrichmentStatus
 from .ai_enrichment_service import AIEnrichmentService
 from .ai_provider import AIProviderResult
 from .mock_ai_provider import MockAIProvider
+from .models import (
+    AIAnalysis,
+    Incident,
+    IncidentSeverity,
+    IncidentStatus,
+)
+from .store import IncidentStore
 
-
-BASE_URL = "http://localhost:8090"
+_TEST_INCIDENT = Incident(
+    id="inc-failure-mode-test",
+    fingerprint="fp-failure-mode-test",
+    alert_name="DeploymentServiceHighLatency",
+    service="deployment-service",
+    severity=IncidentSeverity.WARNING,
+    status=IncidentStatus.OPEN,
+    summary="Elevated latency detected on deployment service.",
+    probable_cause="Recent deployment rollout.",
+    recommended_actions=["Check deployment logs"],
+    labels={"service": "deployment-service"},
+    annotations={"description": "High latency"},
+    created_at=datetime.now(timezone.utc),
+    updated_at=datetime.now(timezone.utc),
+    ai_analysis=AIAnalysis(
+        status="deterministic",
+        provider="deterministic",
+        assessment="evidence_available",
+        evidence={},
+        evidence_findings=[],
+    ),
+)
 
 
 class FailingAIProvider:
@@ -64,113 +90,23 @@ class RaisingAIProvider:
         )
 
 
-def http_get(path: str):
-    """
-    Perform a read-only HTTP GET against the real AIOps service.
-    """
-
-    request = urllib.request.Request(
-        f"{BASE_URL}{path}",
-        method="GET",
+@pytest.fixture(autouse=True)
+def _mock_incident_store(monkeypatch):
+    monkeypatch.setattr(
+        IncidentStore,
+        "get_by_id",
+        lambda self, incident_id: (
+            _TEST_INCIDENT if incident_id == _TEST_INCIDENT.id else None
+        ),
     )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=10,
-        ) as response:
-            body = response.read().decode()
-
-            return (
-                response.status,
-                json.loads(body),
-            )
-
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode()
-
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            payload = {
-                "raw": body,
-            }
-
-        return (
-            exc.code,
-            payload,
-        )
-
-
-def find_existing_incident() -> dict[str, Any]:
-    """
-    Retrieve an existing incident through the real
-    CloudForge incident API.
-
-    This test does not create or mutate incidents.
-    """
-
-    status, payload = http_get(
-        "/api/v1/incidents?page=1&page_size=20"
-    )
-
-    if status != 200:
-        raise AssertionError(
-            "Unable to retrieve incidents from the "
-            f"real incident API. HTTP status: {status}"
-        )
-
-    incidents = payload.get(
-        "incidents"
-    )
-
-    if not isinstance(
-        incidents,
-        list,
-    ):
-        raise AssertionError(
-            "Incident API response does not contain "
-            "an 'incidents' list."
-        )
-
-    if not incidents:
-        raise AssertionError(
-            "No existing incident is available for "
-            "AI enrichment failure-mode validation."
-        )
-
-    incident = incidents[0]
-
-    if not isinstance(
-        incident,
-        dict,
-    ):
-        raise AssertionError(
-            "Incident API returned an invalid incident object."
-        )
-
-    return incident
 
 
 @pytest.fixture(scope="module")
 def incident_id() -> str:
     """
-    Pytest fixture backed by an existing incident.
-
-    The fixture is read-only and does not create, update,
-    acknowledge, or otherwise mutate incident state.
+    Pytest fixture backed by an isolated test incident.
     """
-
-    incident = find_existing_incident()
-
-    value = incident.get("id")
-
-    if not value:
-        raise AssertionError(
-            "Existing incident does not contain an ID."
-        )
-
-    return str(value)
+    return _TEST_INCIDENT.id
 
 
 def run_mode(
@@ -426,68 +362,68 @@ def run() -> None:
     )
     print("========================================")
 
-    incident = find_existing_incident()
+    orig_get = IncidentStore.get_by_id
+    try:
+        IncidentStore.get_by_id = lambda self, incident_id: (
+            _TEST_INCIDENT if incident_id == _TEST_INCIDENT.id else None
+        )
+        incident_id = _TEST_INCIDENT.id
 
-    incident_id = incident.get("id")
-
-    if not incident_id:
-        raise AssertionError(
-            "Existing incident does not contain an ID."
+        print(
+            f"Using test incident: {incident_id}"
         )
 
-    print(
-        f"Using existing incident: {incident_id}"
-    )
+        test_valid_response_is_accepted(
+            incident_id
+        )
+        print("VALID AI RESPONSE: PASS")
 
-    test_valid_response_is_accepted(
-        incident_id
-    )
-    print("VALID AI RESPONSE: PASS")
+        test_tampered_response_falls_back(
+            incident_id
+        )
+        print("TAMPERED AI RESPONSE → FALLBACK: PASS")
 
-    test_tampered_response_falls_back(
-        incident_id
-    )
-    print("TAMPERED AI RESPONSE → FALLBACK: PASS")
+        test_invalid_json_falls_back(
+            incident_id
+        )
+        print("INVALID JSON → FALLBACK: PASS")
 
-    test_invalid_json_falls_back(
-        incident_id
-    )
-    print("INVALID JSON → FALLBACK: PASS")
+        test_unsupported_assessment_falls_back(
+            incident_id
+        )
+        print(
+            "UNSUPPORTED ASSESSMENT → FALLBACK: PASS"
+        )
 
-    test_unsupported_assessment_falls_back(
-        incident_id
-    )
-    print(
-        "UNSUPPORTED ASSESSMENT → FALLBACK: PASS"
-    )
+        test_empty_response_falls_back(
+            incident_id
+        )
+        print("EMPTY RESPONSE → FALLBACK: PASS")
 
-    test_empty_response_falls_back(
-        incident_id
-    )
-    print("EMPTY RESPONSE → FALLBACK: PASS")
+        test_provider_failure_falls_back(
+            incident_id
+        )
+        print("PROVIDER FAILURE → FALLBACK: PASS")
 
-    test_provider_failure_falls_back(
-        incident_id
-    )
-    print("PROVIDER FAILURE → FALLBACK: PASS")
+        test_provider_exception_falls_back(
+            incident_id
+        )
+        print(
+            "PROVIDER EXCEPTION → FALLBACK: PASS"
+        )
 
-    test_provider_exception_falls_back(
-        incident_id
-    )
-    print(
-        "PROVIDER EXCEPTION → FALLBACK: PASS"
-    )
+        test_fallback_preserves_deterministic_evidence(
+            incident_id
+        )
+        print(
+            "DETERMINISTIC EVIDENCE PRESERVED: PASS"
+        )
 
-    test_fallback_preserves_deterministic_evidence(
-        incident_id
-    )
-    print(
-        "DETERMINISTIC EVIDENCE PRESERVED: PASS"
-    )
-
-    print("========================================")
-    print("ALL FAILURE-MODE CHECKS PASSED")
-    print("========================================")
+        print("========================================")
+        print("ALL FAILURE-MODE CHECKS PASSED")
+        print("========================================")
+    finally:
+        IncidentStore.get_by_id = orig_get
 
 
 if __name__ == "__main__":

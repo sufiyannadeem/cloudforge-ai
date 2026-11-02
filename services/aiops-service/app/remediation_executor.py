@@ -88,6 +88,10 @@ class RemediationExecutor:
             f"/api/v1/deployments/{deployment_id}/remediation-run"
         )
 
+        internal_token = os.getenv("CLOUDFORGE_INTERNAL_API_TOKEN", "")
+        if len(internal_token.encode("utf-8")) < 32:
+            raise RuntimeError("trusted deployment service authentication is not configured")
+
         request = urllib.request.Request(
             url,
             method="POST",
@@ -96,6 +100,7 @@ class RemediationExecutor:
                 "Content-Type": "application/json",
                 "X-CloudForge-Actor": actor,
                 "X-CloudForge-Incident": incident_id,
+                "X-CloudForge-Internal-Token": internal_token,
                 "X-CloudForge-Remediation": "human-approved",
             },
             data=b"",
