@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+
 from fastapi.testclient import TestClient
 
 from .main import app
@@ -40,6 +44,7 @@ def _pricing(price: float) -> dict:
 def _headers() -> dict[str, str]:
     return {
         "X-CloudForge-Role": "platform-engineer",
+        "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
     }
 
 
@@ -147,6 +152,7 @@ def test_cost_policy_can_require_review_for_incomplete_evidence() -> None:
 def test_cost_policy_rejects_missing_role() -> None:
     response = client.post(
         "/api/v1/terraform/cost-policy-evaluate",
+        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"]},
         json={
             "plan": _plan(),
             "pricing": _pricing(25.0),
@@ -161,6 +167,7 @@ def test_cost_policy_rejects_unauthorized_role() -> None:
         "/api/v1/terraform/cost-policy-evaluate",
         headers={
             "X-CloudForge-Role": "viewer",
+            "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
         },
         json={
             "plan": _plan(),

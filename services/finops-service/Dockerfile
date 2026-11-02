@@ -7,8 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --system appgroup \
-    && useradd --system --gid appgroup --home-dir /app appuser
+RUN groupadd -g 1000 appgroup \
+    && useradd -u 1000 -g appgroup -m -d /home/appuser appuser
 
 COPY requirements.lock .
 

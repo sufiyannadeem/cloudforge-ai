@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .finops_optimization_models import (
     AWSOptimizationObservation,
+    EC2Observation,
     HPAObservation,
     KubernetesOptimizationSnapshot,
     KubernetesWorkload,
@@ -51,6 +52,50 @@ class FinOpsOptimizationEngine:
         observation: AWSOptimizationObservation,
     ) -> list[OptimizationFinding]:
         findings: list[OptimizationFinding] = []
+
+        # ---------------------------------------------------------
+        # EC2
+        # ---------------------------------------------------------
+        for ec2 in observation.ec2:
+            if (
+                ec2.cpu_utilization_percent is not None
+                and ec2.cpu_utilization_percent < 20.0
+            ):
+                savings = self._ec2_savings(ec2)
+                target = ec2.target_instance_type or "smaller instance class"
+
+                findings.append(
+                    OptimizationFinding(
+                        domain=OptimizationDomain.EC2,
+                        resource_id=ec2.resource_id,
+                        severity=OptimizationSeverity.WARNING,
+                        metric="cpu_utilization_percent",
+                        observed_value=ec2.cpu_utilization_percent,
+                        recommended_value=40.0,
+                        potential_monthly_savings_usd=savings.monthly_usd,
+                        savings=savings,
+                        reason=(
+                            f"EC2 instance {ec2.instance_type} CPU utilization is consistently low "
+                            f"({ec2.cpu_utilization_percent:.1f}%)."
+                        ),
+                        recommendation=(
+                            f"Downsize instance from {ec2.instance_type} to {target}. "
+                            + (
+                                f"Potential saving: ${savings.monthly_usd:.2f}/month."
+                                if savings.monthly_usd > 0
+                                else "Review workload memory and peak requirements."
+                            )
+                        ),
+                        action="HUMAN_APPROVAL_REQUIRED",
+                        evidence={
+                            "instance_type": ec2.instance_type,
+                            "cpu_utilization_percent": ec2.cpu_utilization_percent,
+                            "current_monthly_cost_usd": ec2.monthly_cost_usd,
+                            "target_instance_type": ec2.target_instance_type,
+                            "target_monthly_cost_usd": ec2.target_monthly_cost_usd,
+                        },
+                    )
+                )
 
         # ---------------------------------------------------------
         # ECR
@@ -871,6 +916,71 @@ class FinOpsOptimizationEngine:
                 f"Current monthly RDS cost observed: ${monthly_cost:.2f}.",
                 "Low CPU utilization alone does not prove a lower-cost target class is suitable.",
                 "No target RDS pricing was inferred.",
+            ],
+            evidence_available=False,
+        )
+
+    def _ec2_savings(
+        self,
+        ec2: EC2Observation,
+    ) -> SavingsEvidence:
+        """
+        EC2 savings require explicit current and target monthly cost evidence.
+        No cloud pricing is guessed or invented.
+        """
+        monthly_cost = ec2.monthly_cost_usd
+        target_cost = ec2.target_monthly_cost_usd
+
+        if monthly_cost is None or monthly_cost <= 0:
+            return SavingsEvidence(
+                monthly_usd=0.0,
+                confidence="unknown",
+                calculation=(
+                    "Savings not estimated: explicit EC2 monthly cost evidence "
+                    "is unavailable."
+                ),
+                pricing_source=ec2.pricing_source,
+                assumptions=[
+                    "No EC2 instance price was assumed.",
+                    "Low CPU utilization alone does not establish a savings amount.",
+                ],
+                evidence_available=False,
+            )
+
+        if (
+            target_cost is not None
+            and target_cost > 0
+            and monthly_cost > target_cost
+        ):
+            monthly_savings = monthly_cost - target_cost
+            target_type = ec2.target_instance_type or "downsized instance"
+            return SavingsEvidence(
+                monthly_usd=round(monthly_savings, 2),
+                confidence="high",
+                calculation=(
+                    f"${monthly_cost:.2f}/month ({ec2.instance_type}) - "
+                    f"${target_cost:.2f}/month ({target_type})"
+                ),
+                pricing_source=ec2.pricing_source,
+                assumptions=[
+                    f"Current instance {ec2.instance_type} cost: ${monthly_cost:.2f}/month.",
+                    f"Target instance {target_type} cost: ${target_cost:.2f}/month.",
+                    "Downsizing is subject to workload memory and peak CPU requirements.",
+                ],
+                evidence_available=True,
+            )
+
+        return SavingsEvidence(
+            monthly_usd=0.0,
+            confidence="unknown",
+            calculation=(
+                "Savings not estimated: an explicit target instance cost "
+                "is required to calculate downsizing savings."
+            ),
+            pricing_source=ec2.pricing_source,
+            assumptions=[
+                f"Current monthly EC2 cost observed: ${monthly_cost:.2f}.",
+                "Low CPU utilization alone does not prove a specific lower-cost target instance is suitable.",
             ],
             evidence_available=False,
         )

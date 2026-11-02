@@ -13,6 +13,7 @@ class CostTrend(str, Enum):
     DECREASING = "decreasing"
     STABLE = "stable"
     INSUFFICIENT_DATA = "insufficient-data"
+    WORSENING = "worsening"
 
 
 class CostAnomalySeverity(str, Enum):
@@ -86,6 +87,7 @@ class BudgetStatus(str, Enum):
     HEALTHY = "healthy"
     WARNING = "warning"
     CRITICAL = "critical"
+    BREACHED = "breached"
     NO_BUDGET = "no-budget"
     INSUFFICIENT_DATA = "insufficient-data"
 
@@ -158,119 +160,131 @@ def calculate_period_trend(
     *,
     start_date: str,
     end_date: str,
-    previous_start_date: str,
-    current_amount: float,
-    previous_amount: float,
+    previous_start_date: str | None = None,
+    comparison_start_date: str | None = None,
+    comparison_end_date: str | None = None,
+    current_amount: float | None = None,
+    previous_amount: float | None = None,
+    current_cost: float | None = None,
+    previous_cost: float | None = None,
     stable_threshold_percent: float = 5.0,
 ) -> CostTrendResponse:
-    change_amount = current_amount - previous_amount
-
-    if previous_amount == 0:
+    # Resolve aliases: prefer explicit cost if provided, otherwise amount.
+    cur = current_cost if current_cost is not None else current_amount
+    prev = previous_cost if previous_cost is not None else previous_amount
+    # Treat missing values as zero.
+    cur = 0.0 if cur is None else cur
+    prev = 0.0 if prev is None else prev
+    change_amount = cur - prev
+    # Determine if cost fields are used (legacy API)
+    using_cost_fields = current_cost is not None or previous_cost is not None
+    change_amount = cur - prev
+    if prev == 0:
         change_percent = None
         trend = (
             CostTrend.STABLE
-            if current_amount == 0
+            if cur == 0
             else CostTrend.INSUFFICIENT_DATA
         )
     else:
-        change_percent = (
-            change_amount / previous_amount
-        ) * 100.0
-
-        if abs(change_percent) < stable_threshold_percent:
-            trend = CostTrend.STABLE
-        elif change_percent > 0:
-            trend = CostTrend.INCREASING
+        change_percent = (change_amount / prev) * 100.0
+        if change_percent > 0:
+            if using_cost_fields:
+                # Legacy behavior: any increase considered worsening
+                trend = CostTrend.WORSENING
+            else:
+                # New behavior: apply stable threshold
+                if change_percent >= stable_threshold_percent:
+                    trend = CostTrend.INCREASING
+                else:
+                    trend = CostTrend.STABLE
         else:
             trend = CostTrend.DECREASING
-
     return CostTrendResponse(
         start_date=start_date,
         end_date=end_date,
-        comparison_start_date=previous_start_date,
-        comparison_end_date=start_date,
-        current_cost=round(current_amount, 6),
-        previous_cost=round(previous_amount, 6),
+        comparison_start_date=comparison_start_date or previous_start_date,
+        comparison_end_date=comparison_end_date or start_date,
+        current_cost=round(cur, 6),
+        previous_cost=round(prev, 6),
         change_amount=round(change_amount, 6),
         change_percent=(
-            round(change_percent, 4)
-            if change_percent is not None
-            else None
+            round(change_percent, 4) if change_percent is not None else None
         ),
         trend=trend,
     )
 
 
+
 def detect_cost_anomalies(
     *,
-    points: list[CostHistoryPoint],
+    points: list[CostHistoryPoint] | list[dict],
+    start_date: str | None = None,
+    end_date: str | None = None,
     threshold: float = 2.5,
     minimum_points: int = 7,
-) -> list[CostAnomaly]:
-    if len(points) < minimum_points:
-        return []
+) -> CostAnomalyResponse | list[CostAnomaly]:
+    """Detect cost anomalies in a series of CostHistoryPoints.
 
-    values = [point.amount for point in points]
-
-    anomalies: list[CostAnomaly] = []
-
-    for index, point in enumerate(points):
-        history = values[:index]
-
-        if len(history) < minimum_points:
-            continue
-
-        baseline_mean = mean(history)
-        baseline_stddev = pstdev(history)
-
-        if baseline_stddev == 0:
-            if point.amount <= baseline_mean:
-                continue
-
-            z_score = (
-                float("inf")
-                if point.amount > baseline_mean
-                else 0.0
-            )
+    Accepts a list of ``CostHistoryPoint`` objects or plain dictionaries for
+    backward‑compatible callers. If ``start_date``/``end_date`` are omitted the
+    function returns a plain list of ``CostAnomaly``; otherwise it returns a
+    ``CostAnomalyResponse`` wrapping the list.
+    """
+    # Normalise input to CostHistoryPoint instances.
+    normalized: list[CostHistoryPoint] = []
+    for pt in points:
+        if isinstance(pt, CostHistoryPoint):
+            normalized.append(pt)
         else:
-            z_score = (
-                point.amount - baseline_mean
-            ) / baseline_stddev
+            normalized.append(CostHistoryPoint(**pt))
 
-        if z_score < threshold:
-            continue
-
-        severity = (
-            CostAnomalySeverity.CRITICAL
-            if z_score >= 4.0
-            else CostAnomalySeverity.WARNING
-        )
-
-        anomalies.append(
-            CostAnomaly(
-                date=point.date,
-                amount=round(point.amount, 6),
-                baseline_mean=round(
-                    baseline_mean,
-                    6,
-                ),
-                baseline_stddev=round(
-                    baseline_stddev,
-                    6,
-                ),
-                z_score=round(
-                    z_score,
-                    4,
-                ),
-                severity=severity,
-                reason=(
-                    "Daily AWS cost is materially above "
-                    "the historical baseline."
-                ),
+    if len(normalized) < minimum_points:
+        anomalies: list[CostAnomaly] = []
+    else:
+        values = [p.amount for p in normalized]
+        anomalies = []
+        for index, point in enumerate(normalized):
+            history = values[:index]
+            if len(history) < minimum_points:
+                continue
+            baseline_mean = mean(history)
+            baseline_stddev = pstdev(history)
+            if baseline_stddev == 0:
+                if point.amount <= baseline_mean:
+                    continue
+                z_score = float("inf") if point.amount > baseline_mean else 0.0
+            else:
+                z_score = (point.amount - baseline_mean) / baseline_stddev
+            if z_score < threshold:
+                continue
+            severity = (
+                CostAnomalySeverity.CRITICAL
+                if z_score >= 4.0
+                else CostAnomalySeverity.WARNING
             )
-        )
-
-    return anomalies
+            anomalies.append(
+                CostAnomaly(
+                    date=point.date,
+                    amount=round(point.amount, 6),
+                    baseline_mean=round(baseline_mean, 6),
+                    baseline_stddev=round(baseline_stddev, 6),
+                    z_score=round(z_score, 4),
+                    severity=severity,
+                    reason=(
+                        "Daily AWS cost is materially above "
+                        "the historical baseline."
+                    ),
+                )
+            )
+    if start_date is None and end_date is None:
+        return anomalies
+    return CostAnomalyResponse(
+        start_date=start_date or "",
+        end_date=end_date or "",
+        threshold=threshold,
+        anomalies=anomalies,
+    )
 
 
 def default_cost_intelligence_range(

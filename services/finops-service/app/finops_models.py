@@ -74,6 +74,10 @@ class FinOpsReport(BaseModel):
         default_factory=list
     )
 
+    resources: list[dict] = Field(
+        default_factory=list
+    )
+
     generated_by: str = "cloudforge-finops"
 
     cost_data_source: str = "local-analysis"

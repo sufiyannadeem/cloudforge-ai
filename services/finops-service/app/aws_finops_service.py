@@ -86,6 +86,7 @@ class AWSFinOpsService:
             resources=resources,
         )
 
+        report.resources = resources
         report.cost_data_source = (
             "aws-cost-explorer"
         )
@@ -122,7 +123,7 @@ class AWSFinOpsService:
             ),
             average_daily_cost=round(
                 total / len(points),
-                6,
+                2,
             )
             if points
             else 0.0,
@@ -187,10 +188,13 @@ class AWSFinOpsService:
             for point in raw_points
         ]
 
-        anomalies = detect_cost_anomalies(
+        anomalies_resp = detect_cost_anomalies(
             points=points,
+            start_date=start_date,
+            end_date=end_date,
             threshold=threshold,
         )
+        anomalies = anomalies_resp.anomalies
 
         return CostAnomalyResponse(
             start_date=start_date,
@@ -231,7 +235,7 @@ class AWSFinOpsService:
                 )
                 for item in costs
             ]
-
+            entries.sort(key=lambda e: e.amount, reverse=True)
             return CostAttributionResponse(
                 start_date=start_date,
                 end_date=end_date,
@@ -251,11 +255,7 @@ class AWSFinOpsService:
         )
 
         if tag_key is None:
-            raise ValueError(
-                "Unsupported attribution dimension. "
-                "Use service, environment, project, "
-                "owner, or costcenter."
-            )
+            raise ValueError("Unsupported dimension")
 
         costs = self.client.get_tag_costs(
             start_date=start_date,
@@ -446,24 +446,20 @@ class AWSFinOpsService:
         actual_percent: float | None,
         forecast_percent: float | None,
     ) -> BudgetStatus:
-        values = [
-            value
-            for value in (
-                actual_percent,
-                forecast_percent,
-            )
-            if value is not None
-        ]
-
-        if not values:
+        # Prioritize actual utilization; fall back to forecast if actual is missing.
+        if actual_percent is not None:
+            eval_percent = actual_percent
+        elif forecast_percent is not None:
+            eval_percent = forecast_percent
+        else:
             return BudgetStatus.INSUFFICIENT_DATA
 
-        maximum = max(values)
-
-        if maximum >= 100:
+        if eval_percent > 100:
+            return BudgetStatus.BREACHED
+        if eval_percent >= 100:
             return BudgetStatus.CRITICAL
-
-        if maximum >= 80:
+        if eval_percent >= 80:
             return BudgetStatus.WARNING
-
+        if eval_percent >= 50:
+            return BudgetStatus.HEALTHY
         return BudgetStatus.HEALTHY

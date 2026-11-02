@@ -126,7 +126,7 @@ class PrometheusFinOpsCollector:
         )
         usage_cpu = self._label_values(
             self.client.query(
-                '''sum by (node) (rate(container_cpu_usage_seconds_total{container!=,image!=}[15m]))'''
+                '''sum by (node) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[15m]))'''
             ).value,
             "node",
         )

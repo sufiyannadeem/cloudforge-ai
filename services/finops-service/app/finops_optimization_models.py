@@ -15,6 +15,7 @@ class OptimizationSeverity(str, Enum):
 class OptimizationDomain(str, Enum):
     KUBERNETES = "kubernetes"
     EKS = "eks"
+    EC2 = "ec2"
     ECR = "ecr"
     S3 = "s3"
     RDS = "rds"
@@ -159,7 +160,18 @@ class RDSObservation(BaseModel):
     pricing_source: str | None = None
 
 
+class EC2Observation(BaseModel):
+    resource_id: str
+    instance_type: str = "t3.large"
+    cpu_utilization_percent: float | None = None
+    monthly_cost_usd: float | None = None
+    target_instance_type: str | None = None
+    target_monthly_cost_usd: float | None = None
+    pricing_source: str | None = None
+
+
 class AWSOptimizationObservation(BaseModel):
+    ec2: list[EC2Observation] = Field(default_factory=list)
     ecr: list[ECRObservation] = Field(default_factory=list)
     s3: list[S3Observation] = Field(default_factory=list)
     rds: list[RDSObservation] = Field(default_factory=list)

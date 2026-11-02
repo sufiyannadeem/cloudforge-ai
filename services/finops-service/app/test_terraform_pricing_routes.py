@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -32,15 +36,28 @@ def pricing_payload(
 def auth_headers() -> dict[str, str]:
     return {
         "X-CloudForge-Role": "platform-engineer",
+        "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
     }
 
 
 def test_pricing_requires_finops_access() -> None:
     response = client.get(
         "/api/v1/terraform/pricing",
+        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"]},
     )
 
     assert response.status_code == 403
+
+
+def test_pricing_rejects_invalid_internal_token() -> None:
+    response = client.get(
+        "/api/v1/terraform/pricing",
+        headers={
+            "X-CloudForge-Role": "platform-engineer",
+            "X-CloudForge-Internal-Token": "invalid-token",
+        },
+    )
+    assert response.status_code == 401
 
 
 def test_create_pricing_rate_card() -> None:

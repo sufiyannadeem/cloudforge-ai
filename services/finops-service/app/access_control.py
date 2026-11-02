@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import Header, HTTPException
@@ -9,6 +10,7 @@ DEFAULT_ALLOWED_ROLES = {
     "platform-engineer",
     "devops",
     "sre",
+    "admin",
 }
 
 
@@ -29,9 +31,28 @@ def require_finops_access(
         default=None,
         alias="X-CloudForge-Role",
     ),
+    x_cloudforge_internal_token: str | None = Header(
+        default=None,
+        alias="X-CloudForge-Internal-Token",
+    ),
 ) -> str:
-    role = (x_cloudforge_role or "").strip().lower()
+    expected_token = os.getenv("CLOUDFORGE_INTERNAL_API_TOKEN", "")
+    if len(expected_token.encode("utf-8")) < 32 or "replace-with" in expected_token.lower():
+        raise HTTPException(
+            status_code=503,
+            detail="FinOps service authentication is not configured.",
+        )
 
+    provided_token = x_cloudforge_internal_token or ""
+    if not hmac.compare_digest(
+        provided_token.encode("utf-8"), expected_token.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Service authentication required.",
+        )
+
+    role = (x_cloudforge_role or "").strip().lower()
     if not role:
         raise HTTPException(
             status_code=403,

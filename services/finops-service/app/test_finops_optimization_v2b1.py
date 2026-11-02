@@ -3,6 +3,7 @@ from __future__ import annotations
 from .finops_optimization_engine import FinOpsOptimizationEngine
 from .finops_optimization_models import (
     AWSOptimizationObservation,
+    EC2Observation,
     ECRObservation,
     KubernetesOptimizationSnapshot,
     KubernetesWorkload,
@@ -533,3 +534,56 @@ def test_prometheus_owner_mapping_deployment_remains_workload():
     assert len(snapshot.workloads) == 1
     assert snapshot.workloads[0].workload == "api"
     assert snapshot.workloads[0].replicas == 2
+
+
+def test_prometheus_node_cpu_query_selector_syntax():
+    queries_executed = []
+
+    class _QueryTrackingPrometheus(_FakePrometheus):
+        def query(self, expression: str):
+            queries_executed.append(expression)
+            return super().query(expression)
+
+    collector = PrometheusFinOpsCollector(
+        client=_QueryTrackingPrometheus()
+    )
+    collector.collect_snapshot()
+
+    node_cpu_queries = [
+        q for q in queries_executed
+        if "container_cpu_usage_seconds_total" in q and "sum by (node)" in q
+    ]
+    assert len(node_cpu_queries) == 1
+    expected_query = 'sum by (node) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[15m]))'
+    assert node_cpu_queries[0] == expected_query
+    assert "container!=," not in node_cpu_queries[0]
+    assert "image!=}" not in node_cpu_queries[0]
+
+
+def test_ec2_downsizing_optimization():
+    engine = FinOpsOptimizationEngine()
+    observation = AWSOptimizationObservation(
+        ec2=[
+            EC2Observation(
+                resource_id="i-0abcdef1234567890",
+                instance_type="t3.large",
+                cpu_utilization_percent=8.0,
+                monthly_cost_usd=75.0,
+                target_instance_type="t3.medium",
+                target_monthly_cost_usd=40.0,
+                pricing_source="aws-standard-ondemand",
+            )
+        ]
+    )
+
+    report = engine.build_report(aws=observation)
+    assert report.finding_count == 1
+    finding = report.findings[0]
+    assert finding.domain == OptimizationDomain.EC2
+    assert finding.resource_id == "i-0abcdef1234567890"
+    assert finding.metric == "cpu_utilization_percent"
+    assert finding.observed_value == 8.0
+    assert finding.potential_monthly_savings_usd == 35.0
+    assert "Downsize instance from t3.large to t3.medium" in finding.recommendation
+    assert finding.action == "HUMAN_APPROVAL_REQUIRED"
+    assert report.total_potential_monthly_savings_usd == 35.0
