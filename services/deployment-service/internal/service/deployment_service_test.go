@@ -13,11 +13,11 @@ import (
 )
 
 type mockDeploymentStore struct {
-	createFunc  func(context.Context, model.Deployment) error
-	getByIDFunc func(context.Context, uuid.UUID) (model.Deployment, error)
-	listFunc    func(context.Context, int, int) ([]model.Deployment, error)
-	updateFunc  func(context.Context, model.Deployment) error
-	deleteFunc  func(context.Context, uuid.UUID) error
+	createFunc      func(context.Context, model.Deployment) error
+	getByIDFunc     func(context.Context, uuid.UUID) (model.Deployment, error)
+	listFunc        func(context.Context, int, int) ([]model.Deployment, error)
+	updateFunc      func(context.Context, model.Deployment) error
+	deleteFunc      func(context.Context, uuid.UUID) error
 	getPreviousFunc func(context.Context, uuid.UUID, string, uuid.UUID) (model.Deployment, error)
 
 	createdDeployment model.Deployment

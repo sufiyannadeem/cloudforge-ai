@@ -156,9 +156,17 @@ jobs:
       - name: Create test database
         working-directory: .
         run: |
-          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/project-service/migrations/001_create_projects_table.sql
-
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge \
+            -c "CREATE DATABASE cloudforge_test;"
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge_test \
+            -f services/project-service/migrations/001_create_projects_table.sql
       - name: Run tests
         run: go test -v ./...
 
@@ -241,12 +249,12 @@ jobs:
       - name: Create test database
         working-directory: .
         run: |
-          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/001_create_infrastructure_resources.sql
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/002_add_provisioning_fields.sql
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/003_add_core_resource_types.sql
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/infrastructure-service/internal/migration/migrations/004_add_destroy_lifecycle.sql
-
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge \
+            -c "CREATE DATABASE cloudforge_test;"
       - name: Run unit & integration tests
         run: go test -v ./...
 
@@ -329,10 +337,25 @@ jobs:
       - name: Create test database
         working-directory: .
         run: |
-          psql -h localhost -U cloudforge -d cloudforge -c "CREATE DATABASE cloudforge_test;"
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/deployment-service/internal/migration/migrations/001_create_deployments_table.sql
-          psql -h localhost -U cloudforge -d cloudforge_test -f services/deployment-service/internal/migration/migrations/002_create_deployment_attempts_table.sql
+          set -euo pipefail
 
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge \
+            -c "CREATE DATABASE cloudforge_test;"
+
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge_test \
+            -f services/deployment-service/internal/migration/migrations/001_create_deployments_table.sql
+
+          psql -v ON_ERROR_STOP=1 \
+            -h localhost \
+            -U cloudforge \
+            -d cloudforge_test \
+            -f services/deployment-service/internal/migration/migrations/002_create_deployment_attempts_table.sql
       - name: Run unit & integration tests
         run: go test -v ./...
 
@@ -465,7 +488,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@60edb5dd545a775178f5252478332d3be8ffb6fb # v4.0.2
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20
           cache: "npm"
@@ -517,76 +540,85 @@ jobs:
           RESULTS: ${{ toJson(needs) }}
         run: |
           set -euo pipefail
+
           echo "================================================="
           echo "Evaluating CloudForge AI CI Gate Results..."
           echo "Event: ${EVENT_NAME}"
           echo "================================================="
 
-          python3 -c "import textwrap; exec(textwrap.dedent('''
-          import json, os, sys
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
 
-          event_name = os.environ.get('EVENT_NAME', '')
-          commit_msg = os.environ.get('COMMIT_MSG', '')
-          results = json.loads(os.environ.get('RESULTS', '{}'))
+          event_name = os.environ.get("EVENT_NAME", "")
+          commit_msg = os.environ.get("COMMIT_MSG", "")
+          results = json.loads(os.environ.get("RESULTS", "{}"))
 
-          is_intentional_skip = False
-          if event_name == 'push':
-              if '[skip ci]' in commit_msg or '[ci skip]' in commit_msg:
-                  is_intentional_skip = True
+          is_intentional_skip = (
+              event_name == "push"
+              and (
+                  "[skip ci]" in commit_msg
+                  or "[ci skip]" in commit_msg
+              )
+          )
 
           required_jobs = [
-              'security-gate-ci',
-              'terraform-ci',
-              'project-service-ci',
-              'infrastructure-service-ci',
-              'deployment-service-ci',
-              'aiops-service-ci',
-              'finops-service-ci',
-              'frontend-ci',
+              "security-gate-ci",
+              "terraform-ci",
+              "project-service-ci",
+              "infrastructure-service-ci",
+              "deployment-service-ci",
+              "aiops-service-ci",
+              "finops-service-ci",
+              "frontend-ci",
           ]
 
           failed = []
           unexpected_skipped = []
           passed = []
 
-          print('Detailed Job Status:')
+          print("Detailed Job Status:")
+
           for job in required_jobs:
-              status = results.get(job, {}).get('result', 'missing')
-              print(f'  - {job}: {status}')
-              if status == 'success':
+              status = results.get(job, {}).get("result", "missing")
+              print(f"  - {job}: {status}")
+
+              if status == "success":
                   passed.append(job)
-              elif status in ('failure', 'cancelled'):
+              elif status in ("failure", "cancelled"):
                   failed.append((job, status))
-              elif status == 'skipped':
+              elif status == "skipped":
                   if not is_intentional_skip:
                       unexpected_skipped.append(job)
               else:
                   failed.append((job, status))
 
           if failed:
-              print('\n[ERROR] The following required CI jobs failed or were cancelled:')
+              print("\n[ERROR] Required CI jobs failed or were cancelled:")
               for job, status in failed:
-                  print(f'  ❌ {job} (status: {status})')
+                  print(f"  - {job} (status: {status})")
               sys.exit(1)
 
           if unexpected_skipped:
-              print('\n[ERROR] The following required CI jobs were unexpectedly skipped:')
+              print("\n[ERROR] Required CI jobs were unexpectedly skipped:")
               for job in unexpected_skipped:
-                  print(f'  ⚠️ {job}')
+                  print(f"  - {job}")
               sys.exit(1)
 
           if is_intentional_skip and len(passed) == 0:
-              print('\n[NOTICE] All CI checks were intentionally skipped via commit message directive ([skip ci] / [ci skip]).')
+              print("\n[NOTICE] All CI checks were intentionally skipped.")
               sys.exit(0)
 
           if len(passed) == len(required_jobs):
-              print('\n=================================================')
-              print('All CloudForge AI security gates, Terraform IaC,')
-              print('microservices, and frontend CI checks successfully')
-              print('passed!')
-              print('=================================================')
+              print("\n=================================================")
+              print("All CloudForge AI CI checks passed!")
+              print("=================================================")
               sys.exit(0)
-          else:
-              print(f'\n[ERROR] Incomplete CI execution. Passed: {len(passed)}/{len(required_jobs)}')
-              sys.exit(1)
-          '''))"
+
+          print(
+              f"\n[ERROR] Incomplete CI execution. "
+              f"Passed: {len(passed)}/{len(required_jobs)}"
+          )
+          sys.exit(1)
+          PY
