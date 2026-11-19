@@ -215,7 +215,7 @@ class PrometheusClient:
 
         result = self.query(expression)
 
-        if result.error or not result.value:
+        if result.error or len(result.value) != 1:
             return None
 
         value = self._extract_value(result.value[0])
@@ -407,10 +407,9 @@ class PrometheusClient:
         if result.error:
             return [], result.error
 
-        return (
-            self._extract_range_values(result.value),
-            None,
-        )
+        if len(result.value) > 1:
+            return [], "Expected one aggregated Prometheus series"
+        return self._extract_range_values(result.value), None
 
     @staticmethod
     def _escape_label(value: str) -> str:

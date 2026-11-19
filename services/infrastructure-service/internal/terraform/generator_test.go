@@ -114,12 +114,13 @@ func TestGeneratorAWSRDS(t *testing.T) {
 		Region:       "eu-west-1",
 		ResourceType: "aws_rds",
 		Configuration: map[string]any{
-			"engine":            "postgres",
-			"engine_version":    "16.3",
-			"instance_class":    "db.t4g.micro",
-			"allocated_storage": 20,
-			"database_name":     "cloudforge_test",
-			"subnet_ids":        []string{"subnet-11111111", "subnet-22222222"},
+			"engine":              "postgres",
+			"engine_version":      "16.3",
+			"instance_class":      "db.t4g.micro",
+			"allocated_storage":   20,
+			"skip_final_snapshot": false,
+			"database_name":       "cloudforge_test",
+			"subnet_ids":          []string{"subnet-11111111", "subnet-22222222"},
 		},
 	}
 
@@ -141,6 +142,10 @@ func TestGeneratorAWSRDS(t *testing.T) {
 	if !strings.Contains(content, `resource "aws_db_subnet_group" "this"`) {
 		t.Error("expected aws_db_subnet_group resource")
 	}
+	if !strings.Contains(content, `engine_version = "16.3"`) ||
+		!strings.Contains(content, `final_snapshot_identifier = "cloudforge-final-`+resource.ID.String()+`"`) {
+		t.Fatal("explicit version or final snapshot setting was not preserved")
+	}
 	if !strings.Contains(content, `output "db_instance_endpoint"`) {
 		t.Error("expected db_instance_endpoint output")
 	}
@@ -157,7 +162,6 @@ func TestGeneratorAWSEKS(t *testing.T) {
 		Region:       "eu-west-1",
 		ResourceType: "aws_eks",
 		Configuration: map[string]any{
-			"cluster_version":     "1.30",
 			"subnet_ids":          []string{"subnet-11111111", "subnet-22222222"},
 			"node_instance_types": []string{"t3.medium"},
 			"desired_capacity":    2,
@@ -176,6 +180,9 @@ func TestGeneratorAWSEKS(t *testing.T) {
 	}
 
 	content := string(data)
+	if !strings.Contains(content, "version  = null") {
+		t.Fatal("EKS should use its service default when no version is supplied")
+	}
 	if !strings.Contains(content, `resource "aws_eks_cluster" "this"`) {
 		t.Error("expected aws_eks_cluster resource")
 	}
@@ -338,6 +345,9 @@ func TestGeneratorRDSGeneratesRandomSensitivePasswordWhenOmitted(t *testing.T) {
 	if strings.Contains(firstMain, "CloudForgeSecurePassword123!") {
 		t.Fatal("generated RDS config must not contain the legacy hardcoded default password")
 	}
+	if strings.Contains(firstMain, "engine_version") {
+		t.Fatal("RDS should use the provider default when no engine version is supplied")
+	}
 	if !strings.Contains(firstMain, `sensitive   = true`) {
 		t.Fatal("expected db_master_password variable to be marked sensitive")
 	}
@@ -372,5 +382,121 @@ func TestGeneratorRDSGeneratesRandomSensitivePasswordWhenOmitted(t *testing.T) {
 	}
 	if firstPassword == secondPassword {
 		t.Fatal("expected distinct randomly generated passwords across resources")
+	}
+}
+
+func TestBackendRegionIsIndependentOfResourceRegion(t *testing.T) {
+	generator := NewGenerator(t.TempDir(), "state-test-bucket")
+	generator.StateRegion = "eu-west-1"
+	resource := testResource()
+	resource.Region = "us-east-1"
+	workspace, err := generator.Generate(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend := string(mustReadFile(t, filepath.Join(workspace.Directory, "backend.tf")))
+	variables := string(mustReadFile(t, filepath.Join(workspace.Directory, "variables.tf")))
+	if !strings.Contains(backend, `region       = "eu-west-1"`) ||
+		!strings.Contains(backend, `use_lockfile = true`) ||
+		!strings.Contains(backend, resource.ID.String()) || !strings.Contains(variables, `"us-east-1"`) {
+		t.Fatal("backend region, lock, state key or provider region is incorrect")
+	}
+}
+
+func TestVPCGeneratorValidatesAWSIPv4Prefix(t *testing.T) {
+	generator := NewGenerator(t.TempDir(), "")
+	resource := testResource()
+	resource.ResourceType = "aws_vpc"
+	for _, tc := range []struct {
+		cidr  string
+		valid bool
+	}{
+		{"10.0.0.0/15", false},
+		{"10.0.0.0/16", true},
+		{"10.0.0.0/28", true},
+		{"10.0.0.0/29", false},
+		{"::ffff:10.0.0.0/112", false},
+	} {
+		resource.Configuration = map[string]any{"cidr_block": tc.cidr}
+		if _, err := generator.Generate(resource); (err == nil) != tc.valid {
+			t.Errorf("generate VPC for %s: %v", tc.cidr, err)
+		}
+	}
+}
+
+func TestProvisionerRoleIsolatedFromStateBackend(t *testing.T) {
+	generator := NewGenerator(t.TempDir(), "test-state")
+	const role = "arn:aws:iam::123456789012:role/cloudforge-terraform-provisioner"
+	generator.ProvisionerRoleARN = role
+	resource := testResource()
+	if !strings.Contains(generator.versionsFile(), "assume_role {") ||
+		!strings.Contains(generator.versionsFile(), `role_arn = "`+role+`"`) ||
+		strings.Contains(generator.backendFile(resource), role) {
+		t.Fatal("provider role must be separate from the backend identity")
+	}
+	runner := NewRunner(generator)
+	binding := runner.remotePlanBinding(resource, "approved-plan")
+	generator.ProvisionerRoleARN = ""
+	if binding == runner.remotePlanBinding(resource, "approved-plan") {
+		t.Fatal("removing the role must invalidate an existing plan binding")
+	}
+}
+
+func TestAWSSubnetInputsRejectInvalidOrDuplicateIDs(t *testing.T) {
+	for _, tc := range []struct {
+		resourceType string
+		subnets      []string
+	}{
+		{"aws_rds", []string{"subnet-11111111"}},
+		{"aws_eks", []string{"subnet-11111111", "subnet-11111111"}},
+		{"aws_eks", []string{"subnet-11111111", "placeholder"}},
+	} {
+		resource := testResource()
+		resource.ResourceType = tc.resourceType
+		resource.Configuration = map[string]any{"subnet_ids": tc.subnets}
+		if _, err := NewGenerator(t.TempDir(), "").Generate(resource); err == nil {
+			t.Errorf("%s accepted invalid subnet inputs", tc.resourceType)
+		}
+	}
+}
+
+func TestRoleBoundResourcesUseReservedNamesAndTags(t *testing.T) {
+	g := NewGenerator(t.TempDir(), "")
+	g.ProvisionerRoleARN = "arn:aws:iam::123456789012:role/cloudforge-terraform-provisioner"
+	resource := testResource()
+	resource.Configuration = map[string]any{
+		"tags":       map[string]any{"cloudforge": "false", "owner": "app"},
+		"subnet_ids": []string{"subnet-11111111", "subnet-22222222"},
+	}
+	for _, kind := range []string{"aws_rds", "aws_eks"} {
+		resource.ResourceType = kind
+		ws, err := g.Generate(resource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hcl := string(mustReadFile(t, filepath.Join(ws.Directory, "main.tf")))
+		if strings.Contains(hcl, "\"cloudforge\" = \"false\"") ||
+			!strings.Contains(hcl, `"cloudforge-`+resource.ID.String()+`"`) {
+			t.Fatalf("%s escaped the scoped role namespace or overrode the ownership tag", kind)
+		}
+	}
+}
+
+func TestEC2PublicAMIIsResolvedDuringPlan(t *testing.T) {
+	r := testResource()
+	r.ResourceType = "aws_ec2"
+	r.Configuration = map[string]any{
+		"instance_type": "t3.micro", "subnet_id": "subnet-11111111",
+		"ami_id": "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64",
+	}
+	hcl, err := NewGenerator(t.TempDir(), "").ec2File(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hcl, `data "aws_ssm_parameter" "ami"`) ||
+		!strings.Contains(hcl, "with_decryption = false") ||
+		!strings.Contains(hcl, "ami                         = data.aws_ssm_parameter.ami.value") ||
+		strings.Contains(hcl, "resolve:ssm:") {
+		t.Fatal("AMI alias was not resolved as plan-time data")
 	}
 }

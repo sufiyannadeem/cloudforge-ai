@@ -360,3 +360,31 @@ func TestUpdateAllowsConfigurationChangeWhenPending(t *testing.T) {
 		t.Fatal("expected repository Update to be called")
 	}
 }
+
+func (m *mockResourceStore) ReviewPlan(context.Context, uuid.UUID, model.PlanReviewInput, string) error {
+	return nil
+}
+func (m *mockResourceStore) PlanReviews(context.Context, uuid.UUID) ([]model.PlanReview, error) {
+	return nil, nil
+}
+func (m *mockResourceStore) InvalidatePlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus) error {
+	from := model.ResourceStatusAwaitingApproval
+	if operation == "destroy" {
+		from = model.ResourceStatusAwaitingDestroyApproval
+	}
+	return m.TransitionStatus(ctx, resource.ID, []model.ResourceStatus{from}, next)
+}
+func (m *mockResourceStore) ClaimReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation, _ string) error {
+	from, to := model.ResourceStatusAwaitingApproval, model.ResourceStatusProvisioning
+	if operation == "destroy" {
+		from, to = model.ResourceStatusAwaitingDestroyApproval, model.ResourceStatusDestroying
+	}
+	return m.TransitionStatus(ctx, resource.ID, []model.ResourceStatus{from}, to)
+}
+func (m *mockResourceStore) FinishReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, _ bool) error {
+	from := model.ResourceStatusProvisioning
+	if operation == "destroy" {
+		from = model.ResourceStatusDestroying
+	}
+	return m.TransitionStatus(ctx, resource.ID, []model.ResourceStatus{from}, next)
+}

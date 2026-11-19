@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
@@ -31,33 +32,67 @@ func (r *DeploymentAttemptRepository) Create(
 	ctx context.Context,
 	attempt model.DeploymentAttempt,
 ) error {
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return fmt.Errorf("begin deployment attempt: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Serialize allocation per deployment. The INSERT takes a fresh snapshot
+	// after the lock is acquired and sees the previous allocator's commit.
+	var deploymentID uuid.UUID
+	err = tx.QueryRow(ctx, "SELECT id FROM deployments WHERE id = $1 FOR NO KEY UPDATE", attempt.DeploymentID).Scan(&deploymentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrDeploymentNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock deployment for attempt allocation: %w", err)
+	}
+
+	if err := insertDeploymentAttempt(ctx, tx, attempt); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit deployment attempt: %w", err)
+	}
+	return nil
+}
+
+// insertDeploymentAttempt requires the caller to hold the deployment row lock.
+func insertDeploymentAttempt(ctx context.Context, tx pgx.Tx, attempt model.DeploymentAttempt) error {
 	const query = `
 		INSERT INTO deployment_attempts (
 			id,
 			deployment_id,
 			attempt_number,
 			status,
+			execution_mode,
 			error_message,
 			started_at,
 			completed_at,
 			duration_ms,
 			created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		VALUES (
+			$1, $2,
+			(SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM deployment_attempts WHERE deployment_id = $2),
+			$3, COALESCE(NULLIF($9, ''), 'unknown'), $4, $5, $6, $7, $8
+		)
 	`
 
-	_, err := r.db.Exec(
+	_, err := tx.Exec(
 		ctx,
 		query,
 		attempt.ID,
 		attempt.DeploymentID,
-		attempt.AttemptNumber,
 		attempt.Status,
 		attempt.ErrorMessage,
 		attempt.StartedAt,
 		attempt.CompletedAt,
 		attempt.DurationMs,
 		attempt.CreatedAt,
+		attempt.ExecutionMode,
 	)
 
 	if err != nil {
@@ -102,31 +137,6 @@ func (r *DeploymentAttemptRepository) Update(
 	return nil
 }
 
-func (r *DeploymentAttemptRepository) GetNextAttemptNumber(
-	ctx context.Context,
-	deploymentID uuid.UUID,
-) (int, error) {
-	const query = `
-		SELECT COALESCE(MAX(attempt_number), 0) + 1
-		FROM deployment_attempts
-		WHERE deployment_id = $1
-	`
-
-	var nextNumber int
-
-	err := r.db.QueryRow(
-		ctx,
-		query,
-		deploymentID,
-	).Scan(&nextNumber)
-
-	if err != nil {
-		return 0, fmt.Errorf("get next attempt number: %w", err)
-	}
-
-	return nextNumber, nil
-}
-
 func (r *DeploymentAttemptRepository) ListByDeploymentID(
 	ctx context.Context,
 	deploymentID uuid.UUID,
@@ -151,6 +161,7 @@ func (r *DeploymentAttemptRepository) ListByDeploymentID(
 			deployment_id,
 			attempt_number,
 			status,
+			execution_mode,
 			error_message,
 			started_at,
 			completed_at,
@@ -186,6 +197,7 @@ func (r *DeploymentAttemptRepository) ListByDeploymentID(
 			&attempt.DeploymentID,
 			&attempt.AttemptNumber,
 			&attempt.Status,
+			&attempt.ExecutionMode,
 			&attempt.ErrorMessage,
 			&attempt.StartedAt,
 			&attempt.CompletedAt,

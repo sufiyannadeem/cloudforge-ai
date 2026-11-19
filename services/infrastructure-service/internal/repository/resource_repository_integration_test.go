@@ -510,3 +510,38 @@ func TestResourceRepositoryDeleteRejectsPlanningResource(t *testing.T) {
 		t.Fatalf("expected planning status, got %q", stored.Status)
 	}
 }
+
+func TestConsumeApprovalAssertionConcurrentReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	nonce := uuid.NewString()
+	expires := time.Now().Add(time.Minute).Unix()
+	type result struct {
+		consumed bool
+		err      error
+	}
+	done := make(chan result, 2)
+	for range 2 {
+		go func() {
+			consumed, err := newTestRepository().ConsumeApprovalAssertion(ctx, nonce, expires)
+			done <- result{consumed, err}
+		}()
+	}
+
+	winners := 0
+	for range 2 {
+		claim := <-done
+		if claim.err != nil {
+			t.Fatal(claim.err)
+		}
+		if claim.consumed {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("expected one consumed approval, got %d", winners)
+	}
+	if consumed, err := newTestRepository().ConsumeApprovalAssertion(ctx, uuid.NewString(), time.Now().Add(-time.Second).Unix()); err != nil || consumed {
+		t.Fatalf("expired assertion result = %t, %v", consumed, err)
+	}
+}

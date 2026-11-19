@@ -1,53 +1,84 @@
 package handler
 
 import (
-	"crypto/subtle"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
-// NewRouterWithInternalToken protects every API route with a server-to-server
-// credential while keeping the health endpoint available to container probes.
-// The token must be generated and shared through the deployment secret manager.
-func NewRouterWithInternalToken(resourceHandler *ResourceHandler, token string) http.Handler {
+type ConsumeApprovalAssertion func(context.Context, identity.Claims) error
+
+func NewAuthenticatedRouter(resourceHandler *ResourceHandler, frontendKey string, consume ConsumeApprovalAssertion, scopes ...identity.ProjectAccess) http.Handler {
 	mux := newResourceMux(resourceHandler)
+	var access identity.ProjectAccess
+	if len(scopes) != 0 {
+		access = scopes[0]
+	}
+	keys := map[string]string{"frontend": frontendKey}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/health" {
 			mux.ServeHTTP(w, r)
 			return
 		}
-		provided := strings.TrimSpace(r.Header.Get("X-CloudForge-Internal-Token"))
-		if len(token) < 32 || len(provided) != len(token) ||
-			subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			writeAuthorizationError(w, http.StatusUnauthorized, "service authentication required")
+		caller, ok := identity.Verify(r, "infrastructure", keys)
+		if !ok || !caller.Human() {
+			writeAuthorizationError(w, http.StatusUnauthorized, "service and operator identity required")
 			return
 		}
-		if !authorizedInfrastructureRequest(r) {
-			writeAuthorizationError(w, http.StatusForbidden, "insufficient infrastructure permissions")
-			return
+		r = access.Attach(identity.WithClaims(r, caller))
+		write := r.Method != http.MethodGet && r.Method != http.MethodHead
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if write && caller.Role != "platform-engineer" && !(caller.Role == "sre" && r.Method == http.MethodPost && len(parts) == 5 && parts[4] == "drift") {
+			canRequestOrPlan := (r.URL.Path == "/api/v1/resources") ||
+				(len(parts) == 5 && (parts[4] == "plan" || parts[4] == "review"))
+			if caller.Role != "developer" || r.Method != http.MethodPost || !canRequestOrPlan {
+				writeAuthorizationError(w, http.StatusForbidden, "insufficient infrastructure permissions")
+				return
+			}
+		}
+		if caller.Role == "developer" && len(parts) >= 4 {
+			id, err := uuid.Parse(parts[3])
+			if err != nil {
+				writeAuthorizationError(w, http.StatusNotFound, "resource not found")
+				return
+			}
+			if err := access.Resource(r.Context(), "infrastructure", id.String(), write); err != nil {
+				writeAuthorizationError(w, identity.AccessStatus(err), "resource access denied")
+				return
+			}
+		}
+		if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/apply") || strings.HasSuffix(r.URL.Path, "/review")) {
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 65536))
+			digest := sha256.Sum256(body)
+			if err != nil || caller.Body != hex.EncodeToString(digest[:]) {
+				writeAuthorizationError(w, http.StatusForbidden, "approval request does not match assertion")
+				return
+			}
+			if consume == nil {
+				writeAuthorizationError(w, http.StatusServiceUnavailable, "approval protection unavailable")
+				return
+			}
+			if err := consume(r.Context(), caller); err != nil {
+				if errors.Is(err, identity.ErrReplay) {
+					writeAuthorizationError(w, http.StatusConflict, "approval assertion already used")
+				} else {
+					writeAuthorizationError(w, http.StatusServiceUnavailable, "approval protection unavailable")
+				}
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		mux.ServeHTTP(w, r)
 	})
-}
-
-func authorizedInfrastructureRequest(r *http.Request) bool {
-	role := strings.ToLower(strings.TrimSpace(r.Header.Get("X-CloudForge-Role")))
-	validRole := role == "viewer" || role == "devops" || role == "sre" ||
-		role == "platform-engineer" || role == "admin"
-	if !validRole {
-		return false
-	}
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		return true
-	}
-	if strings.TrimSpace(r.Header.Get("X-CloudForge-Actor")) == "" {
-		return false
-	}
-	if r.Method == http.MethodDelete || strings.HasSuffix(r.URL.Path, "/apply") {
-		return role == "platform-engineer" || role == "admin"
-	}
-	return role == "platform-engineer" || role == "devops" || role == "sre" || role == "admin"
 }
 
 func writeAuthorizationError(w http.ResponseWriter, status int, message string) {
@@ -60,6 +91,14 @@ func writeAuthorizationError(w http.ResponseWriter, status int, message string) 
 
 func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 	mux := http.NewServeMux()
+	terraformOperation := func(next http.HandlerFunc) http.HandlerFunc {
+		if !resourceHandler.TerraformReadOnly {
+			return next
+		}
+		return func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusServiceUnavailable, "Terraform execution is disabled in this environment")
+		}
+	}
 
 	mux.HandleFunc("GET /health", resourceHandler.Health)
 
@@ -90,7 +129,7 @@ func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/plan",
-		resourceHandler.Plan,
+		terraformOperation(resourceHandler.Plan),
 	)
 
 	mux.HandleFunc(
@@ -98,19 +137,23 @@ func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 		resourceHandler.GetPlan,
 	)
 
+	mux.HandleFunc("POST /api/v1/resources/{id}/review", resourceHandler.Review)
+	mux.HandleFunc("GET /api/v1/resources/{id}/drift", resourceHandler.Drift)
+	mux.HandleFunc("POST /api/v1/resources/{id}/drift", terraformOperation(resourceHandler.Drift))
+
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/apply",
-		resourceHandler.Apply,
+		terraformOperation(resourceHandler.Apply),
 	)
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/destroy/plan",
-		resourceHandler.PlanDestroy,
+		terraformOperation(resourceHandler.PlanDestroy),
 	)
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/destroy/apply",
-		resourceHandler.ApplyDestroy,
+		terraformOperation(resourceHandler.ApplyDestroy),
 	)
 
 	return mux

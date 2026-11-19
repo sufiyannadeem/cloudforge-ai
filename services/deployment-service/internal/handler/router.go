@@ -1,11 +1,13 @@
 package handler
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	apidocs "github.com/sufiyannadeem/cloudforge-ai-deployment-service/docs"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func NewRouter(h *DeploymentHandler) http.Handler {
@@ -47,6 +49,7 @@ func NewRouterWithDependenciesAndMetrics(
 	queuedHandler *QueuedDeploymentHandler,
 	attemptHandler *DeploymentAttemptHandler,
 	metricsHandler http.Handler,
+	telemetryHandlers ...*ProjectTelemetryHandler,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -94,6 +97,14 @@ func NewRouterWithDependenciesAndMetrics(
 			"GET /api/v1/deployments/{id}/attempts",
 			attemptHandler.ListByDeploymentID,
 		)
+	}
+
+	if len(telemetryHandlers) > 0 {
+		telemetry := telemetryHandlers[0]
+		mux.HandleFunc("GET /api/v1/deployments/{id}/logs", telemetry.Logs)
+		mux.HandleFunc("GET /api/v1/deployments/{id}/observability", telemetry.Health)
+		mux.HandleFunc("GET /api/v1/deployments/{id}/diagnostics", telemetry.Diagnostics)
+		mux.HandleFunc("POST /api/v1/deployments/{id}/diagnostics", telemetry.Diagnostics)
 	}
 
 	mux.HandleFunc(
@@ -168,58 +179,59 @@ func RegisterDeploymentRunRoute(
 	)
 }
 
-// NewRouterWithInternalToken protects all deployment API routes with a server-to-server
-// token and role-based access control, matching least-privilege principles.
-func NewRouterWithInternalToken(mux http.Handler, token string) http.Handler {
+// NewAuthenticatedRouter checks the caller and enforces deployment permissions.
+func NewAuthenticatedRouter(mux http.Handler, frontendKey, aiopsKey string, scopes ...identity.ProjectAccess) http.Handler {
+	var access identity.ProjectAccess
+	if len(scopes) != 0 {
+		access = scopes[0]
+	}
+	keys := map[string]string{"frontend": frontendKey, "aiops": aiopsKey}
+	if frontendKey == aiopsKey {
+		keys = nil
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Public endpoints: health probes, docs, metrics
 		if r.Method == http.MethodGet && (r.URL.Path == "/health" ||
-			r.URL.Path == "/metrics" ||
-			r.URL.Path == "/docs" ||
-			strings.HasPrefix(r.URL.Path, "/docs/") ||
-			r.URL.Path == "/openapi.yaml") {
+			r.URL.Path == "/metrics" || r.URL.Path == "/docs" ||
+			strings.HasPrefix(r.URL.Path, "/docs/") || r.URL.Path == "/openapi.yaml") {
 			mux.ServeHTTP(w, r)
 			return
 		}
-
-		provided := strings.TrimSpace(r.Header.Get("X-CloudForge-Internal-Token"))
-		if len(token) < 32 || len(provided) != len(token) ||
-			subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "service authentication required")
+		caller, ok := identity.Verify(r, "deployment", keys)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "service identity required")
 			return
 		}
-
-		if !authorizedDeploymentRequest(r) {
+		path, _ := strings.CutPrefix(r.URL.Path, "/api/v1/deployments/")
+		isRemediation := strings.HasSuffix(path, "/remediation-run")
+		allowed := caller.Human() && !isRemediation &&
+			(r.Method != http.MethodDelete || caller.Role == "platform-engineer")
+		if caller.Issuer == "aiops" && caller.Service() {
+			id, suffix, _ := strings.Cut(path, "/")
+			_, err := uuid.Parse(id)
+			allowed = (r.Method == http.MethodGet && r.URL.Path == "/api/v1/deployments") || err == nil && ((r.Method == http.MethodGet && (suffix == "" || suffix == "attempts")) ||
+				(r.Method == http.MethodPost && suffix == "remediation-run"))
+		}
+		if !allowed {
 			writeError(w, http.StatusForbidden, "insufficient deployment permissions")
 			return
 		}
-
-		mux.ServeHTTP(w, r)
+		scopedRequest := access.Attach(identity.WithClaims(r, caller))
+		if caller.Human() && strings.HasPrefix(r.URL.Path, "/api/v1/deployments/") {
+			idText, action, _ := strings.Cut(path, "/")
+			id, err := uuid.Parse(idText)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "deployment not found")
+				return
+			}
+			diagnosticCapture := r.Method == http.MethodPost && action == "diagnostics"
+			write := r.Method != http.MethodGet && r.Method != http.MethodHead && !diagnosticCapture
+			if err := access.Resource(scopedRequest.Context(), "deployment", id.String(), write); err != nil {
+				writeError(w, identity.AccessStatus(err), "deployment access denied")
+				return
+			}
+		}
+		mux.ServeHTTP(w, scopedRequest)
+		// Forward the registered pattern to the outer metrics middleware.
+		r.Pattern = scopedRequest.Pattern
 	})
-}
-
-func authorizedDeploymentRequest(r *http.Request) bool {
-	role := strings.ToLower(strings.TrimSpace(r.Header.Get("X-CloudForge-Role")))
-	validRole := role == "viewer" || role == "devops" || role == "sre" ||
-		role == "platform-engineer" || role == "admin"
-	if !validRole {
-		return false
-	}
-
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
-		return true
-	}
-
-	actor := strings.TrimSpace(r.Header.Get("X-CloudForge-Actor"))
-	if actor == "" {
-		return false
-	}
-
-	// Least privilege: DELETE requires platform-engineer or admin
-	if r.Method == http.MethodDelete {
-		return role == "platform-engineer" || role == "admin"
-	}
-
-	// Normal mutations (POST, PATCH): devops, sre, platform-engineer, admin (viewer denied)
-	return role == "platform-engineer" || role == "devops" || role == "sre" || role == "admin"
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 var ErrProjectNotFound = errors.New("project not found")
@@ -62,9 +63,9 @@ func (r *projectRepository) Create(
 			name,
 			description,
 			repository_url,
-			default_branch
+			default_branch, created_by
 		)
-		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), 'main'))
+		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), 'main'), NULLIF($5, ''))
 		RETURNING
 			id,
 			name,
@@ -72,6 +73,7 @@ func (r *projectRepository) Create(
 			repository_url,
 			default_branch,
 			status,
+			created_by,
 			created_at,
 			updated_at
 	`
@@ -85,6 +87,7 @@ func (r *projectRepository) Create(
 		input.Description,
 		input.RepositoryURL,
 		input.DefaultBranch,
+		identity.FromContext(ctx).Subject,
 	).Scan(
 		&project.ID,
 		&project.Name,
@@ -92,6 +95,7 @@ func (r *projectRepository) Create(
 		&project.RepositoryURL,
 		&project.DefaultBranch,
 		&project.Status,
+		&project.CreatedBy,
 		&project.CreatedAt,
 		&project.UpdatedAt,
 	)
@@ -115,6 +119,7 @@ func (r *projectRepository) GetByID(
 			repository_url,
 			default_branch,
 			status,
+			created_by,
 			created_at,
 			updated_at
 		FROM projects
@@ -130,6 +135,7 @@ func (r *projectRepository) GetByID(
 		&project.RepositoryURL,
 		&project.DefaultBranch,
 		&project.Status,
+		&project.CreatedBy,
 		&project.CreatedAt,
 		&project.UpdatedAt,
 	)
@@ -158,14 +164,25 @@ func (r *projectRepository) List(
 			repository_url,
 			default_branch,
 			status,
+			created_by,
 			created_at,
-			updated_at
-		FROM projects
+			updated_at,
+			CASE WHEN $3::text = '' THEN ''
+			     WHEN p.created_by = $3 THEN 'owner'
+			     ELSE COALESCE((SELECT pm.level FROM project_members pm
+			                    WHERE pm.project_id = p.id AND pm.username = $3), '') END
+		FROM projects p
+		WHERE $3::text = '' OR ` + identity.MembershipPredicate + `
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	caller := identity.FromContext(ctx)
+	subject := caller.Subject
+	if caller.Role == "platform-engineer" {
+		subject = ""
+	}
+	rows, err := r.db.Query(ctx, query, limit, offset, subject)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
@@ -183,8 +200,10 @@ func (r *projectRepository) List(
 			&project.RepositoryURL,
 			&project.DefaultBranch,
 			&project.Status,
+			&project.CreatedBy,
 			&project.CreatedAt,
 			&project.UpdatedAt,
+			&project.AccessLevel,
 		)
 
 		if err != nil {
@@ -207,7 +226,7 @@ func (r *projectRepository) Update(
 	input model.UpdateProjectInput,
 ) (*model.Project, error) {
 	const query = `
-		UPDATE projects
+		UPDATE projects p
 		SET
 			name = COALESCE($2, name),
 			description = COALESCE($3, description),
@@ -215,7 +234,12 @@ func (r *projectRepository) Update(
 			default_branch = COALESCE($5, default_branch),
 			status = COALESCE($6, status),
 			updated_at = NOW()
-		WHERE id = $1
+		WHERE id = $1 AND ($7::text = '' OR (p.created_by IS NOT NULL AND (
+			p.created_by = $7 OR EXISTS (
+				SELECT 1 FROM project_members pm
+				WHERE pm.project_id = p.id AND pm.username = $7 AND pm.level = 'maintainer'
+			)
+		)))
 		RETURNING
 			id,
 			name,
@@ -223,6 +247,7 @@ func (r *projectRepository) Update(
 			repository_url,
 			default_branch,
 			status,
+			created_by,
 			created_at,
 			updated_at
 	`
@@ -238,6 +263,7 @@ func (r *projectRepository) Update(
 		input.RepositoryURL,
 		input.DefaultBranch,
 		input.Status,
+		identity.ListMember(ctx),
 	).Scan(
 		&project.ID,
 		&project.Name,
@@ -245,6 +271,7 @@ func (r *projectRepository) Update(
 		&project.RepositoryURL,
 		&project.DefaultBranch,
 		&project.Status,
+		&project.CreatedBy,
 		&project.CreatedAt,
 		&project.UpdatedAt,
 	)
@@ -266,10 +293,10 @@ func (r *projectRepository) Delete(
 ) error {
 	const query = `
 		DELETE FROM projects
-		WHERE id = $1
+		WHERE id = $1 AND ($2::text = '' OR created_by = $2)
 	`
 
-	result, err := r.db.Exec(ctx, query, id)
+	result, err := r.db.Exec(ctx, query, id, identity.ListMember(ctx))
 	if err != nil {
 		return fmt.Errorf("delete project: %w", err)
 	}

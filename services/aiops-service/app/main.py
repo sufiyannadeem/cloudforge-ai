@@ -1,6 +1,13 @@
+import hmac
+
+import psycopg
+from starlette.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+
+from .service_identity import frontend_identity
 from .analysis_routes import router as incident_intelligence_router
 from .remediation_routes import router as remediation_router
 from .anomaly_routes import router as anomaly_router
@@ -9,7 +16,7 @@ from .slo_routes import router as slo_router
 
 
 from .analyzer import analyze_alert
-from .database import initialize_database
+from .database import claim_telemetry_assertion, initialize_database
 from .models import (
     AlertmanagerWebhook,
     Incident,
@@ -19,8 +26,45 @@ from .models import (
 from .store import incident_store
 
 
+import logging
+import os
+from .aws_secrets_loader import populate_env_from_secrets_manager
+
+logger = logging.getLogger("cloudforge.aiops")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 1. Attempt Secrets Manager retrieval at startup if configured
+    try:
+        populate_env_from_secrets_manager(service_name="aiops-service")
+    except Exception as exc:
+        logger.error("Failed to load secrets during startup: %s", exc)
+        if os.getenv("APP_ENV") == "production":
+            raise
+
+    # 2. In production, ensure required secrets and configuration are present and valid
+    if os.getenv("APP_ENV") == "production":
+        token = os.getenv("CLOUDFORGE_FRONTEND_KEY", "")
+        if len(token) < 32 or "replace-with" in token.lower():
+            raise RuntimeError(
+                "CLOUDFORGE_FRONTEND_KEY must be configured with at least 32 characters in production"
+            )
+        db_url = os.getenv("DATABASE_URL", "")
+        if not db_url or "localhost" in db_url or "replace-with" in db_url:
+            raise RuntimeError(
+                "DATABASE_URL must be configured with valid production credentials in production"
+            )
+
+        # Mock AI provider is strictly for tests and local development; never allowed in production
+        ai_provider_mode = os.getenv("AI_PROVIDER", "").strip().lower()
+        if ai_provider_mode == "mock":
+            raise RuntimeError(
+                "AI_PROVIDER 'mock' is not permitted in production. "
+                "Production must use an explicit, approved provider (e.g. 'bedrock') or 'disabled'."
+            )
+
+
     initialize_database()
     yield
 
@@ -34,6 +78,41 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+@app.middleware("http")
+async def authorize_requests(request: Request, call_next):
+    path = request.url.path
+    if request.method == "GET" and path in {"/health", "/ready"}:
+        return await call_next(request)
+    if request.method == "POST" and path == "/api/v1/alerts":
+        key = os.getenv("CLOUDFORGE_ALERTMANAGER_KEY", "")
+        supplied = request.headers.get("Authorization", "")
+        if (
+            len(key.encode()) < 32 or "replace-with" in key.lower()
+            or key in {os.getenv("CLOUDFORGE_FRONTEND_KEY"), os.getenv("CLOUDFORGE_AIOPS_DEPLOYMENT_KEY")}
+            or not hmac.compare_digest(supplied.encode(), f"Bearer {key}".encode())
+        ):
+            return JSONResponse({"detail": "Alertmanager identity required"}, status_code=401)
+        return await call_next(request)
+
+    try:
+        claims = frontend_identity(request, "aiops")
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if claims["role"] == "developer":
+        return JSONResponse({"detail": "Operator permission required"}, status_code=403)
+    if request.method == "GET" and path in {
+        "/api/v1/slo/summary", "/api/v1/slo/definitions", "/api/v1/anomalies/summary",
+    }:
+        try:
+            claimed = await run_in_threadpool(claim_telemetry_assertion, claims["nonce"], claims["exp"])
+        except (psycopg.Error, RuntimeError):
+            return JSONResponse({"detail": "Telemetry authorization unavailable"}, status_code=503)
+        if not claimed:
+            return JSONResponse({"detail": "Invalid or replayed service identity"}, status_code=401)
+    request.state.human_identity = claims
+    return await call_next(request)
+
 
 app.include_router(
     incident_intelligence_router
@@ -215,8 +294,9 @@ def get_incident_statistics() -> IncidentStatsResponse:
 def acknowledge_incident(
     incident_id: str,
     payload: AcknowledgeIncidentRequest,
+    http_request: Request,
 ) -> Incident:
-    acknowledged_by = payload.acknowledged_by.strip()
+    acknowledged_by = http_request.state.human_identity["sub"]
 
     if not acknowledged_by:
         raise HTTPException(
@@ -244,8 +324,9 @@ def acknowledge_incident(
 def resolve_incident(
     incident_id: str,
     request: ResolveIncidentRequest,
+    http_request: Request,
 ) -> Incident:
-    resolved_by = request.resolved_by.strip()
+    resolved_by = http_request.state.human_identity["sub"]
     resolution_notes = request.resolution_notes.strip()
 
     if not resolved_by:

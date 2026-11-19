@@ -11,6 +11,7 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 var (
@@ -59,6 +60,7 @@ func (s *ResourceService) Create(
 	resource := model.InfrastructureResource{
 		ID:                 uuid.New(),
 		ProjectID:          projectID,
+		RequestedBy:        identity.FromContext(ctx).Subject,
 		Name:               strings.TrimSpace(input.Name),
 		Description:        strings.TrimSpace(input.Description),
 		ResourceType:       strings.TrimSpace(input.ResourceType),
@@ -139,7 +141,7 @@ func (s *ResourceService) Update(
 
 	// Prevent edits that could invalidate a generated plan or misrepresent
 	// infrastructure that is already provisioned.
-	if !canUpdateProvisioningFields(resource.Status) &&
+	if (!canUpdateProvisioningFields(resource.Status) || resource.AWSLastVerifiedAt != nil || resource.TerraformResourceID != "") &&
 		hasProvisioningSensitiveUpdate(input) {
 		return model.InfrastructureResource{}, ErrProvisioningFieldsLocked
 	}
@@ -228,7 +230,8 @@ func (s *ResourceService) Delete(
 		model.ResourceStatusPlanning,
 		model.ResourceStatusAwaitingApproval,
 		model.ResourceStatusAwaitingDestroyApproval,
-		model.ResourceStatusDestroying:
+		model.ResourceStatusDestroying,
+		model.ResourceStatusDestroyFailed:
 		return errors.New(
 			"cannot delete an infrastructure resource while it is active or provisioning",
 		)

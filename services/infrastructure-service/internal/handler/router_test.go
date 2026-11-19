@@ -8,7 +8,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"context"
+	"crypto/sha256"
+	"fmt"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
+	"time"
 )
 
 func newRouterTestHandler(
@@ -393,74 +398,51 @@ func createRouterTestResource() model.InfrastructureResource {
 	}
 }
 
-func TestAuthenticatedRouterRejectsMissingAndInvalidToken(t *testing.T) {
-	resourceHandler := newRouterTestHandler(&mockResourceManager{})
-	router := NewRouterWithInternalToken(resourceHandler, "01234567890123456789012345678901")
-
-	for _, token := range []string{"", "wrong-token"} {
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/resources", nil)
-		if token != "" {
-			request.Header.Set("X-CloudForge-Internal-Token", token)
+func TestInfrastructureRBACAndApprovalReplay(t *testing.T) {
+	const key = "test-infrastructure-key-at-least-32-bytes"
+	used := map[string]bool{}
+	router := NewAuthenticatedRouter(newRouterTestHandler(&mockResourceManager{}), key,
+		func(_ context.Context, caller identity.Claims) error {
+			if caller.Subject != "verified-operator" {
+				t.Fatal("forged actor reached approval processing")
+			}
+			if used[caller.Nonce] {
+				return identity.ErrReplay
+			}
+			used[caller.Nonce] = true
+			return nil
+		})
+	id := uuid.NewString()
+	apply := "/api/v1/resources/" + id + "/apply"
+	body := `{"plan_hash":"test"}`
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+	now := time.Now().Unix()
+	for _, tc := range []struct {
+		method, path, role, sentBody string
+		status                       int
+	}{
+		{"GET", "/health", "", "", 200},
+		{"GET", "/api/v1/resources", "", "", 401},
+		{"POST", "/api/v1/resources", "sre", "", 403},
+		{"DELETE", "/api/v1/resources/" + id, "developer", "", 403},
+		{"POST", apply, "platform-engineer", "changed", 403},
+		{"POST", apply, "platform-engineer", body, 200},
+		{"POST", apply, "platform-engineer", body, 409},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.sentBody))
+		req.Header.Set("X-CloudForge-Role", "platform-engineer")
+		req.Header.Set("X-CloudForge-Actor", "forged")
+		if tc.role != "" {
+			req.Header.Set(identity.Header, identity.Sign(identity.Claims{
+				Issuer: "frontend", Audience: "infrastructure", Role: tc.role, Subject: "verified-operator",
+				Method: tc.method, Target: req.URL.RequestURI(), Issued: now, Expiry: now + 25,
+				Nonce: "0123456789abcdef0123456789abcdef", Body: digest,
+			}, key))
 		}
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusUnauthorized {
-			t.Fatalf("token %q: expected 401, got %d", token, recorder.Code)
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != tc.status {
+			t.Errorf("%s %s as %q got %d want %d", tc.method, tc.path, tc.role, res.Code, tc.status)
 		}
-	}
-}
-
-func TestAuthenticatedRouterAllowsHealthWithoutToken(t *testing.T) {
-	resourceHandler := newRouterTestHandler(&mockResourceManager{})
-	router := NewRouterWithInternalToken(resourceHandler, "01234567890123456789012345678901")
-	request := httptest.NewRequest(http.MethodGet, "/health", nil)
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected health endpoint to return 200, got %d", recorder.Code)
-	}
-}
-
-func TestAuthenticatedRouterAllowsValidToken(t *testing.T) {
-	resourceHandler := newRouterTestHandler(&mockResourceManager{})
-	token := "01234567890123456789012345678901"
-	router := NewRouterWithInternalToken(resourceHandler, token)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/resources?limit=10", nil)
-	request.Header.Set("X-CloudForge-Internal-Token", token)
-	request.Header.Set("X-CloudForge-Role", "viewer")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected valid token to return 200, got %d", recorder.Code)
-	}
-}
-
-func TestAuthenticatedRouterRejectsViewerMutation(t *testing.T) {
-	resourceHandler := newRouterTestHandler(&mockResourceManager{})
-	token := "01234567890123456789012345678901"
-	router := NewRouterWithInternalToken(resourceHandler, token)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/resources", strings.NewReader(`{}`))
-	request.Header.Set("X-CloudForge-Internal-Token", token)
-	request.Header.Set("X-CloudForge-Role", "viewer")
-	request.Header.Set("X-CloudForge-Actor", "test-operator")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected viewer mutation to return 403, got %d", recorder.Code)
-	}
-}
-
-func TestAuthenticatedRouterRejectsDevOpsApply(t *testing.T) {
-	resourceHandler := newRouterTestHandler(&mockResourceManager{})
-	token := "01234567890123456789012345678901"
-	router := NewRouterWithInternalToken(resourceHandler, token)
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/resources/resource-id/apply", strings.NewReader(`{"plan_hash":"hash"}`))
-	request.Header.Set("X-CloudForge-Internal-Token", token)
-	request.Header.Set("X-CloudForge-Role", "devops")
-	request.Header.Set("X-CloudForge-Actor", "test-operator")
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusForbidden {
-		t.Fatalf("expected DevOps apply to return 403, got %d", recorder.Code)
 	}
 }

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
-from .aws_finops_client import AWSFinOpsClient
+from .aws_finops_client import AWSFinOpsClient, AWSFinOpsError
 from .finops_analyzer import FinOpsAnalyzer
 from .finops_cost_intelligence import (
     BudgetResponse,
@@ -19,6 +20,8 @@ from .finops_cost_intelligence import (
     detect_cost_anomalies,
     previous_period,
 )
+from .finops_models import AWSFinOpsSnapshot, ResourceType
+from .finops_optimization_models import EC2Observation
 
 
 class AWSFinOpsService:
@@ -73,8 +76,11 @@ class AWSFinOpsService:
                         resource.resource_type.value
                     ),
                     "service": resource.service,
-                    "estimated_monthly_cost": 0.0,
-                    "idle": False,
+                    "estimated_monthly_cost": None,
+                    "actual_monthly_cost": None,
+                    "cost_status": "unavailable",
+                    "idle": None,
+                    "utilization_status": "unavailable",
                     "tags": resource.tags,
                     "region": resource.region,
                 }
@@ -87,9 +93,19 @@ class AWSFinOpsService:
         )
 
         report.resources = resources
+        report.service_costs = snapshot.service_costs
         report.cost_data_source = (
             "aws-cost-explorer"
         )
+        report.resource_data_source = (
+            snapshot.resource_data_source
+        )
+
+        if snapshot.service_costs:
+            report.summary.total_actual_monthly_cost = round(
+                sum(c.amount for c in snapshot.service_costs),
+                2,
+            )
 
         return report
 
@@ -188,19 +204,11 @@ class AWSFinOpsService:
             for point in raw_points
         ]
 
-        anomalies_resp = detect_cost_anomalies(
+        return detect_cost_anomalies(
             points=points,
             start_date=start_date,
             end_date=end_date,
             threshold=threshold,
-        )
-        anomalies = anomalies_resp.anomalies
-
-        return CostAnomalyResponse(
-            start_date=start_date,
-            end_date=end_date,
-            threshold=threshold,
-            anomalies=anomalies,
         )
 
     def get_cost_attribution(
@@ -249,6 +257,58 @@ class AWSFinOpsService:
                 ),
                 entries=entries,
             )
+
+        if normalized in ("resource", "resource_id", "resource-id"):
+            try:
+                costs = self.client.get_resource_costs(
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                if not costs:
+                    return CostAttributionResponse(
+                        start_date=start_date,
+                        end_date=end_date,
+                        dimension="resource_id",
+                        total_cost=0.0,
+                        entries=[],
+                        available=False,
+                        status_message=(
+                            "Resource-level cost attribution returned no records. "
+                            "AWS Cost Explorer Hourly and Resource Level Data may not be enabled."
+                        ),
+                    )
+
+                entries = [
+                    CostAttribution(
+                        dimension="resource_id",
+                        value=str(item["resource_id"]),
+                        amount=float(item["amount"]),
+                        currency=str(item.get("currency", "USD")),
+                    )
+                    for item in costs
+                ]
+                entries.sort(key=lambda e: e.amount, reverse=True)
+                return CostAttributionResponse(
+                    start_date=start_date,
+                    end_date=end_date,
+                    dimension="resource_id",
+                    total_cost=round(
+                        sum(item.amount for item in entries),
+                        6,
+                    ),
+                    entries=entries,
+                    available=True,
+                )
+            except AWSFinOpsError as exc:
+                return CostAttributionResponse(
+                    start_date=start_date,
+                    end_date=end_date,
+                    dimension="resource_id",
+                    total_cost=0.0,
+                    entries=[],
+                    available=False,
+                    status_message=f"Resource-level cost attribution is unavailable: {exc}",
+                )
 
         tag_key = tag_map.get(
             normalized
@@ -463,3 +523,88 @@ class AWSFinOpsService:
         if eval_percent >= 50:
             return BudgetStatus.HEALTHY
         return BudgetStatus.HEALTHY
+
+    def get_ec2_utilization(
+        self,
+        *,
+        instance_id: str,
+        start_time: datetime | str | None = None,
+        end_time: datetime | str | None = None,
+        period_seconds: int = 3600,
+        stat: str = "Average",
+    ) -> dict[str, Any]:
+        """
+        Query real CloudWatch CPU utilization metrics for a given EC2 instance.
+        """
+        if start_time is None or end_time is None:
+            now = datetime.now(timezone.utc)
+            start_time = now - timedelta(days=7)
+            end_time = now
+
+        return self.client.get_ec2_cpu_utilization(
+            instance_id=instance_id,
+            start_time=start_time,
+            end_time=end_time,
+            period_seconds=period_seconds,
+            stat=stat,
+        )
+
+    def collect_ec2_optimization_observations(
+        self,
+        *,
+        snapshot: AWSFinOpsSnapshot | None = None,
+        start_time: datetime | str | None = None,
+        end_time: datetime | str | None = None,
+        period_seconds: int = 3600,
+    ) -> list[EC2Observation]:
+        """
+        Build EC2Observation instances using real CloudWatch metric observations.
+        Missing CloudWatch telemetry is handled safely without inventing utilization data.
+        """
+        if snapshot is None:
+            start_date, end_date = self.default_date_range()
+            snapshot = self.client.collect_snapshot(
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        if start_time is None or end_time is None:
+            now = datetime.now(timezone.utc)
+            start_time = now - timedelta(days=7)
+            end_time = now
+
+        observations: list[EC2Observation] = []
+
+        for resource in snapshot.resources:
+            if resource.resource_type == ResourceType.EC2:
+                arn = resource.resource_arn
+                instance_id = arn.split("/")[-1] if "/" in arn else arn
+
+                try:
+                    metric_data = self.client.get_ec2_cpu_utilization(
+                        instance_id=instance_id,
+                        start_time=start_time,
+                        end_time=end_time,
+                        period_seconds=period_seconds,
+                    )
+                    cpu_pct = metric_data.get("cpu_utilization_percent")
+                    util_available = bool(
+                        metric_data.get("utilization_available", False)
+                    )
+                    dp_count = metric_data.get("datapoints_count")
+                except AWSFinOpsError:
+                    cpu_pct = None
+                    util_available = False
+                    dp_count = 0
+
+                observations.append(
+                    EC2Observation(
+                        resource_id=instance_id,
+                        cpu_utilization_percent=cpu_pct,
+                        utilization_available=util_available,
+                        period_seconds=period_seconds,
+                        datapoints_count=dp_count,
+                    )
+                )
+
+        return observations

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
+	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/terraform"
 )
 
@@ -391,5 +392,43 @@ func TestGetPlanReturnsPlanDetails(t *testing.T) {
 	}
 	if details.PlanSummary != "Terraform plan: 1 to add" {
 		t.Fatalf("expected plan summary, got %q", details.PlanSummary)
+	}
+}
+
+type approvalRequiredStore struct {
+	*mockResourceStore
+	hasApproval bool
+}
+
+func (s *approvalRequiredStore) ClaimReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation, actor string) error {
+	if !s.hasApproval {
+		return repository.ErrResourceConflict
+	}
+	s.hasApproval = false
+	return s.mockResourceStore.ClaimReviewedPlan(ctx, resource, operation, actor)
+}
+
+func TestApplyOnlyRunsAfterApprovalClaim(t *testing.T) {
+	id := uuid.New()
+	path, hash := writePlanFile(t, t.TempDir(), "plan.tfplan", "saved plan bytes")
+	expiry := time.Now().Add(time.Hour)
+	store := &approvalRequiredStore{mockResourceStore: &mockResourceStore{
+		resource: model.InfrastructureResource{
+			ID: id, Status: model.ResourceStatusAwaitingApproval, PlanPath: path,
+			PlanHash: hash, ApprovalExpiresAt: &expiry,
+		},
+	}}
+	runner := &mockProvisionRunner{}
+	svc := NewProvisioningService(store, runner)
+	if _, err := svc.Apply(context.Background(), id, hash); !errors.Is(err, repository.ErrResourceConflict) ||
+		runner.applyCalls != 0 {
+		t.Fatalf("an unapproved plan reached Terraform: %v", err)
+	}
+	store.hasApproval = true
+	if _, err := svc.Apply(context.Background(), id, hash); err != nil || runner.applyCalls != 1 {
+		t.Fatalf("approved plan did not execute: %v", err)
+	}
+	if _, err := svc.Apply(context.Background(), id, hash); err == nil || runner.applyCalls != 1 {
+		t.Fatal("approval was replayed")
 	}
 }

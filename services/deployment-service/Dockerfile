@@ -5,6 +5,7 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates
 
+COPY --from=service_identity . /service-identity
 COPY go.mod go.sum ./
 
 RUN go mod download
@@ -18,9 +19,11 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 # Runtime stage
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates wget \
-    && addgroup -S appgroup \
-    && adduser -S appuser -G appgroup
+RUN apk add --no-cache ca-certificates wget kubectl aws-cli \
+    && addgroup -g 1000 -S appgroup \
+    && adduser -u 1000 -S appuser -G appgroup \
+    && mkdir -p /var/lib/cloudforge/kube /home/appuser/.kube /home/appuser/.aws \
+    && chown -R appuser:appgroup /var/lib/cloudforge /home/appuser
 
 COPY --from=builder /deployment-service /usr/local/bin/deployment-service
 

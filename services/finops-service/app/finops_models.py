@@ -28,11 +28,14 @@ class CostFinding(BaseModel):
     resource_type: ResourceType
     service: str
 
-    estimated_monthly_cost: float = 0.0
+    estimated_monthly_cost: float | None = None
+    actual_monthly_cost: float | None = None
+    cost_status: str = "unavailable"
 
     severity: CostSeverity = CostSeverity.INFO
 
-    idle: bool = False
+    idle: bool | None = None
+    utilization_status: str = "unavailable"
     untagged: bool = False
 
     region: str | None = None
@@ -51,6 +54,8 @@ class CostSummary(BaseModel):
 
     total_estimated_monthly_cost: float = 0.0
 
+    total_actual_monthly_cost: float | None = None
+
     idle_monthly_cost: float = 0.0
 
     untagged_resource_count: int = 0
@@ -62,6 +67,10 @@ class CostSummary(BaseModel):
     warning_findings: int = 0
 
     info_findings: int = 0
+
+    unavailable_cost_count: int = 0
+
+    unavailable_utilization_count: int = 0
 
 
 class FinOpsReport(BaseModel):
@@ -78,9 +87,15 @@ class FinOpsReport(BaseModel):
         default_factory=list
     )
 
+    service_costs: list[AWSServiceCost] = Field(
+        default_factory=list
+    )
+
     generated_by: str = "cloudforge-finops"
 
     cost_data_source: str = "local-analysis"
+
+    resource_data_source: str = "aws-resource-groups-tagging-api"
 
 class AWSServiceCost(BaseModel):
     service: str

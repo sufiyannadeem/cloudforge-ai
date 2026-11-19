@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from enum import Enum
-from math import sqrt
+from math import isfinite, sqrt
 from statistics import mean, pstdev
 
 from pydantic import BaseModel, Field
@@ -23,6 +23,7 @@ class CostAnomalySeverity(str, Enum):
 
 
 class CostHistoryPoint(BaseModel):
+    estimated: bool | None = None
     date: str
     amount: float
     currency: str = "USD"
@@ -52,15 +53,20 @@ class CostTrendResponse(BaseModel):
 
 class CostAnomaly(BaseModel):
     date: str
+    currency: str = "USD"
     amount: float
     baseline_mean: float
     baseline_stddev: float
-    z_score: float
+    z_score: float | None
+    estimated: bool | None = None
     severity: CostAnomalySeverity
     reason: str
 
 
 class CostAnomalyResponse(BaseModel):
+    sample_count: int = 0
+    estimated_sample_count: int = 0
+    sufficient_data: bool = False
     start_date: str
     end_date: str
     threshold: float
@@ -81,6 +87,8 @@ class CostAttributionResponse(BaseModel):
     tag_key: str | None = None
     total_cost: float
     entries: list[CostAttribution] = Field(default_factory=list)
+    available: bool = True
+    status_message: str | None = None
 
 
 class BudgetStatus(str, Enum):
@@ -239,7 +247,12 @@ def detect_cost_anomalies(
         else:
             normalized.append(CostHistoryPoint(**pt))
 
-    if len(normalized) < minimum_points:
+    normalized = sorted(
+        {point.date: point for point in normalized if isfinite(point.amount) and point.date}.values(),
+        key=lambda point: point.date,
+    )
+    sufficient = len(normalized) > minimum_points and len({point.currency for point in normalized}) == 1
+    if not sufficient:
         anomalies: list[CostAnomaly] = []
     else:
         values = [p.amount for p in normalized]
@@ -253,23 +266,25 @@ def detect_cost_anomalies(
             if baseline_stddev == 0:
                 if point.amount <= baseline_mean:
                     continue
-                z_score = float("inf") if point.amount > baseline_mean else 0.0
+                z_score = None
             else:
                 z_score = (point.amount - baseline_mean) / baseline_stddev
-            if z_score < threshold:
+            if z_score is not None and z_score < threshold:
                 continue
             severity = (
                 CostAnomalySeverity.CRITICAL
-                if z_score >= 4.0
+                if z_score is None or z_score >= 4.0
                 else CostAnomalySeverity.WARNING
             )
             anomalies.append(
                 CostAnomaly(
                     date=point.date,
+                    currency=point.currency,
                     amount=round(point.amount, 6),
                     baseline_mean=round(baseline_mean, 6),
                     baseline_stddev=round(baseline_stddev, 6),
-                    z_score=round(z_score, 4),
+                    z_score=round(z_score, 4) if z_score is not None else None,
+                    estimated=point.estimated,
                     severity=severity,
                     reason=(
                         "Daily AWS cost is materially above "
@@ -283,6 +298,9 @@ def detect_cost_anomalies(
         start_date=start_date or "",
         end_date=end_date or "",
         threshold=threshold,
+        sample_count=len(normalized),
+        estimated_sample_count=sum(point.estimated is True for point in normalized),
+        sufficient_data=sufficient,
         anomalies=anomalies,
     )
 

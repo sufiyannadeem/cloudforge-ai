@@ -5,6 +5,8 @@ import os
 import urllib.error
 import urllib.request
 
+from .service_identity import deployment_identity, open_deployment
+
 from .remediation_models import RemediationAction
 
 
@@ -40,6 +42,8 @@ class RemediationExecutor:
         incident_id: str,
         target_deployment_id: str | None,
         actor: str,
+        proposal_id: str | None = None,
+        dispatch_token: str | None = None,
     ) -> dict:
         if action == RemediationAction.NO_ACTION:
             return {
@@ -55,10 +59,15 @@ class RemediationExecutor:
                     "target_deployment_id is required"
                 )
 
+            if not proposal_id or not dispatch_token:
+                raise PermissionError("verified deployment dispatch required")
+
             return self._rerun_deployment(
                 target_deployment_id,
                 incident_id,
                 actor,
+                proposal_id,
+                dispatch_token,
             )
 
         if action == RemediationAction.ACKNOWLEDGE_INCIDENT:
@@ -82,15 +91,13 @@ class RemediationExecutor:
         deployment_id: str,
         incident_id: str,
         actor: str,
+        proposal_id: str,
+        dispatch_token: str,
     ) -> dict:
         url = (
             f"{self.base_url}"
             f"/api/v1/deployments/{deployment_id}/remediation-run"
         )
-
-        internal_token = os.getenv("CLOUDFORGE_INTERNAL_API_TOKEN", "")
-        if len(internal_token.encode("utf-8")) < 32:
-            raise RuntimeError("trusted deployment service authentication is not configured")
 
         request = urllib.request.Request(
             url,
@@ -98,16 +105,16 @@ class RemediationExecutor:
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "X-CloudForge-Actor": actor,
                 "X-CloudForge-Incident": incident_id,
-                "X-CloudForge-Internal-Token": internal_token,
-                "X-CloudForge-Remediation": "human-approved",
+                "X-CloudForge-Identity": deployment_identity(url, "POST"),
+                "X-CloudForge-Proposal": proposal_id,
+                "X-CloudForge-Dispatch": dispatch_token,
             },
             data=b"",
         )
 
         try:
-            with urllib.request.urlopen(
+            with open_deployment(
                 request,
                 timeout=self.timeout_seconds,
             ) as response:
@@ -130,14 +137,8 @@ class RemediationExecutor:
                 }
 
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode(
-                "utf-8",
-                errors="replace",
-            )
-
             raise RuntimeError(
-                "deployment rerun rejected with HTTP "
-                f"{exc.code}: {body}"
+                f"deployment remediation rejected with HTTP {exc.code}"
             ) from exc
 
         except urllib.error.URLError as exc:

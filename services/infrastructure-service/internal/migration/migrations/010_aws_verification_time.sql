@@ -1,0 +1,1 @@
+ALTER TABLE infrastructure_resources ADD COLUMN aws_last_verified_at TIMESTAMPTZ;

@@ -14,6 +14,8 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/service"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
+	"net/url"
 )
 
 type ProjectHandler struct {
@@ -119,7 +121,7 @@ func (h *ProjectHandler) createProject(
 	writeJSON(
 		w,
 		http.StatusCreated,
-		project,
+		publicProject(r, project),
 	)
 }
 
@@ -165,6 +167,10 @@ func (h *ProjectHandler) listProjects(
 		return
 	}
 
+	for i := range projects {
+		projects[i] = *publicProject(r, &projects[i])
+	}
+
 	// Reflect the service's default pagination limit.
 	if limit == 0 {
 		limit = service.DefaultPageLimit
@@ -199,7 +205,7 @@ func (h *ProjectHandler) getProject(
 	writeJSON(
 		w,
 		http.StatusOK,
-		project,
+		publicProject(r, project),
 	)
 }
 
@@ -227,7 +233,7 @@ func (h *ProjectHandler) updateProject(
 	writeJSON(
 		w,
 		http.StatusOK,
-		project,
+		publicProject(r, project),
 	)
 }
 
@@ -246,6 +252,24 @@ func (h *ProjectHandler) deleteProject(
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func publicProject(r *http.Request, project *model.Project) *model.Project {
+	if project == nil || identity.FromContext(r.Context()).Role == "platform-engineer" {
+		return project
+	}
+	sanitized := *project
+	parsed, err := url.Parse(project.RepositoryURL)
+	if err != nil || parsed.Host == "" {
+		sanitized.RepositoryURL = ""
+	} else {
+		parsed.User = nil
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		parsed.ForceQuery = false
+		sanitized.RepositoryURL = parsed.String()
+	}
+	return &sanitized
 }
 
 func decodeJSONBody(

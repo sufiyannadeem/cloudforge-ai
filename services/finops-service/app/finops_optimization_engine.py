@@ -58,7 +58,8 @@ class FinOpsOptimizationEngine:
         # ---------------------------------------------------------
         for ec2 in observation.ec2:
             if (
-                ec2.cpu_utilization_percent is not None
+                ec2.utilization_available
+                and ec2.cpu_utilization_percent is not None
                 and ec2.cpu_utilization_percent < 20.0
             ):
                 savings = self._ec2_savings(ec2)
@@ -302,7 +303,8 @@ class FinOpsOptimizationEngine:
         # CPU over-requesting
         # ---------------------------------------------------------
         if (
-            workload.cpu_request_cores > 0
+            workload.cpu_usage_available
+            and workload.cpu_request_cores > 0
             and workload.cpu_usage_cores >= 0
             and workload.cpu_request_cores
             / max(workload.cpu_usage_cores, 0.001)
@@ -341,7 +343,8 @@ class FinOpsOptimizationEngine:
         # CPU request headroom
         # ---------------------------------------------------------
         if (
-            workload.cpu_request_cores > 0
+            workload.cpu_usage_available
+            and workload.cpu_request_cores > 0
             and workload.cpu_usage_cores
             > workload.cpu_request_cores * self.CPU_UNDER_REQUEST_RATIO
         ):
@@ -373,7 +376,8 @@ class FinOpsOptimizationEngine:
         # Memory over-requesting
         # ---------------------------------------------------------
         if (
-            workload.memory_request_bytes > 0
+            workload.memory_usage_available
+            and workload.memory_request_bytes > 0
             and workload.memory_request_bytes
             / max(workload.memory_usage_bytes, 1)
             >= self.MEMORY_OVER_REQUEST_RATIO
@@ -412,6 +416,8 @@ class FinOpsOptimizationEngine:
         # ---------------------------------------------------------
         if (
             workload.replicas > 1
+            and workload.cpu_usage_available
+            and workload.memory_usage_available
             and workload.cpu_usage_cores == 0
             and workload.memory_usage_bytes == 0
         ):

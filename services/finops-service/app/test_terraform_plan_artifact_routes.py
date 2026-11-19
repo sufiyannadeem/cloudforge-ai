@@ -1,13 +1,13 @@
 import os
 
-os.environ.setdefault("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+os.environ.setdefault("CLOUDFORGE_FRONTEND_KEY", "test-only-internal-token-32-bytes-minimum")
 
-from fastapi.testclient import TestClient
+from app.identity_test_helpers import SignedTestClient
 
 from app.main import app
 
 
-client = TestClient(app)
+client = SignedTestClient(app)
 
 
 def create_plan() -> dict:
@@ -34,7 +34,7 @@ def create_plan() -> dict:
 def test_plan_artifact_endpoint_requires_role() -> None:
     response = client.post(
         "/api/v1/terraform/plan-artifact-cost-estimate",
-        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"]},
+        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_FRONTEND_KEY"]},
         json={
             "source": "github-actions",
             "workspace": "cloudforge",
@@ -44,15 +44,14 @@ def test_plan_artifact_endpoint_requires_role() -> None:
         },
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_plan_artifact_endpoint_returns_artifact_and_coverage() -> None:
     response = client.post(
         "/api/v1/terraform/plan-artifact-cost-estimate",
         headers={
-            "X-CloudForge-Role": "platform-engineer",
-            "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
+            "X-Test-Human-Role": "platform-engineer",
         },
         json={
             "source": "github-actions",
@@ -103,8 +102,7 @@ def test_plan_artifact_endpoint_rejects_malformed_plan() -> None:
     response = client.post(
         "/api/v1/terraform/plan-artifact-cost-estimate",
         headers={
-            "X-CloudForge-Role": "platform-engineer",
-            "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
+            "X-Test-Human-Role": "platform-engineer",
         },
         json={
             "source": "github-actions",

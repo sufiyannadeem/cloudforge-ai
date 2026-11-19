@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from typing import Any
 
 import boto3
@@ -50,29 +51,41 @@ class AWSFinOpsClient:
         self,
         *,
         region: str = "eu-west-1",
+        client_config=None,
     ) -> None:
         self.region = region
+        options = {"config": client_config} if client_config is not None else {}
 
         self.sts = boto3.client(
             "sts",
             region_name=region,
+            **options,
         )
 
         # Cost Explorer is queried through us-east-1.
         self.cost_explorer = boto3.client(
             "ce",
             region_name="us-east-1",
+            **options,
         )
 
         # AWS Budgets is a global account-level billing API.
         self.budgets = boto3.client(
             "budgets",
             region_name="us-east-1",
+            **options,
         )
 
         self.tagging = boto3.client(
             "resourcegroupstaggingapi",
             region_name=region,
+            **options,
+        )
+
+        self.cloudwatch = boto3.client(
+            "cloudwatch",
+            region_name=region,
+            **options,
         )
 
     def get_account_id(self) -> str:
@@ -259,30 +272,26 @@ class AWSFinOpsClient:
                 )
             )
 
-            amount = float(
-                result.get(
-                    "Total",
-                    {},
-                )
-                .get(
-                    "UnblendedCost",
-                    {},
-                )
-                .get(
-                    "Amount",
-                    0,
-                )
-                or 0
-            )
+            cost = result.get("Total", {}).get("UnblendedCost", {})
+            try:
+                amount = float(cost["Amount"])
+                currency = cost["Unit"]
+                day = date.fromisoformat(start)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not isinstance(currency, str) or not currency or not isfinite(amount):
+                continue
+            estimated = result.get("Estimated")
 
             history.append(
                 {
-                    "date": start,
+                    "date": day.isoformat(),
                     "amount": round(
                         amount,
                         6,
                     ),
-                    "currency": "USD",
+                    "currency": currency,
+                    "estimated": estimated if isinstance(estimated, bool) else None,
                 }
             )
 
@@ -380,6 +389,206 @@ class AWSFinOpsClient:
                 reverse=True,
             )
         ]
+
+    def get_resource_costs(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Query AWS Cost Explorer for resource-level cost attribution.
+
+        Resource-level grouping in Cost Explorer requires Hourly and Resource-Level
+        Data to be enabled on the AWS account. If not enabled or unsupported,
+        an AWSFinOpsError is raised.
+        """
+        try:
+            results = self._get_cost_and_usage(
+                start_date=start_date,
+                end_date=end_date,
+                granularity="DAILY",
+                group_by=[
+                    {
+                        "Type": "DIMENSION",
+                        "Key": "RESOURCE_ID",
+                    }
+                ],
+            )
+        except AWSFinOpsError as exc:
+            raise AWSFinOpsError(
+                "Resource-level cost attribution is unavailable: "
+                "AWS Cost Explorer Hourly and Resource Level Data is not enabled "
+                f"or not supported for this account ({exc})."
+            ) from exc
+
+        totals: dict[str, float] = {}
+
+        for result in results:
+            for group in result.get(
+                "Groups",
+                [],
+            ):
+                keys = group.get(
+                    "Keys",
+                    [],
+                )
+                if not keys:
+                    continue
+
+                resource_id = str(keys[0])
+                amount = float(
+                    group.get(
+                        "Metrics",
+                        {},
+                    )
+                    .get(
+                        "UnblendedCost",
+                        {},
+                    )
+                    .get(
+                        "Amount",
+                        0,
+                    )
+                    or 0
+                )
+                totals[resource_id] = (
+                    totals.get(resource_id, 0.0) + amount
+                )
+
+        return [
+            {
+                "resource_id": r_id,
+                "amount": round(
+                    amount,
+                    6,
+                ),
+                "currency": "USD",
+            }
+            for r_id, amount in sorted(
+                totals.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+        ]
+
+    def get_ec2_cpu_utilization(
+        self,
+        *,
+        instance_id: str,
+        start_time: datetime | str,
+        end_time: datetime | str,
+        period_seconds: int = 3600,
+        stat: str = "Average",
+    ) -> dict[str, Any]:
+        """
+        Query real CloudWatch metrics for EC2 CPU utilization.
+
+        - Namespace: AWS/EC2
+        - MetricName: CPUUtilization
+        - Dimension: InstanceId
+        - Unit: Percent
+        - Period: Configurable period in seconds (default: 3600s / 1 hour)
+        - Missing-data handling: Returns None for cpu_utilization_percent with
+          utilization_available=False if no datapoints are returned.
+        """
+        instance_id = instance_id.strip()
+        if not instance_id:
+            raise AWSFinOpsError(
+                "Instance ID is required for CloudWatch metrics query."
+            )
+
+        if isinstance(start_time, str):
+            start_dt = datetime.fromisoformat(
+                start_time.replace("Z", "+00:00")
+            )
+        else:
+            start_dt = start_time
+
+        if isinstance(end_time, str):
+            end_dt = datetime.fromisoformat(
+                end_time.replace("Z", "+00:00")
+            )
+        else:
+            end_dt = end_time
+
+        try:
+            response = self.cloudwatch.get_metric_statistics(
+                Namespace="AWS/EC2",
+                MetricName="CPUUtilization",
+                Dimensions=[
+                    {
+                        "Name": "InstanceId",
+                        "Value": instance_id,
+                    }
+                ],
+                StartTime=start_dt,
+                EndTime=end_dt,
+                Period=period_seconds,
+                Statistics=[stat],
+                Unit="Percent",
+            )
+        except (
+            ClientError,
+            BotoCoreError,
+        ) as exc:
+            raise AWSFinOpsError(
+                f"Unable to query CloudWatch CPU utilization for {instance_id}: {exc}"
+            ) from exc
+
+        datapoints = response.get("Datapoints", [])
+
+        if not datapoints:
+            return {
+                "instance_id": instance_id,
+                "metric": "CPUUtilization",
+                "unit": "Percent",
+                "period_seconds": period_seconds,
+                "stat": stat,
+                "datapoints_count": 0,
+                "cpu_utilization_percent": None,
+                "utilization_available": False,
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "reason": "No CloudWatch metric datapoints found in the specified observation window.",
+            }
+
+        values = [
+            float(dp[stat])
+            for dp in datapoints
+            if stat in dp and dp[stat] is not None
+        ]
+
+        if not values:
+            return {
+                "instance_id": instance_id,
+                "metric": "CPUUtilization",
+                "unit": "Percent",
+                "period_seconds": period_seconds,
+                "stat": stat,
+                "datapoints_count": len(datapoints),
+                "cpu_utilization_percent": None,
+                "utilization_available": False,
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
+                "reason": f"CloudWatch datapoints present but missing statistic '{stat}'.",
+            }
+
+        avg_value = sum(values) / len(values)
+
+        return {
+            "instance_id": instance_id,
+            "metric": "CPUUtilization",
+            "unit": "Percent",
+            "period_seconds": period_seconds,
+            "stat": stat,
+            "datapoints_count": len(datapoints),
+            "cpu_utilization_percent": round(avg_value, 2),
+            "utilization_available": True,
+            "start_time": start_dt.isoformat(),
+            "end_time": end_dt.isoformat(),
+            "reason": f"Observed across {len(datapoints)} CloudWatch period(s).",
+        }
 
     def get_budgets(
         self,

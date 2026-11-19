@@ -82,6 +82,7 @@ class FakeRemediationStore:
         proposal_id: str,
         executed_by: str,
         idempotency_key: str,
+        dispatch_token_hash: str | None,
     ) -> RemediationProposal | None:
 
         if self.proposal.id != proposal_id:
@@ -257,6 +258,8 @@ class FakeExecutor:
         incident_id: str,
         target_deployment_id: str | None,
         actor: str,
+        proposal_id: str | None = None,
+        dispatch_token: str | None = None,
     ):
 
         self.calls += 1

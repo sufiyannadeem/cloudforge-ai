@@ -26,6 +26,7 @@ type DeploymentStore interface {
 	Update(
 		ctx context.Context,
 		deployment model.Deployment,
+		expected model.Deployment,
 	) error
 
 	Delete(

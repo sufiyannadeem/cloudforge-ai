@@ -12,6 +12,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 type DeploymentHandler struct {
@@ -254,10 +255,13 @@ func writeServiceError(
 	err error,
 ) {
 	switch {
+	case errors.Is(err, identity.ErrProjectHidden), errors.Is(err, identity.ErrProjectWrite), errors.Is(err, identity.ErrProjectUnavailable):
+		writeError(w, identity.AccessStatus(err), "project access denied")
 	case errors.Is(err, repository.ErrDeploymentNotFound):
 		writeError(w, http.StatusNotFound, "deployment not found")
 
-	case errors.Is(err, service.ErrNoPreviousSuccessfulDeployment):
+	case errors.Is(err, service.ErrNoPreviousSuccessfulDeployment),
+		errors.Is(err, repository.ErrDeploymentConflict):
 		writeError(w, http.StatusConflict, err.Error())
 
 	case errors.Is(err, service.ErrInvalidProjectID),

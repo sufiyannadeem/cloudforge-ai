@@ -19,11 +19,6 @@ type DeploymentAttemptStore interface {
 		attempt model.DeploymentAttempt,
 	) error
 
-	GetNextAttemptNumber(
-		ctx context.Context,
-		deploymentID uuid.UUID,
-	) (int, error)
-
 	ListByDeploymentID(
 		ctx context.Context,
 		deploymentID uuid.UUID,

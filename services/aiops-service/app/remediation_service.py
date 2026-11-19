@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
+
 from .remediation_executor import RemediationExecutor
 from .remediation_models import (
     PolicyDecision,
@@ -108,6 +111,7 @@ class RemediationService:
         self,
         proposal_id: str,
         approved_by: str,
+        approved_role: str,
     ) -> RemediationProposal:
         proposal = self.remediations.get(proposal_id)
 
@@ -124,6 +128,7 @@ class RemediationService:
         result = self.remediations.move_to_approved(
             proposal_id,
             approved_by,
+            approved_role,
         )
 
         if result is None:
@@ -239,10 +244,27 @@ class RemediationService:
                 "blocked remediation proposals cannot execute"
             )
 
+        incident = self.incidents.get(proposal.incident_id)
+        if incident is None:
+            raise LookupError("incident not found")
+        policy = self.policy.evaluate(
+            proposal.action,
+            incident_status=incident.status.value,
+            target_deployment_id=proposal.target_deployment_id,
+        )
+        if not policy.executable or policy.decision == PolicyDecision.BLOCKED:
+            raise PermissionError("current remediation policy does not allow execution")
+        dispatch_token = (
+            secrets.token_urlsafe(32)
+            if proposal.action == RemediationAction.RERUN_DEPLOYMENT
+            else None
+        )
+
         executing = self.remediations.claim_execution(
             proposal_id,
             executed_by,
             idempotency_key,
+            hashlib.sha256(dispatch_token.encode()).hexdigest() if dispatch_token else None,
         )
 
         if executing is None:
@@ -306,6 +328,8 @@ class RemediationService:
                         executing.target_deployment_id
                     ),
                     actor=executed_by,
+                    proposal_id=proposal_id,
+                    dispatch_token=dispatch_token,
                 )
 
                 verifying = self.remediations.mark_verifying(

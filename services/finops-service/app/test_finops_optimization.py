@@ -31,6 +31,7 @@ def test_cpu_over_request():
                 cpu_usage_cores=0.2,
                 memory_request_bytes=512 * 1024 * 1024,
                 memory_usage_bytes=256 * 1024 * 1024,
+                cpu_usage_available=True,
             )
         ]
     )
@@ -63,6 +64,7 @@ def test_memory_over_request():
                 cpu_usage_cores=0.1,
                 memory_request_bytes=2 * 1024 * 1024 * 1024,
                 memory_usage_bytes=256 * 1024 * 1024,
+                memory_usage_available=True,
             )
         ]
     )
@@ -87,6 +89,10 @@ def test_idle_workload():
                 namespace="production",
                 workload="unused-service",
                 replicas=2,
+                cpu_usage_cores=0.0,
+                memory_usage_bytes=0.0,
+                cpu_usage_available=True,
+                memory_usage_available=True,
             )
         ]
     )
@@ -166,9 +172,11 @@ def test_underutilized_node():
                 cpu_allocatable_cores=4,
                 cpu_requested_cores=1,
                 cpu_usage_cores=0.5,
+                cpu_usage_available=True,
                 memory_allocatable_bytes=8 * 1024**3,
                 memory_requested_bytes=2 * 1024**3,
                 memory_usage_bytes=1 * 1024**3,
+                memory_usage_available=True,
             )
         ]
     )
@@ -194,9 +202,11 @@ def test_high_node_utilization():
                 cpu_allocatable_cores=4,
                 cpu_requested_cores=4,
                 cpu_usage_cores=3.8,
+                cpu_usage_available=True,
                 memory_allocatable_bytes=8 * 1024**3,
                 memory_requested_bytes=7 * 1024**3,
                 memory_usage_bytes=7 * 1024**3,
+                memory_usage_available=True,
             )
         ]
     )
@@ -321,6 +331,7 @@ def test_all_actions_require_human_approval():
                 replicas=2,
                 cpu_request_cores=1,
                 cpu_usage_cores=0.1,
+                cpu_usage_available=True,
             )
         ]
     )

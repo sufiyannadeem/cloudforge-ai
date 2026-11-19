@@ -8,6 +8,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Callable
 
+from .service_identity import deployment_identity, open_deployment
+
 
 class RemediationVerificationError(RuntimeError):
     pass
@@ -233,16 +235,18 @@ class DeploymentVerificationClient:
         )
 
     def _http_get_json(self, path: str) -> dict:
+        url = f"{self.base_url}{path}"
         request = urllib.request.Request(
-            f"{self.base_url}{path}",
+            url,
             method="GET",
             headers={
                 "Accept": "application/json",
+                "X-CloudForge-Identity": deployment_identity(url, "GET"),
             },
         )
 
         try:
-            with urllib.request.urlopen(
+            with open_deployment(
                 request,
                 timeout=self.timeout_seconds,
             ) as response:

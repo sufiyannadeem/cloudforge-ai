@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,8 +37,19 @@ for arg in "$@"; do
     -out=*) printf 'plan-for:%s' "$*" > "${arg#-out=}" ;;
   esac
 done
+case "$*" in
+  "apply "*destroy.tfplan) touch .test-destroyed ;;
+esac
 if [ "$1" = "show" ]; then
-  echo "Plan: 1 to add, 0 to change, 0 to destroy."
+  if [ "$2" = "-json" ] && [ "$#" = 2 ]; then
+    if [ -f .test-destroyed ]; then
+      printf '%s\n' '{"format_version":"1.0"}'
+    else
+      printf '%s\n' '{"values":{"root_module":{"resources":[{"address":"aws_s3_bucket.this","mode":"managed","type":"aws_s3_bucket","provider_name":"registry.terraform.io/hashicorp/aws","values":{"id":"verified-test-bucket"}}]}}}'
+    fi
+  else
+    echo "Plan: 1 to add, 0 to change, 0 to destroy."
+  fi
 fi
 exit 0
 `
@@ -171,7 +183,7 @@ func TestApplyDestroyAppliesApprovedPlan(t *testing.T) {
 	}
 
 	calls := readLog(t, logPath)
-	if got := calls[len(calls)-1]; got != "apply -input=false -no-color destroy.tfplan" {
+	if got := calls[len(calls)-2]; got != "apply -input=false -lock=true -lock-timeout=5m -no-color destroy.tfplan" {
 		t.Fatalf("unexpected apply call %q", got)
 	}
 }
@@ -273,7 +285,7 @@ func TestApplyStillUsesCreatePlanFile(t *testing.T) {
 	}
 
 	calls := readLog(t, logPath)
-	if got := calls[len(calls)-1]; got != "apply -input=false -no-color cloudforge.tfplan" {
+	if got := calls[len(calls)-3]; got != "apply -input=false -lock=true -lock-timeout=5m -no-color cloudforge.tfplan" {
 		t.Fatalf("unexpected apply call %q", got)
 	}
 	for _, call := range calls {
@@ -312,5 +324,131 @@ func TestPlanProducesSummary(t *testing.T) {
 	}
 	if showSummary != result.PlanSummary {
 		t.Fatalf("ShowPlan mismatch: got %q, want %q", showSummary, result.PlanSummary)
+	}
+}
+
+func TestStructuredPlanSummaryOmitsValuesAndShowsReplacement(t *testing.T) {
+	output := `{"resource_changes":[{"address":"aws_db_instance.private-name",
+	  "type":"aws_db_instance","change":{"actions":["delete","create"],
+	  "before":{"password":"old-secret"},"after":{"password":"new-secret"}}},
+	  {"type":"aws_s3_bucket","change":{"actions":["create"]}}]}`
+	want := "Create aws_s3_bucket: 1\nReplace aws_db_instance: 1"
+	if got := summarizeTerraformPlan(output); got != want {
+		t.Fatalf("structured summary = %q, want %q", got, want)
+	}
+}
+
+func TestApplyRejectsSuccessfulExitWithoutVerifiedAWSState(t *testing.T) {
+	runner, _ := testRunner(t, "")
+	resource := testResource()
+	result, err := runner.Plan(t.Context(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.PlanPath, resource.PlanHash = result.PlanPath, result.PlanHash
+
+	script, err := os.ReadFile(runner.TerraformBin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script = []byte(strings.Replace(string(script), "verified-test-bucket", "", 1))
+	if err := os.WriteFile(runner.TerraformBin, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Apply(t.Context(), resource); err == nil || !strings.Contains(err.Error(), "could not be verified in state") {
+		t.Fatalf("expected unverifiable-state error, got %v", err)
+	}
+}
+
+func TestRemoteStateFailsClosedForUnboundAndChangedPlans(t *testing.T) {
+	runner, logPath := testRunner(t, "")
+	resource := testResource()
+	local, err := runner.Plan(t.Context(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.RequireRemoteState = true
+	if _, err := runner.Plan(t.Context(), resource); err == nil {
+		t.Fatal("remote-state runner accepted an empty bucket")
+	}
+	runner.Generator.StateBucket = "test-state-bucket"
+	resource.PlanPath, resource.PlanHash = local.PlanPath, local.PlanHash
+	if err := runner.Apply(t.Context(), resource); err == nil {
+		t.Fatal("remote-state runner accepted a legacy local plan")
+	}
+	for _, call := range readLog(t, logPath) {
+		if strings.HasPrefix(call, "apply ") {
+			t.Fatal("unbound plan reached Terraform apply")
+		}
+	}
+	remote, err := runner.Plan(t.Context(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.PlanPath, resource.PlanHash = remote.PlanPath, remote.PlanHash
+	if err := runner.Apply(t.Context(), resource); err != nil {
+		t.Fatalf("bound plan did not execute: %v", err)
+	}
+	runner.Generator.StateBucket = "changed-state-bucket"
+	if err := runner.Apply(t.Context(), resource); err == nil {
+		t.Fatal("plan survived a change to the remote backend")
+	}
+}
+
+func TestApplyRequiresSuccessfulProviderRefresh(t *testing.T) {
+	runner, logPath := testRunner(t, "")
+	resource := testResource()
+	plan, err := runner.Plan(t.Context(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.PlanPath, resource.PlanHash = plan.PlanPath, plan.PlanHash
+	script := strings.Replace(string(mustReadFile(t, runner.TerraformBin)), "exit 0", `case "$*" in *-refresh-only*) echo private-output >&2; exit 2 ;; esac
+exit 0`, 1)
+	if err := os.WriteFile(runner.TerraformBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id, err := runner.ApplyWithState(t.Context(), resource)
+	if id != "verified-test-bucket" || err == nil || !strings.Contains(err.Error(), "reconciliation required") ||
+		strings.Contains(err.Error(), "private-output") {
+		t.Fatalf("provider drift did not retain the state ID safely: %q, %v", id, err)
+	}
+	calls := readLog(t, logPath)
+	if got := calls[len(calls)-1]; got != "plan -input=false -no-color -refresh-only -detailed-exitcode -lock=false" {
+		t.Fatalf("unexpected provider refresh: %s", got)
+	}
+}
+
+func TestDestroyRejectsRemainingManagedResources(t *testing.T) {
+	runner, _, resource := destroyPlanned(t)
+	script := strings.Replace(string(mustReadFile(t, runner.TerraformBin)), "touch .test-destroyed", "true", 1)
+	script = strings.Replace(script, `'{"values":`, `'{"format_version":"1.0","values":`, 1)
+	if err := os.WriteFile(runner.TerraformBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.ApplyDestroy(t.Context(), resource); err == nil || !strings.Contains(err.Error(), "empty managed state") {
+		t.Fatalf("nonempty state reported as destroyed: %v", err)
+	}
+	if hasEmptyManagedState(`{"format_version":"1.0","values":{"root_module":{"child_modules":[{"resources":[{"mode":"managed"}]}]}}}`) {
+		t.Fatal("child module resource counted as empty state")
+	}
+}
+
+func TestPartialApplyReturnsObservedIDWithoutClaimingSuccess(t *testing.T) {
+	runner, logPath := testRunner(t, "apply")
+	resource := testResource()
+	plan, err := runner.Plan(t.Context(), resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource.PlanPath, resource.PlanHash = plan.PlanPath, plan.PlanHash
+	id, err := runner.ApplyWithState(t.Context(), resource)
+	if id != "verified-test-bucket" || !errors.Is(err, errTerraformApplyExecution) {
+		t.Fatalf("partial apply did not retain its evidence: %q, %v", id, err)
+	}
+	for _, call := range readLog(t, logPath) {
+		if strings.Contains(call, "-refresh-only") {
+			t.Fatal("partial apply continued into success verification")
+		}
 	}
 }

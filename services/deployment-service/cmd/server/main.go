@@ -23,6 +23,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func main() {
@@ -124,59 +125,94 @@ func main() {
 	)
 
 	var deploymentExec executor.Executor
-	if os.Getenv("DEPLOYMENT_EXECUTOR") == "kubernetes" || os.Getenv("KUBECONFIG") != "" {
-		deploymentExec = executor.NewKubernetesExecutor(deploymentService)
-		logger.Info("configured Kubernetes deployment executor", "executor", "kubernetes")
-	} else {
+	telemetryHandler := handler.NewProjectTelemetryHandler(nil, "", deploymentRepository)
+	if cfg.AppEnv == "production" || cfg.DeploymentExecutor == "kubernetes" {
+		k8sOpts := executor.KubernetesOptions{
+			ClusterName:      cfg.EKSClusterName,
+			AWSRegion:        cfg.AWSRegion,
+			DefaultNamespace: cfg.KubernetesNamespace,
+			KubectlPath:      cfg.KubectlPath,
+			AWSCLIPath:       cfg.AWSCLIPath,
+			KubeConfig:       cfg.KubeConfig,
+			Timeout:          time.Duration(cfg.RolloutTimeoutSeconds) * time.Second,
+		}
+
+		k8sExec, err := executor.NewProductionKubernetesExecutor(deploymentService, k8sOpts)
+		if err != nil {
+			logger.Error(
+				"failed to configure production Kubernetes executor",
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if err := k8sExec.EnsureClusterConfig(ctx); err != nil {
+			logger.Error(
+				"failed to authenticate or configure Kubernetes cluster",
+				"error",
+				err,
+				"cluster",
+				cfg.EKSClusterName,
+				"region",
+				cfg.AWSRegion,
+			)
+			os.Exit(1)
+		}
+
+		if err := k8sExec.CheckAPIConnectivity(ctx); err != nil {
+			logger.Error(
+				"failed to connect to Kubernetes cluster API",
+				"error",
+				err,
+				"cluster",
+				cfg.EKSClusterName,
+				"region",
+				cfg.AWSRegion,
+			)
+			os.Exit(1)
+		}
+
+		deploymentExec = k8sExec
+		deploymentRepository.SetExecutionMode("kubernetes")
+		telemetryHandler = handler.NewProjectTelemetryHandler(k8sExec, os.Getenv("PROMETHEUS_URL"), deploymentRepository)
+		logger.Info(
+			"configured Kubernetes deployment executor and verified API connectivity",
+			"executor",
+			"kubernetes",
+			"cluster",
+			cfg.EKSClusterName,
+			"region",
+			cfg.AWSRegion,
+			"namespace",
+			cfg.KubernetesNamespace,
+		)
+	} else if cfg.DeploymentExecutor == "simulated" || cfg.AppEnv == "development" || cfg.AppEnv == "test" {
+		deploymentRepository.SetExecutionMode("simulated")
 		deploymentExec = executor.SimulatedExecutor{
 			ExecutionDelay: 2 * time.Second,
 			ShouldFail:     false,
 		}
 		logger.Info("configured local deployment executor", "executor", "simulated")
-	}
-
-	deploymentRunner, err := service.NewDeploymentRunnerWithAttemptsAndMetrics(
-		deploymentService,
-		attemptRepository,
-		deploymentExec,
-		logger,
-		deploymentMetrics,
-	)
-	if err != nil {
+	} else {
 		logger.Error(
-			"failed to create deployment runner",
-			"error",
-			err,
+			"cannot initialize executor: production mode requires Kubernetes configuration and cannot use simulation",
+			"env",
+			cfg.AppEnv,
+			"executor",
+			cfg.DeploymentExecutor,
 		)
 		os.Exit(1)
 	}
 
-	deploymentWorker, err := worker.New(
-		worker.Config{
-			QueueSize: 100,
-			Workers:   2,
-			Handler: func(
-				ctx context.Context,
-				job worker.Job,
-			) error {
-				return deploymentRunner.Run(
-					ctx,
-					job.DeploymentID,
-				)
-			},
-			Logger: logger,
-		},
+	shutdownContext, stop := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGINT,
+		syscall.SIGTERM,
 	)
-	if err != nil {
-		logger.Error(
-			"failed to create deployment worker",
-			"error",
-			err,
-		)
-		os.Exit(1)
-	}
+	defer stop()
 
-	deploymentWorker.Start()
+	workersDone := worker.StartDurable(shutdownContext, 2, deploymentRepository, deploymentExec, deploymentMetrics, logger)
 
 	deploymentHandler := handler.NewDeploymentHandler(
 		deploymentService,
@@ -184,7 +220,8 @@ func main() {
 
 	queuedDeploymentHandler := handler.NewQueuedDeploymentHandler(
 		deploymentService,
-		deploymentWorker,
+		nil,
+		deploymentRepository,
 	)
 
 	deploymentAttemptHandler := handler.NewDeploymentAttemptHandler(
@@ -197,13 +234,11 @@ func main() {
 		queuedDeploymentHandler,
 		deploymentAttemptHandler,
 		metricsHandler,
+		telemetryHandler,
 	)
 
-	internalToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
-	authenticatedRouter := handler.NewRouterWithInternalToken(
-		router,
-		internalToken,
-	)
+	authenticatedRouter := handler.NewAuthenticatedRouter(router,
+		os.Getenv("CLOUDFORGE_FRONTEND_KEY"), os.Getenv("CLOUDFORGE_AIOPS_DEPLOYMENT_KEY"), identity.ProjectAccess{DB: pool})
 
 	instrumentedRouter := metrics.Middleware(
 		serviceMetrics,
@@ -220,13 +255,6 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	shutdownContext, stop := signal.NotifyContext(
-		context.Background(),
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
 	serverErrors := make(chan error, 1)
 
 	go func() {
@@ -240,13 +268,12 @@ func main() {
 			true,
 			"worker_count",
 			2,
-			"queue_size",
-			100,
 		)
 
 		serverErrors <- server.ListenAndServe()
 	}()
 
+	serverFailed := false
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(
@@ -259,9 +286,7 @@ func main() {
 				err,
 			)
 
-			deploymentWorker.Shutdown()
-
-			os.Exit(1)
+			serverFailed = true
 		}
 
 	case <-shutdownContext.Done():
@@ -269,6 +294,8 @@ func main() {
 			"shutdown signal received",
 		)
 	}
+
+	stop()
 
 	shutdownTimeout := time.Duration(
 		cfg.ShutdownTimeoutSeconds,
@@ -289,12 +316,19 @@ func main() {
 			err,
 		)
 
-		deploymentWorker.Shutdown()
-
 		os.Exit(1)
 	}
 
-	deploymentWorker.Shutdown()
+	select {
+	case <-workersDone:
+	case <-shutdownCtx.Done():
+		logger.Error("deployment worker shutdown timed out", "error", shutdownCtx.Err())
+		os.Exit(1)
+	}
+
+	if serverFailed {
+		os.Exit(1)
+	}
 
 	logger.Info(
 		"deployment service stopped successfully",

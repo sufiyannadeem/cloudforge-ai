@@ -35,6 +35,12 @@ type ResourceStore interface {
 	// planning to awaiting_destroy_approval atomically.
 	SaveDestroyPlan(ctx context.Context, resource model.InfrastructureResource) error
 
+	ReviewPlan(context.Context, uuid.UUID, model.PlanReviewInput, string) error
+	PlanReviews(context.Context, uuid.UUID) ([]model.PlanReview, error)
+	InvalidatePlan(context.Context, model.InfrastructureResource, string, model.ResourceStatus) error
+	ClaimReviewedPlan(context.Context, model.InfrastructureResource, string, string) error
+	FinishReviewedPlan(context.Context, model.InfrastructureResource, string, model.ResourceStatus, bool) error
+
 	// UpdateEditable changes only client-editable fields and only if status has
 	// not changed since the service read the resource.
 	UpdateEditable(ctx context.Context, id uuid.UUID, input model.UpdateResourceInput, expectedStatus model.ResourceStatus) error

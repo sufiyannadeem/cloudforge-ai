@@ -77,7 +77,7 @@ func TestPlanDestroyStoresHashedPlanAndOpensApprovalWindow(t *testing.T) {
 func TestPlanDestroyRejectsNonActiveResources(t *testing.T) {
 	for _, status := range []model.ResourceStatus{
 		model.ResourceStatusPending, model.ResourceStatusAwaitingApproval,
-		model.ResourceStatusProvisioning, model.ResourceStatusDestroyed, model.ResourceStatusFailed,
+		model.ResourceStatusProvisioning, model.ResourceStatusDestroyed,
 	} {
 		id := uuid.New()
 		store := &mockResourceStore{resource: model.InfrastructureResource{ID: id, Status: status}}
@@ -198,14 +198,45 @@ func TestApplyDestroyRequiresAwaitingDestroyApproval(t *testing.T) {
 	}
 }
 
-func TestApplyDestroyRunnerFailureRestoresActive(t *testing.T) {
+func TestApplyDestroyFailureRequiresFreshReconciliation(t *testing.T) {
 	store, id, hash := awaitingDestroy(t, destroyNow.Add(time.Minute))
-	runner := &fakeRunner{applyDestroyErr: errors.New("terraform destroy failed")}
+	runner := &fakeRunner{applyDestroyErr: errors.New("terraform destroy partially failed")}
+	service := newDestroyService(store, runner)
 
-	if _, err := newDestroyService(store, runner).ApplyDestroy(context.Background(), id, hash); err == nil {
+	if _, err := service.ApplyDestroy(t.Context(), id, hash); err == nil {
 		t.Fatal("expected error")
 	}
-	if store.resource.Status != model.ResourceStatusActive {
-		t.Fatalf("expected active after failed destroy, got %s", store.resource.Status)
+	if store.resource.Status != model.ResourceStatusDestroyFailed {
+		t.Fatalf("failed destroy was not quarantined: %s", store.resource.Status)
+	}
+	if _, err := service.ApplyDestroy(t.Context(), id, hash); !errors.Is(err, ErrInvalidProvisioningState) || runner.applyDestroyCalls != 1 {
+		t.Fatalf("failed destroy was replayed: %v", err)
+	}
+	runner.planDestroyErr = errors.New("refresh unavailable")
+	if _, err := service.PlanDestroy(t.Context(), id); err == nil || store.resource.Status != model.ResourceStatusDestroyFailed {
+		t.Fatal("failed reconciliation cleared the destroy failure")
+	}
+	runner.planDestroyErr = nil
+	runner.planDestroyResult = terraform.PlanResult{PlanPath: "/ws/destroy.tfplan", PlanHash: "fresh", PlanCreatedAt: destroyNow}
+	got, err := service.PlanDestroy(t.Context(), id)
+	if err != nil || got.Status != model.ResourceStatusAwaitingDestroyApproval || got.DestroyPlanHash != "fresh" {
+		t.Fatalf("reconciliation did not require a fresh approval: %+v, %v", got, err)
+	}
+	if _, err := service.ApplyDestroy(t.Context(), id, hash); !errors.Is(err, ErrPlanHashMismatch) || runner.applyDestroyCalls != 1 {
+		t.Fatalf("pre-reconciliation approval could execute: %v", err)
+	}
+}
+
+func TestFailedApplyCanPlanReconciliationWithoutDestroyApproval(t *testing.T) {
+	id := uuid.New()
+	store := &mockResourceStore{resource: model.InfrastructureResource{ID: id, Status: model.ResourceStatusFailed}}
+	runner := &fakeRunner{planDestroyResult: terraform.PlanResult{PlanHash: "reconciled"}}
+	service := newDestroyService(store, runner)
+	if _, err := service.ApplyDestroy(t.Context(), id, "reconciled"); !errors.Is(err, ErrInvalidProvisioningState) {
+		t.Fatalf("failed apply bypassed destroy approval: %v", err)
+	}
+	got, err := service.PlanDestroy(t.Context(), id)
+	if err != nil || got.Status != model.ResourceStatusAwaitingDestroyApproval || runner.applyDestroyCalls != 0 {
+		t.Fatalf("failed apply did not enter review-only reconciliation: %v", err)
 	}
 }

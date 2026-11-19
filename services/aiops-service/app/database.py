@@ -19,10 +19,11 @@ def _require_database_url() -> str:
 
 
 @contextmanager
-def get_connection() -> Iterator[Connection]:
+def get_connection(*, connect_timeout: int = 0) -> Iterator[Connection]:
     connection = psycopg.connect(
         _require_database_url(),
         row_factory=dict_row,
+        connect_timeout=connect_timeout,
     )
 
     try:
@@ -35,8 +36,30 @@ def get_connection() -> Iterator[Connection]:
         connection.close()
 
 
+def claim_telemetry_assertion(nonce: str, expiry: int) -> bool:
+    with get_connection(connect_timeout=2) as connection:
+        connection.execute("SET LOCAL statement_timeout = '2s'")
+        connection.execute("DELETE FROM aiops_telemetry_nonces WHERE expires_at <= clock_timestamp()")
+        result = connection.execute("""
+            INSERT INTO aiops_telemetry_nonces (nonce, expires_at)
+            SELECT %s, to_timestamp(%s) WHERE to_timestamp(%s) > clock_timestamp()
+            ON CONFLICT DO NOTHING
+        """, (nonce.lower(), expiry, expiry))
+        return result.rowcount == 1
+
+
 def initialize_database() -> None:
     with get_connection() as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS aiops_telemetry_nonces (
+                nonce TEXT PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS aiops_telemetry_nonces_expiry
+            ON aiops_telemetry_nonces(expires_at)
+        """)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS aiops_incidents (
@@ -311,6 +334,16 @@ def initialize_database() -> None:
             """
             ALTER TABLE aiops_remediation_proposals
             ADD COLUMN IF NOT EXISTS execution_idempotency_key VARCHAR(255)
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS approved_role VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS approved_environment VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS dispatch_token_hash VARCHAR(64),
+            ADD COLUMN IF NOT EXISTS dispatch_consumed_at TIMESTAMPTZ
             """
         )
 

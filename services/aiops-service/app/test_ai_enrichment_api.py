@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import hmac
+import json
+import os
+import time
 from datetime import datetime, timezone
-from fastapi.testclient import TestClient
+import httpx2 as httpx
 
 from .main import app
 from .models import (
@@ -12,7 +18,29 @@ from .models import (
 )
 from .store import IncidentStore
 
-client = TestClient(app)
+def authenticated_get(path):
+    key = "aiops-enrichment-test-frontend-key-32-bytes"
+    previous = os.environ.get("CLOUDFORGE_FRONTEND_KEY")
+    os.environ["CLOUDFORGE_FRONTEND_KEY"] = key
+    now = int(time.time())
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "iss": "frontend", "aud": "aiops", "sub": "operator", "role": "sre",
+        "method": "GET", "target": path, "iat": now, "exp": now + 25, "nonce": "01" * 16,
+    }).encode()).rstrip(b"=")
+    signature = hmac.digest(key.encode(), payload, "sha256").hex()
+
+    async def send():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            return await client.get(path, headers={"X-CloudForge-Identity": f"{payload.decode()}.{signature}"})
+
+    try:
+        return asyncio.run(send())
+    finally:
+        if previous is None:
+            os.environ.pop("CLOUDFORGE_FRONTEND_KEY", None)
+        else:
+            os.environ["CLOUDFORGE_FRONTEND_KEY"] = previous
+
 
 _TEST_INCIDENT = Incident(
     id="inc-enrichment-test",
@@ -39,7 +67,7 @@ _TEST_INCIDENT = Incident(
 
 
 def test_health_endpoint():
-    response = client.get("/health")
+    response = authenticated_get("/health")
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
@@ -52,7 +80,7 @@ def test_missing_incident_returns_404(monkeypatch):
         lambda self, incident_id: None,
     )
 
-    response = client.get(
+    response = authenticated_get(
         "/api/v1/aiops/incidents/does-not-exist/enrichment"
     )
 
@@ -70,7 +98,7 @@ def test_enrichment_response_contract(monkeypatch):
         ),
     )
 
-    response = client.get(
+    response = authenticated_get(
         f"/api/v1/aiops/incidents/{_TEST_INCIDENT.id}/enrichment"
     )
 

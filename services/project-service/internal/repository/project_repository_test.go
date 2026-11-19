@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func setupTestRepository(t *testing.T) (*pgxpool.Pool, ProjectRepository) {
@@ -241,4 +243,83 @@ func TestProjectRepositoryDelete(t *testing.T) {
 			err,
 		)
 	}
+}
+
+func TestProjectListTracksVerifiedMembership(t *testing.T) {
+	pool, repo := setupTestRepository(t)
+	ctx := context.Background()
+	owner, other := "test-"+uuid.NewString(), "test-"+uuid.NewString()
+	claims := func(subject, role string) context.Context {
+		return identity.WithClaims(httptest.NewRequest("GET", "/", nil),
+			identity.Claims{Issuer: "frontend", Subject: subject, Role: role}).Context()
+	}
+	ownerCtx, otherCtx := claims(owner, "developer"), claims(other, "developer")
+	for _, username := range []string{owner, other} {
+		if _, err := pool.Exec(ctx, `INSERT INTO auth_users (username, role, password_hash, password_salt)
+			VALUES ($1, 'developer', $2, $2)`, username, make([]byte, 32)); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(ctx, "DELETE FROM auth_users WHERE username = $1", username) })
+	}
+	create := func(ctx context.Context) *model.Project {
+		t.Helper()
+		project, err := repo.Create(ctx, model.CreateProjectInput{
+			Name: uuid.NewString(), RepositoryURL: "https://example.invalid/repo", DefaultBranch: "main",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = repo.Delete(context.Background(), project.ID) })
+		return project
+	}
+	project, legacy := create(ownerCtx), create(ctx)
+	if project.CreatedBy == nil || *project.CreatedBy != owner || legacy.CreatedBy != nil {
+		t.Fatal("project ownership did not come from the verified caller")
+	}
+	contains := func(ctx context.Context, id uuid.UUID, want bool) string {
+		t.Helper()
+		projects, err := repo.List(ctx, 100, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, project := range projects {
+			if project.ID == id {
+				if !want {
+					t.Fatal("private project was listed")
+				}
+				return project.AccessLevel
+			}
+		}
+		if want {
+			t.Fatal("visible project was omitted")
+		}
+		return ""
+	}
+	if level := contains(ownerCtx, project.ID, true); level != "owner" {
+		t.Fatalf("owner list grants %q", level)
+	}
+	contains(ownerCtx, legacy.ID, false)
+	contains(otherCtx, project.ID, false)
+	if _, err := pool.Exec(ctx, "INSERT INTO project_members VALUES ($1, $2, 'viewer')", project.ID, other); err != nil {
+		t.Fatal(err)
+	}
+	if level := contains(otherCtx, project.ID, true); level != "viewer" {
+		t.Fatalf("viewer list grants %q", level)
+	}
+	if _, err := repo.Update(otherCtx, project.ID, model.UpdateProjectInput{}); err != ErrProjectNotFound {
+		t.Fatalf("viewer was allowed to update: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE project_members SET level = 'maintainer' WHERE project_id = $1", project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Update(otherCtx, project.ID, model.UpdateProjectInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Delete(otherCtx, project.ID); err != ErrProjectNotFound {
+		t.Fatalf("maintainer was allowed to delete: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM project_members WHERE project_id = $1", project.ID); err != nil {
+		t.Fatal(err)
+	}
+	contains(otherCtx, project.ID, false)
 }

@@ -68,6 +68,7 @@ func (m *mockDeploymentStore) List(
 func (m *mockDeploymentStore) Update(
 	ctx context.Context,
 	deployment model.Deployment,
+	_ model.Deployment,
 ) error {
 	m.updatedDeployment = deployment
 

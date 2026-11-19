@@ -6,6 +6,7 @@ WORKDIR /app
 
 RUN apk add --no-cache ca-certificates
 
+COPY --from=service_identity . /service-identity
 COPY go.mod go.sum ./
 RUN go mod download
 

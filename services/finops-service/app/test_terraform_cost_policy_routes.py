@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+os.environ.setdefault("CLOUDFORGE_FRONTEND_KEY", "test-only-internal-token-32-bytes-minimum")
 
-from fastapi.testclient import TestClient
+from app.identity_test_helpers import SignedTestClient
 
 from .main import app
 
 
-client = TestClient(app)
+client = SignedTestClient(app)
 
 
 def _plan() -> dict:
@@ -43,8 +43,7 @@ def _pricing(price: float) -> dict:
 
 def _headers() -> dict[str, str]:
     return {
-        "X-CloudForge-Role": "platform-engineer",
-        "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
+        "X-Test-Human-Role": "platform-engineer",
     }
 
 
@@ -152,22 +151,22 @@ def test_cost_policy_can_require_review_for_incomplete_evidence() -> None:
 def test_cost_policy_rejects_missing_role() -> None:
     response = client.post(
         "/api/v1/terraform/cost-policy-evaluate",
-        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"]},
+        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_FRONTEND_KEY"]},
         json={
             "plan": _plan(),
             "pricing": _pricing(25.0),
         },
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_cost_policy_rejects_unauthorized_role() -> None:
     response = client.post(
         "/api/v1/terraform/cost-policy-evaluate",
         headers={
-            "X-CloudForge-Role": "viewer",
-            "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
+            "X-Test-Human-Role": "developer",
+            "X-CloudForge-Role": "platform-engineer",
         },
         json={
             "plan": _plan(),
@@ -195,3 +194,13 @@ def test_cost_policy_response_contains_policy_metadata() -> None:
     assert body["generated_by"] == "cloudforge-finops-cost-policy-v1"
     assert body["policy"]["max_monthly_increase_usd"] == 100.0
     assert body["policy"]["max_monthly_increase_percent"] == 20.0
+
+
+def test_developer_cannot_read_global_aws_costs_as_project_costs() -> None:
+    response = client.get(
+        "/api/v1/finops/aws/report",
+        params={"project_id": "forged-project"},
+        headers={"X-Test-Human-Role": "developer", "X-CloudForge-Role": "platform-engineer"},
+    )
+    assert response.status_code == 403
+    assert "total_cost" not in response.json()

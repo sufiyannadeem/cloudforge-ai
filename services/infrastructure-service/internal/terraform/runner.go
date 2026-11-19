@@ -30,6 +30,8 @@ const (
 	destroyPlanFileName = "destroy.tfplan"
 )
 
+var errTerraformApplyExecution = errors.New("terraform apply failed")
+
 type Provisioner interface {
 	Plan(
 		ctx context.Context,
@@ -65,10 +67,11 @@ type PlanResult struct {
 }
 
 type Runner struct {
-	Generator    *Generator
-	TerraformBin string
-	PlanTimeout  time.Duration
-	ApplyTimeout time.Duration
+	Generator          *Generator
+	TerraformBin       string
+	PlanTimeout        time.Duration
+	ApplyTimeout       time.Duration
+	RequireRemoteState bool
 }
 
 func NewRunner(
@@ -113,6 +116,10 @@ func (r *Runner) plan(
 		return PlanResult{}, err
 	}
 
+	if r.RequireRemoteState && r.Generator.StateBucket == "" {
+		return PlanResult{}, errors.New("locked remote terraform state is required")
+	}
+
 	workspace, err := r.Generator.Generate(resource)
 	if err != nil {
 		return PlanResult{}, err
@@ -123,12 +130,13 @@ func (r *Runner) plan(
 		"plan",
 		"-input=false",
 		"-no-color",
+		"-lock=true",
 		"-lock-timeout=5m",
 	}
 
 	if destroy {
 		fileName = destroyPlanFileName
-		planArgs = append(planArgs, "-destroy")
+		planArgs = append(planArgs, "-destroy", "-refresh=true")
 	}
 
 	planArgs = append(planArgs, "-out="+fileName)
@@ -148,13 +156,11 @@ func (r *Runner) plan(
 	)
 	defer cancel()
 
-	if err := r.run(
-		planContext,
-		workspace.Directory,
-		"init",
-		"-input=false",
-		"-no-color",
-	); err != nil {
+	initArgs := []string{"init", "-input=false", "-no-color"}
+	if r.RequireRemoteState {
+		initArgs = append(initArgs, "-backend=true")
+	}
+	if err := r.run(planContext, workspace.Directory, initArgs...); err != nil {
 		return PlanResult{}, fmt.Errorf(
 			"terraform init failed: %w",
 			err,
@@ -203,6 +209,12 @@ func (r *Runner) plan(
 		return PlanResult{}, err
 	}
 
+	if r.RequireRemoteState {
+		if err := os.WriteFile(planPath+".remote", []byte(r.remotePlanBinding(resource, hash)), 0o600); err != nil {
+			return PlanResult{}, errors.New("could not bind terraform plan to remote state")
+		}
+	}
+
 	createdAt := time.Now().UTC()
 
 	var summary string
@@ -210,17 +222,11 @@ func (r *Runner) plan(
 		planContext,
 		workspace.Directory,
 		"show",
-		"-no-color",
+		"-json",
 		fileName,
 	)
 	if showErr == nil && strings.TrimSpace(showOut) != "" {
-		summary = sanitizeTerraformOutput(showOut)
-	} else {
-		if destroy {
-			summary = fmt.Sprintf("Terraform destroy plan: 1 to destroy (%s: %s)", resource.ResourceType, resource.Name)
-		} else {
-			summary = fmt.Sprintf("Terraform plan: 1 to add, 0 to change, 0 to destroy (%s: %s)", resource.ResourceType, resource.Name)
-		}
+		summary = summarizeTerraformPlan(showOut)
 	}
 
 	summaryPath := planPath + ".summary"
@@ -239,13 +245,29 @@ func (r *Runner) Apply(
 	ctx context.Context,
 	resource model.InfrastructureResource,
 ) error {
-	return r.apply(
-		ctx,
-		resource,
-		resource.PlanPath,
-		resource.PlanHash,
-		planFileName,
-	)
+	_, err := r.ApplyWithState(ctx, resource)
+	return err
+}
+
+// ApplyWithState returns the provider ID observed in Terraform state, even if
+// a subsequent provider refresh could not confirm that state.
+func (r *Runner) ApplyWithState(ctx context.Context, resource model.InfrastructureResource) (string, error) {
+	applyErr := r.apply(ctx, resource, resource.PlanPath, resource.PlanHash, planFileName)
+	if applyErr != nil && !errors.Is(applyErr, errTerraformApplyExecution) {
+		return "", applyErr
+	}
+
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	state, err := r.runWithOutput(verifyCtx, filepath.Dir(resource.PlanPath), "show", "-json")
+	id := provisionedResourceID(state, resource.ResourceType)
+	if applyErr != nil {
+		return id, applyErr
+	}
+	if err != nil || id == "" {
+		return "", errors.New("terraform apply completed but the AWS resource could not be verified in state")
+	}
+	return id, r.verifyProviderRefresh(verifyCtx, filepath.Dir(resource.PlanPath))
 }
 
 // ApplyDestroy verifies the approved destroy plan hash and then applies
@@ -254,13 +276,17 @@ func (r *Runner) ApplyDestroy(
 	ctx context.Context,
 	resource model.InfrastructureResource,
 ) error {
-	return r.apply(
-		ctx,
-		resource,
-		resource.DestroyPlanPath,
-		resource.DestroyPlanHash,
-		destroyPlanFileName,
-	)
+	if err := r.apply(ctx, resource, resource.DestroyPlanPath, resource.DestroyPlanHash, destroyPlanFileName); err != nil {
+		return err
+	}
+	verifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer cancel()
+	dir := filepath.Dir(resource.DestroyPlanPath)
+	state, err := r.runWithOutput(verifyCtx, dir, "show", "-json")
+	if err != nil || !hasEmptyManagedState(state) {
+		return errors.New("terraform destroy completed but empty managed state could not be verified")
+	}
+	return nil
 }
 
 func (r *Runner) apply(
@@ -317,6 +343,18 @@ func (r *Runner) apply(
 		)
 	}
 
+	if r.RequireRemoteState {
+		if r.Generator == nil || r.Generator.StateBucket == "" {
+			return errors.New("locked remote terraform state is required")
+		}
+		binding, err := os.ReadFile(planPath + ".remote")
+		backend, backendErr := os.ReadFile(filepath.Join(filepath.Dir(planPath), "backend.tf"))
+		if err != nil || backendErr != nil || string(binding) != r.remotePlanBinding(resource, actualHash) ||
+			string(backend) != r.Generator.backendFile(resource) {
+			return errors.New("approved plan is missing its locked remote state binding; generate and approve a new plan")
+		}
+	}
+
 	applyContext, cancel := context.WithTimeout(
 		ctx,
 		r.applyTimeout(),
@@ -328,13 +366,12 @@ func (r *Runner) apply(
 		filepath.Dir(planPath),
 		"apply",
 		"-input=false",
+		"-lock=true",
+		"-lock-timeout=5m",
 		"-no-color",
 		fileName,
 	); err != nil {
-		return fmt.Errorf(
-			"terraform apply failed: %w",
-			err,
-		)
+		return fmt.Errorf("%w: %w", errTerraformApplyExecution, err)
 	}
 
 	return nil
@@ -422,6 +459,10 @@ func (r *Runner) runWithOutput(
 	workspace string,
 	args ...string,
 ) (string, error) {
+	return r.runWithEnvironment(ctx, workspace, os.Environ(), args...)
+}
+
+func (r *Runner) runWithEnvironment(ctx context.Context, workspace string, environment []string, args ...string) (string, error) {
 	if strings.TrimSpace(r.TerraformBin) == "" {
 		return "", errors.New(
 			"terraform binary cannot be empty",
@@ -436,7 +477,7 @@ func (r *Runner) runWithOutput(
 
 	command.Dir = workspace
 
-	command.Env = os.Environ()
+	command.Env = environment
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -475,16 +516,20 @@ func (r *Runner) ShowPlan(
 
 	summaryPath := resource.PlanPath + ".summary"
 	if data, err := os.ReadFile(summaryPath); err == nil && len(data) > 0 {
-		return string(data), nil
+		return PublicPlanSummary(string(data)), nil
 	}
 
-	return r.runWithOutput(
+	output, err := r.runWithOutput(
 		ctx,
 		filepath.Dir(resource.PlanPath),
 		"show",
-		"-no-color",
+		"-json",
 		filepath.Base(resource.PlanPath),
 	)
+	if err != nil {
+		return "", errors.New("saved plan summary unavailable")
+	}
+	return summarizeTerraformPlan(output), nil
 }
 
 func terraformCommandError(
@@ -630,4 +675,22 @@ func (r *Runner) applyTimeout() time.Duration {
 	}
 
 	return r.ApplyTimeout
+}
+
+func (r *Runner) remotePlanBinding(resource model.InfrastructureResource, hash string) string {
+	boundConfig := hash + "\n" + r.Generator.backendFile(resource)
+	if r.Generator.ProvisionerRoleARN != "" {
+		boundConfig += r.Generator.versionsFile()
+	}
+	binding := sha256.Sum256([]byte(boundConfig))
+	return hex.EncodeToString(binding[:])
+}
+
+func (r *Runner) verifyProviderRefresh(ctx context.Context, workspace string) error {
+	// Do not save or apply an observation plan, or create a remote lockfile.
+	err := r.run(ctx, workspace, "plan", "-input=false", "-no-color", "-refresh-only", "-detailed-exitcode", "-lock=false")
+	if err != nil {
+		return errors.New("terraform apply completed but the provider refresh did not confirm the saved state; reconciliation required")
+	}
+	return nil
 }

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("CLOUDFORGE_INTERNAL_API_TOKEN", "test-only-internal-token-32-bytes-minimum")
+os.environ.setdefault("CLOUDFORGE_FRONTEND_KEY", "test-only-internal-token-32-bytes-minimum")
 
-from fastapi.testclient import TestClient
+from app.identity_test_helpers import SignedTestClient
 
 from app.main import app
 
 
-client = TestClient(app)
+client = SignedTestClient(app)
 
 
 def pricing_payload(
@@ -35,18 +35,17 @@ def pricing_payload(
 
 def auth_headers() -> dict[str, str]:
     return {
-        "X-CloudForge-Role": "platform-engineer",
-        "X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"],
+        "X-Test-Human-Role": "platform-engineer",
     }
 
 
 def test_pricing_requires_finops_access() -> None:
     response = client.get(
         "/api/v1/terraform/pricing",
-        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_INTERNAL_API_TOKEN"]},
+        headers={"X-CloudForge-Internal-Token": os.environ["CLOUDFORGE_FRONTEND_KEY"]},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 def test_pricing_rejects_invalid_internal_token() -> None:
@@ -187,3 +186,23 @@ def test_invalid_confidence_is_rejected() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_request_estimate_allows_only_signed_read_of_reliable_unit_price() -> None:
+    base = "/api/v1/terraform/request-estimate/aws_instance/eu-west-1"
+    role = {"X-Test-Human-Role": "developer"}
+    assert client.get(f"{base}/instance-month:t3.medium").status_code == 401
+    assert client.get("/api/v1/terraform/pricing", headers=role).status_code == 403
+    assert client.get(f"{base}/instance-month", headers=role).status_code == 404
+
+    for instance, confidence in [("t3.medium", "high"), ("t3.small", "low")]:
+        unit = f"instance-month:{instance}"
+        data = pricing_payload(unit=unit, price=12.5)
+        data["confidence"] = confidence
+        assert client.post("/api/v1/terraform/pricing", headers=auth_headers(), json=data).status_code == 201
+        result = client.get(f"{base}/{unit}", headers=role)
+        if confidence == "high":
+            assert result.status_code == 200
+            assert result.json() == {"unit_monthly_usd": 12.5}
+        else:
+            assert result.status_code == 404

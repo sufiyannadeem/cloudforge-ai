@@ -122,3 +122,17 @@ if __name__ == "__main__":
     print(
         "ALL FINOPS COST INTELLIGENCE TESTS PASSED"
     )
+
+
+def test_detective_distinguishes_unavailable_cost_from_flat_baseline_spike():
+    from .finops_cost_intelligence import detect_cost_anomalies
+
+    points = [{"date": f"2026-01-{i:02}", "amount": 10, "estimated": False} for i in range(1, 8)]
+    report = detect_cost_anomalies(points=points, start_date="2026-01-01", end_date="2026-01-09")
+    assert report.sample_count == 7 and not report.sufficient_data and not report.anomalies
+    points.append({"date": "2026-01-08", "amount": 30, "estimated": True})
+    report = detect_cost_anomalies(points=points, start_date="2026-01-01", end_date="2026-01-09")
+    assert report.sufficient_data and report.estimated_sample_count == 1
+    assert report.anomalies[0].severity.value == "critical"
+    assert report.anomalies[0].z_score is None and report.anomalies[0].estimated is True
+    assert '"z_score":null' in report.model_dump_json()

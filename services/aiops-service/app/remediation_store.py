@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
@@ -154,7 +154,10 @@ class RemediationStore:
         self,
         proposal_id: str,
         approved_by: str,
+        approved_role: str,
     ) -> RemediationProposal | None:
+        if not approved_by.strip() or approved_role not in {"sre", "platform-engineer"}:
+            raise PermissionError("verified SRE or Platform Engineer approval required")
         now = datetime.now(timezone.utc)
 
         with get_connection() as connection:
@@ -216,12 +219,32 @@ class RemediationStore:
 
                 return self._row_to_model(row)
 
+            environment = None
+            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value:
+                if existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value or existing["expires_at"] is None:
+                    raise PermissionError("proposal lacks an expiring remediation policy approval")
+                try:
+                    target_id = UUID(existing["target_deployment_id"])
+                except (ValueError, TypeError, AttributeError):
+                    raise ValueError("invalid deployment target") from None
+                if str(target_id) != existing["target_deployment_id"]:
+                    raise ValueError("deployment target must be a canonical UUID")
+                target = connection.execute(
+                    "SELECT environment FROM deployments WHERE id = %s AND status = 'pending'",
+                    (target_id,),
+                ).fetchone()
+                if target is None:
+                    raise ValueError("remediation requires a pending deployment target")
+                environment = target["environment"]
+
             row = connection.execute(
                 """
                 UPDATE aiops_remediation_proposals
                 SET
                     status = %s,
                     approved_by = %s,
+                    approved_role = %s,
+                    approved_environment = %s,
                     approved_at = %s,
                     updated_at = %s
                 WHERE id = %s
@@ -230,6 +253,8 @@ class RemediationStore:
                 (
                     RemediationStatus.APPROVED.value,
                     approved_by,
+                    approved_role,
+                    environment,
                     now,
                     now,
                     proposal_id,
@@ -248,6 +273,8 @@ class RemediationStore:
                 {
                     "proposal_id": proposal_id,
                     "approved_by": approved_by,
+                    "approved_role": approved_role,
+                    "environment": environment,
                     "action": row["action"],
                 },
                 now,
@@ -277,11 +304,12 @@ class RemediationStore:
             if existing is None:
                 return None
 
-            if existing["status"] != (
-                RemediationStatus.PENDING_APPROVAL.value
-            ):
+            if existing["status"] not in {
+                RemediationStatus.PENDING_APPROVAL.value,
+                RemediationStatus.APPROVED.value,
+            }:
                 raise ValueError(
-                    "only PENDING_APPROVAL proposals can be rejected"
+                    "only pending or unclaimed approved proposals can be rejected"
                 )
 
             if (
@@ -369,9 +397,8 @@ class RemediationStore:
         proposal_id: str,
         requested_by: str,
         idempotency_key: str,
+        dispatch_token_hash: str | None,
     ) -> RemediationProposal | None:
-        now = datetime.now(timezone.utc)
-
         with get_connection() as connection:
             existing = connection.execute(
                 """
@@ -386,21 +413,25 @@ class RemediationStore:
             if existing is None:
                 return None
 
-            stored_key = existing["execution_idempotency_key"]
-
-            if stored_key is not None:
-                if stored_key != idempotency_key:
-                    raise ValueError(
-                        "proposal already has a different "
-                        "execution idempotency key"
-                    )
-
-                return self._row_to_model(existing)
-
+            if existing["execution_idempotency_key"] is not None:
+                raise ValueError("proposal execution already claimed")
             if existing["status"] != RemediationStatus.APPROVED.value:
-                raise ValueError(
-                    "only APPROVED proposals can be executed"
-                )
+                raise ValueError("only APPROVED proposals can be executed")
+            now = datetime.now(timezone.utc)
+            if existing["expires_at"] is not None and existing["expires_at"] <= now:
+                raise PermissionError("remediation approval has expired")
+            if existing["rejected_at"] is not None or existing["policy_decision"] == PolicyDecision.BLOCKED.value:
+                raise PermissionError("remediation is rejected or blocked")
+            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value and (
+                not dispatch_token_hash
+                or not existing["approved_by"]
+                or not existing["approved_at"]
+                or existing["approved_role"] not in {"sre", "platform-engineer"}
+                or not existing["approved_environment"]
+                or not existing["expires_at"]
+                or existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value
+            ):
+                raise PermissionError("verified deployment approval required")
 
             row = connection.execute(
                 """
@@ -409,6 +440,7 @@ class RemediationStore:
                     status = %s,
                     execution_requested_by = %s,
                     execution_idempotency_key = %s,
+                    dispatch_token_hash = %s,
                     updated_at = %s
                 WHERE id = %s
                   AND status = %s
@@ -419,6 +451,7 @@ class RemediationStore:
                     RemediationStatus.EXECUTING.value,
                     requested_by,
                     idempotency_key,
+                    dispatch_token_hash,
                     now,
                     proposal_id,
                     RemediationStatus.APPROVED.value,
@@ -426,19 +459,7 @@ class RemediationStore:
             ).fetchone()
 
             if row is None:
-                concurrent = connection.execute(
-                    """
-                    SELECT *
-                    FROM aiops_remediation_proposals
-                    WHERE id = %s
-                    """,
-                    (proposal_id,),
-                ).fetchone()
-
-                if concurrent is None:
-                    return None
-
-                return self._row_to_model(concurrent)
+                raise ValueError("proposal execution already claimed")
 
             self._event(
                 connection,

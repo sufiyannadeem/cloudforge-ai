@@ -965,3 +965,7 @@ func TestApplyHandlerInternalError(t *testing.T) {
 		)
 	}
 }
+
+func (m *mockProvisioningManager) Review(context.Context, uuid.UUID, model.PlanReviewInput) error {
+	return nil
+}

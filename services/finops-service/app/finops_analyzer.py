@@ -41,18 +41,38 @@ class FinOpsAnalyzer:
         total_cost = sum(
             finding.estimated_monthly_cost
             for finding in findings
+            if finding.estimated_monthly_cost is not None
+        )
+
+        total_actual = sum(
+            finding.actual_monthly_cost
+            for finding in findings
+            if finding.actual_monthly_cost is not None
         )
 
         idle_cost = sum(
             finding.estimated_monthly_cost
             for finding in findings
-            if finding.idle
+            if finding.idle is True and finding.estimated_monthly_cost is not None
+        )
+
+        unavailable_cost_count = sum(
+            1 for finding in findings if finding.cost_status == "unavailable"
+        )
+
+        unavailable_util_count = sum(
+            1 for finding in findings if finding.utilization_status == "unavailable"
         )
 
         summary = CostSummary(
             total_estimated_monthly_cost=round(
                 total_cost,
                 2,
+            ),
+            total_actual_monthly_cost=(
+                round(total_actual, 2)
+                if any(f.actual_monthly_cost is not None for f in findings)
+                else None
             ),
             idle_monthly_cost=round(
                 idle_cost,
@@ -82,6 +102,8 @@ class FinOpsAnalyzer:
                 if finding.severity
                 == CostSeverity.INFO
             ),
+            unavailable_cost_count=unavailable_cost_count,
+            unavailable_utilization_count=unavailable_util_count,
         )
 
         return FinOpsReport(
@@ -127,20 +149,32 @@ class FinOpsAnalyzer:
             )
         ).strip()
 
-        estimated_cost = float(
-            resource.get(
-                "estimated_monthly_cost",
-                0.0,
-            )
-            or 0.0
-        )
+        raw_estimated_cost = resource.get("estimated_monthly_cost")
+        raw_actual_cost = resource.get("actual_monthly_cost")
+        cost_status = resource.get("cost_status")
 
-        idle = bool(
-            resource.get(
-                "idle",
-                False,
-            )
-        )
+        if raw_actual_cost is not None:
+            actual_cost = float(raw_actual_cost)
+            estimated_cost = actual_cost
+            cost_status = "actual"
+        elif raw_estimated_cost is not None:
+            actual_cost = None
+            estimated_cost = float(raw_estimated_cost)
+            cost_status = cost_status or "estimated"
+        else:
+            actual_cost = None
+            estimated_cost = None
+            cost_status = "unavailable"
+
+        raw_idle = resource.get("idle")
+        utilization_status = resource.get("utilization_status")
+
+        if raw_idle is not None:
+            idle = bool(raw_idle)
+            utilization_status = utilization_status or "observed"
+        else:
+            idle = None
+            utilization_status = "unavailable"
 
         tags = resource.get(
             "tags",
@@ -157,22 +191,51 @@ class FinOpsAnalyzer:
 
         severity = CostSeverity.INFO
 
-        if idle and estimated_cost >= 50:
+        if idle is True and estimated_cost is not None and estimated_cost >= 50:
             severity = CostSeverity.CRITICAL
 
-        elif idle or estimated_cost >= 100:
+        elif idle is True or (estimated_cost is not None and estimated_cost >= 100):
             severity = CostSeverity.WARNING
 
-        if idle:
-            reason = (
-                "Resource is marked idle and has "
-                "estimated ongoing monthly cost."
-            )
+        if idle is True:
+            if estimated_cost is not None and estimated_cost > 0:
+                reason = (
+                    "Resource is marked idle with observed low/zero utilization "
+                    "and has estimated ongoing monthly cost."
+                )
 
-            recommendation = (
-                "Review whether the resource is still "
-                "required before the next billing cycle."
-            )
+                recommendation = (
+                    "Review whether the resource is still required before the next billing cycle; "
+                    "verify workload needs and plan decommission or rightsizing with team approval."
+                )
+            else:
+                reason = (
+                    "Resource is observed idle, but reliable cost data is unavailable."
+                )
+
+                recommendation = (
+                    "Verify resource-level cost evidence before taking decommission or rightsizing action."
+                )
+
+        elif idle is None:
+            if untagged:
+                reason = (
+                    "Resource has no cost-allocation tags; utilization and cost evidence are unavailable."
+                )
+
+                recommendation = (
+                    "Apply CloudForge ownership, environment and cost-center tags; "
+                    "attach telemetry to observe utilization."
+                )
+            else:
+                reason = (
+                    "Resource has no deterministic cost optimization finding; "
+                    "utilization telemetry is not observed."
+                )
+
+                recommendation = (
+                    "Continue monitoring usage and cost; attach telemetry to observe utilization."
+                )
 
         elif untagged:
             reason = (
@@ -199,8 +262,11 @@ class FinOpsAnalyzer:
             resource_type=resource_type,
             service=service,
             estimated_monthly_cost=estimated_cost,
+            actual_monthly_cost=actual_cost,
+            cost_status=cost_status,
             severity=severity,
             idle=idle,
+            utilization_status=utilization_status,
             untagged=untagged,
             region=resource.get("region"),
             tags={

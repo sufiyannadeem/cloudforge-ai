@@ -10,7 +10,7 @@ from .remediation_models import (
     RemediationResponse,
 )
 from .remediation_service import RemediationService
-from .remediation_access import require_remediation_access
+from .remediation_access import require_remediation_approver, require_remediation_human
 
 
 router = APIRouter(
@@ -27,7 +27,7 @@ service = RemediationService()
 )
 def get_remediation(
     incident_id: str,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_human),
 ) -> RemediationResponse:
 
     incident = service.incidents.get(incident_id)
@@ -109,7 +109,7 @@ def get_remediation(
 def preview_remediation(
     incident_id: str,
     request: RemediationPreviewRequest,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_human),
 ):
 
     try:
@@ -129,7 +129,7 @@ def approve_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationApprovalRequest,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -140,14 +140,8 @@ def approve_remediation(
             detail="Remediation proposal not found",
         )
 
-    if caller["role"] not in {"platform-engineer", "admin"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Platform Engineer or admin approval required",
-        )
-
     try:
-        return service.approve(proposal_id, caller["actor"])
+        return service.approve(proposal_id, caller["actor"], caller["role"])
     except PermissionError as exc:
         raise HTTPException(
             status_code=409,
@@ -172,7 +166,7 @@ def reject_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationRejectionRequest,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -208,7 +202,7 @@ def execute_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationExecutionRequest,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -217,12 +211,6 @@ def execute_remediation(
         raise HTTPException(
             status_code=404,
             detail="Remediation proposal not found",
-        )
-
-    if caller["role"] not in {"platform-engineer", "admin"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Platform Engineer or admin execution required",
         )
 
     try:
@@ -263,7 +251,7 @@ def execute_remediation(
 def verify_remediation(
     incident_id: str,
     proposal_id: str,
-    caller: dict[str, str] = Depends(require_remediation_access),
+    caller: dict[str, str] = Depends(require_remediation_human),
 ):
 
     proposal = service.remediations.get(proposal_id)

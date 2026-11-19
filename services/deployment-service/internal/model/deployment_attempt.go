@@ -36,5 +36,6 @@ type DeploymentAttempt struct {
 	StartedAt     time.Time               `json:"started_at"`
 	CompletedAt   *time.Time              `json:"completed_at,omitempty"`
 	DurationMs    *int64                  `json:"duration_ms,omitempty"`
+	ExecutionMode string                  `json:"execution_mode,omitempty"`
 	CreatedAt     time.Time               `json:"created_at"`
 }

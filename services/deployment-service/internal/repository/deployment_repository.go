@@ -11,9 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 var (
+	ErrDeploymentConflict = errors.New("deployment changed during update")
+
 	ErrDeploymentNotFound = errors.New(
 		"deployment not found",
 	)
@@ -24,13 +27,19 @@ var (
 )
 
 type DeploymentRepository struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	executionMode string
 }
 
 func NewDeploymentRepository(pool *pgxpool.Pool) *DeploymentRepository {
 	return &DeploymentRepository{
-		pool: pool,
+		pool: pool, executionMode: "unknown",
 	}
+}
+
+// SetExecutionMode configures the provenance written by the durable worker before it starts.
+func (r *DeploymentRepository) SetExecutionMode(mode string) {
+	r.executionMode = mode
 }
 
 func (r *DeploymentRepository) Create(
@@ -104,6 +113,7 @@ func (r *DeploymentRepository) GetByID(
 			git_commit_sha,
 			namespace,
 			status,
+			execution_mode,
 			created_at,
 			updated_at
 		FROM deployments
@@ -124,6 +134,7 @@ func (r *DeploymentRepository) GetByID(
 		&deployment.GitCommitSHA,
 		&deployment.Namespace,
 		&deployment.Status,
+		&deployment.ExecutionMode,
 		&deployment.CreatedAt,
 		&deployment.UpdatedAt,
 	)
@@ -148,7 +159,7 @@ func (r *DeploymentRepository) List(
 		return nil, errors.New("database pool is nil")
 	}
 
-	const query = `
+	query := `
 		SELECT
 			id,
 			project_id,
@@ -157,20 +168,21 @@ func (r *DeploymentRepository) List(
 			git_commit_sha,
 			namespace,
 			status,
+			execution_mode,
 			created_at,
 			updated_at
-		FROM deployments
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
+		FROM deployments r
 	`
+	args := []any{limit, offset}
+	if member := identity.ListMember(ctx); member != "" {
+		query += ` WHERE EXISTS (
+			SELECT 1 FROM projects p WHERE p.id = r.project_id AND ` + identity.MembershipPredicate + `
+		)`
+		args = append(args, member)
+	}
+	query += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
-	rows, err := r.pool.Query(
-		ctx,
-		query,
-		limit,
-		offset,
-	)
-
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
@@ -190,6 +202,7 @@ func (r *DeploymentRepository) List(
 			&deployment.GitCommitSHA,
 			&deployment.Namespace,
 			&deployment.Status,
+			&deployment.ExecutionMode,
 			&deployment.CreatedAt,
 			&deployment.UpdatedAt,
 		)
@@ -211,6 +224,7 @@ func (r *DeploymentRepository) List(
 func (r *DeploymentRepository) Update(
 	ctx context.Context,
 	deployment model.Deployment,
+	expected model.Deployment,
 ) error {
 	if r.pool == nil {
 		return errors.New("database pool is nil")
@@ -224,8 +238,9 @@ func (r *DeploymentRepository) Update(
 			git_commit_sha = $4,
 			namespace = $5,
 			status = $6,
-			updated_at = $7
-		WHERE id = $1
+			updated_at = GREATEST($7::timestamptz, updated_at + interval '1 microsecond')
+		WHERE id = $1 AND status = $8 AND updated_at = $9 AND execution_token IS NULL
+		  AND (NOT $10::boolean OR (namespace = 'cf-' || project_id::text AND $5 = namespace))
 	`
 
 	result, err := r.pool.Exec(
@@ -238,6 +253,9 @@ func (r *DeploymentRepository) Update(
 		deployment.Namespace,
 		deployment.Status,
 		deployment.UpdatedAt,
+		expected.Status,
+		expected.UpdatedAt,
+		identity.FromContext(ctx).Human() && identity.FromContext(ctx).Role != "platform-engineer",
 	)
 
 	if err != nil {
@@ -245,7 +263,10 @@ func (r *DeploymentRepository) Update(
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrDeploymentNotFound
+		if _, err := r.GetByID(ctx, deployment.ID); err != nil {
+			return err
+		}
+		return ErrDeploymentConflict
 	}
 
 	return nil
@@ -261,7 +282,8 @@ func (r *DeploymentRepository) Delete(
 
 	const query = `
 		DELETE FROM deployments
-		WHERE id = $1
+		WHERE id = $1 AND execution_token IS NULL
+		  AND (status IN ('pending', 'queued') OR execution_mode = 'simulated')
 	`
 
 	result, err := r.pool.Exec(
@@ -275,7 +297,10 @@ func (r *DeploymentRepository) Delete(
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrDeploymentNotFound
+		if _, err := r.GetByID(ctx, id); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: execution history is retained or leased; deleting a record cannot remove a Kubernetes workload", ErrDeploymentConflict)
 	}
 
 	return nil
@@ -293,9 +318,10 @@ func (r *DeploymentRepository) ClaimPendingDeployment(
 		UPDATE deployments
 		SET
 			status = 'queued',
-			updated_at = $2
+			updated_at = GREATEST($2::timestamptz, updated_at + interval '1 microsecond')
 		WHERE id = $1
 		  AND status = 'pending'
+		  AND (NOT $3::boolean OR namespace = 'cf-' || project_id::text)
 	`
 
 	result, err := r.pool.Exec(
@@ -303,6 +329,7 @@ func (r *DeploymentRepository) ClaimPendingDeployment(
 		query,
 		id,
 		updatedAt,
+		identity.FromContext(ctx).Human() && identity.FromContext(ctx).Role != "platform-engineer",
 	)
 
 	if err != nil {
@@ -357,7 +384,7 @@ func (r *DeploymentRepository) ReleaseQueuedDeployment(
 		UPDATE deployments
 		SET
 			status = 'pending',
-			updated_at = $2
+			updated_at = GREATEST($2::timestamptz, updated_at + interval '1 microsecond')
 		WHERE id = $1
 		  AND status = 'queued'
 	`
@@ -394,22 +421,18 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 	}
 
 	const query = `
-		SELECT
-			id,
-			project_id,
-			environment,
-			image,
-			git_commit_sha,
-			namespace,
-			status,
-			created_at,
-			updated_at
-		FROM deployments
-		WHERE project_id = $1
-		  AND environment = $2
-		  AND status = 'succeeded'
-		  AND id != $3
-		ORDER BY created_at DESC
+		SELECT previous.id, previous.project_id, previous.environment, previous.image,
+		       previous.git_commit_sha, previous.namespace, previous.status,
+		       previous.execution_mode, previous.created_at, previous.updated_at
+		FROM deployments current
+		JOIN deployments previous ON previous.project_id = current.project_id
+		  AND previous.environment = current.environment AND previous.namespace = current.namespace
+		  AND previous.created_at < current.created_at
+		WHERE current.id = $3 AND current.project_id = $1 AND current.environment = $2
+		  AND current.execution_mode = $4 AND current.status IN ('succeeded', 'failed')
+		  AND previous.execution_mode = $4 AND previous.status = 'succeeded'
+		  AND ($4 <> 'kubernetes' OR previous.image ~ '@sha256:[a-fA-F0-9]{64}$')
+		ORDER BY previous.created_at DESC, previous.id DESC
 		LIMIT 1
 	`
 
@@ -421,6 +444,7 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 		projectID,
 		environment,
 		excludeDeploymentID,
+		r.executionMode,
 	).Scan(
 		&deployment.ID,
 		&deployment.ProjectID,
@@ -429,6 +453,7 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 		&deployment.GitCommitSHA,
 		&deployment.Namespace,
 		&deployment.Status,
+		&deployment.ExecutionMode,
 		&deployment.CreatedAt,
 		&deployment.UpdatedAt,
 	)

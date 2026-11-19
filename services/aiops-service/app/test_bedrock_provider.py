@@ -104,6 +104,42 @@ def test_bedrock_empty_response() -> None:
     assert content is None
 
 
+def test_bedrock_handles_operation_not_allowed_error() -> None:
+    """When Bedrock returns OperationNotAllowed (e.g. model access not enabled),
+    BedrockProvider returns an error status rather than silently falling back to mock."""
+    from botocore.exceptions import ClientError
+
+    provider = AIProvider()
+    provider.provider = "bedrock"
+    provider.model = "amazon.nova-lite-v1:0"
+
+    client_error = ClientError(
+        error_response={
+            "Error": {
+                "Code": "OperationNotAllowedException",
+                "Message": "Operation not allowed: model access not granted for account",
+            }
+        },
+        operation_name="InvokeModel",
+    )
+
+    formatted = provider._format_aws_error(client_error)
+    assert "OperationNotAllowedException" in formatted
+    assert "Operation not allowed" in formatted
+
+
+def test_production_rejects_mock_ai_provider() -> None:
+    """Verify that in production mode, AIOps startup validates that AI_PROVIDER != 'mock'."""
+    from pathlib import Path
+    main_path = Path(__file__).resolve().parent / "main.py"
+    with open(main_path) as f:
+        source = f.read()
+
+    assert "ai_provider_mode == \"mock\"" in source or 'ai_provider_mode == "mock"' in source
+    assert "AI_PROVIDER 'mock' is not permitted in production" in source
+
+
+
 def run_tests() -> None:
     tests = [
         (
@@ -121,6 +157,14 @@ def run_tests() -> None:
         (
             "BEDROCK EMPTY RESPONSE",
             test_bedrock_empty_response,
+        ),
+        (
+            "BEDROCK OPERATION NOT ALLOWED HANDLING",
+            test_bedrock_handles_operation_not_allowed_error,
+        ),
+        (
+            "PRODUCTION REJECTS MOCK AI PROVIDER",
+            test_production_rejects_mock_ai_provider,
         ),
     ]
 

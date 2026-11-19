@@ -32,15 +32,16 @@ func (s DeploymentStatus) IsValid() bool {
 }
 
 type Deployment struct {
-	ID           uuid.UUID        `json:"id"`
-	ProjectID    uuid.UUID        `json:"project_id"`
-	Environment  string           `json:"environment"`
-	Image        string           `json:"image"`
-	GitCommitSHA string           `json:"git_commit_sha"`
-	Namespace    string           `json:"namespace"`
-	Status       DeploymentStatus `json:"status"`
-	CreatedAt    time.Time        `json:"created_at"`
-	UpdatedAt    time.Time        `json:"updated_at"`
+	ID            uuid.UUID        `json:"id"`
+	ProjectID     uuid.UUID        `json:"project_id"`
+	Environment   string           `json:"environment"`
+	Image         string           `json:"image"`
+	GitCommitSHA  string           `json:"git_commit_sha"`
+	Namespace     string           `json:"namespace"`
+	Status        DeploymentStatus `json:"status"`
+	ExecutionMode string           `json:"execution_mode,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	UpdatedAt     time.Time        `json:"updated_at"`
 }
 
 type CreateDeploymentInput struct {

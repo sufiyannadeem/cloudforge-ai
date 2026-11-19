@@ -8,6 +8,7 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 type DeploymentAttemptHandler struct {
@@ -62,6 +63,11 @@ func (h *DeploymentAttemptHandler) ListByDeploymentID(
 		return
 	}
 
+	if identity.FromContext(r.Context()).Role == "developer" {
+		for i := range attempts {
+			attempts[i].ErrorMessage = nil
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"deployment_id": deploymentID,
 		"attempts":      attempts,

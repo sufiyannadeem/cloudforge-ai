@@ -1,27 +1,23 @@
 package handler
 
 import (
-	"crypto/subtle"
+	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
-	"os"
-	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
-const (
-	cloudForgeActorHeader         = "X-CloudForge-Actor"
-	cloudForgeIncidentHeader      = "X-CloudForge-Incident"
-	cloudForgeRemediationHeader   = "X-CloudForge-Remediation"
-	cloudForgeInternalTokenHeader = "X-CloudForge-Internal-Token"
-
-	cloudForgeHumanApproved = "human-approved"
-)
+type RemediationClaimer interface {
+	ClaimRemediation(context.Context, uuid.UUID, string, string, string) error
+}
 
 type DeploymentJobSubmitter interface {
 	Submit(job worker.Job) error
@@ -30,51 +26,19 @@ type DeploymentJobSubmitter interface {
 type QueuedDeploymentHandler struct {
 	queueManager service.DeploymentQueueManager
 	submitter    DeploymentJobSubmitter
+	remediation  RemediationClaimer
 }
 
 func NewQueuedDeploymentHandler(
 	queueManager service.DeploymentQueueManager,
 	submitter DeploymentJobSubmitter,
+	remediation RemediationClaimer,
 ) *QueuedDeploymentHandler {
 	return &QueuedDeploymentHandler{
 		queueManager: queueManager,
 		submitter:    submitter,
+		remediation:  remediation,
 	}
-}
-
-func authorizeRemediationRequest(r *http.Request) error {
-	expectedToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
-	providedToken := strings.TrimSpace(r.Header.Get(cloudForgeInternalTokenHeader))
-	if len(expectedToken) < 32 || strings.Contains(strings.ToLower(expectedToken), "replace-with") || len(providedToken) != len(expectedToken) ||
-		subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1 {
-		return errors.New("trusted remediation service authentication required")
-	}
-
-	actor := strings.TrimSpace(
-		r.Header.Get(cloudForgeActorHeader),
-	)
-
-	if actor == "" {
-		return errors.New("missing remediation actor")
-	}
-
-	incidentID := strings.TrimSpace(
-		r.Header.Get(cloudForgeIncidentHeader),
-	)
-
-	if incidentID == "" {
-		return errors.New("missing remediation incident")
-	}
-
-	remediation := strings.TrimSpace(
-		r.Header.Get(cloudForgeRemediationHeader),
-	)
-
-	if remediation != cloudForgeHumanApproved {
-		return errors.New("remediation authorization required")
-	}
-
-	return nil
 }
 
 // Run is the normal deployment execution endpoint.
@@ -98,16 +62,36 @@ func (h *QueuedDeploymentHandler) RunRemediation(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
-	if err := authorizeRemediationRequest(r); err != nil {
-		writeError(
-			w,
-			http.StatusForbidden,
-			"remediation authorization required",
-		)
+	caller := identity.FromContext(r.Context())
+	if caller.Issuer != "aiops" || !caller.Service() {
+		writeError(w, http.StatusUnauthorized, "AIOps service identity required")
 		return
 	}
 
-	h.queue(w, r)
+	target, err := uuid.Parse(r.PathValue("id"))
+	if err != nil || target == uuid.Nil {
+		writeError(w, http.StatusBadRequest, "invalid deployment ID")
+		return
+	}
+	proposal := r.Header.Get("X-CloudForge-Proposal")
+	incident := r.Header.Get("X-CloudForge-Incident")
+	dispatch := r.Header.Get("X-CloudForge-Dispatch")
+	decoded, decodeErr := base64.RawURLEncoding.Strict().DecodeString(dispatch)
+	if proposal == "" || len(proposal) > 64 || incident == "" || len(incident) > 64 ||
+		decodeErr != nil || len(decoded) != 32 || h.remediation == nil {
+		writeError(w, http.StatusForbidden, "valid unused remediation approval required")
+		return
+	}
+
+	err = h.remediation.ClaimRemediation(r.Context(), target, proposal, incident, dispatch)
+	switch {
+	case errors.Is(err, repository.ErrRemediationApprovalRequired):
+		writeError(w, http.StatusForbidden, "valid unused remediation approval required")
+	case err != nil:
+		writeError(w, http.StatusServiceUnavailable, "remediation authorization unavailable")
+	default:
+		writeQueued(w, target)
+	}
 }
 
 func (h *QueuedDeploymentHandler) queue(
@@ -179,12 +163,14 @@ func (h *QueuedDeploymentHandler) queue(
 		return
 	}
 
-	err = h.submitter.Submit(
-		worker.Job{
-			ID:           uuid.New(),
-			DeploymentID: deploymentID,
-		},
-	)
+	if h.submitter != nil {
+		err = h.submitter.Submit(
+			worker.Job{
+				ID:           uuid.New(),
+				DeploymentID: deploymentID,
+			},
+		)
+	}
 
 	if err != nil {
 		rollbackErr := h.queueManager.ReleaseQueuedDeployment(
@@ -227,6 +213,10 @@ func (h *QueuedDeploymentHandler) queue(
 		return
 	}
 
+	writeQueued(w, deploymentID)
+}
+
+func writeQueued(w http.ResponseWriter, deploymentID uuid.UUID) {
 	writeJSON(
 		w,
 		http.StatusAccepted,

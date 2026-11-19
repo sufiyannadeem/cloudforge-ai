@@ -1,38 +1,18 @@
 from __future__ import annotations
 
-import hmac
-import os
-
-from fastapi import Header, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 
-def require_remediation_access(
-    x_cloudforge_internal_token: str | None = Header(
-        default=None, alias="X-CloudForge-Internal-Token"
-    ),
-    x_cloudforge_actor: str | None = Header(
-        default=None, alias="X-CloudForge-Actor"
-    ),
-    x_cloudforge_role: str | None = Header(
-        default=None, alias="X-CloudForge-Role"
-    ),
+def require_remediation_human(request: Request) -> dict[str, str]:
+    claims = getattr(request.state, "human_identity", None)
+    if not claims:
+        raise HTTPException(401, "Verified operator identity required")
+    return {"actor": claims["sub"], "role": claims["role"]}
+
+
+def require_remediation_approver(
+    caller: dict[str, str] = Depends(require_remediation_human),
 ) -> dict[str, str]:
-    expected = os.getenv("CLOUDFORGE_INTERNAL_API_TOKEN", "")
-    if len(expected.encode("utf-8")) < 32 or "replace-with" in expected.lower():
-        raise HTTPException(
-            status_code=503,
-            detail="Remediation authentication is not configured.",
-        )
-
-    supplied = (x_cloudforge_internal_token or "").encode("utf-8")
-    if not hmac.compare_digest(supplied, expected.encode("utf-8")):
-        raise HTTPException(status_code=401, detail="Service authentication required.")
-
-    actor = (x_cloudforge_actor or "").strip()
-    role = (x_cloudforge_role or "").strip().lower()
-    if not actor or role not in {"platform-engineer", "devops", "sre", "admin"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Authorized operator identity required.",
-        )
-    return {"actor": actor, "role": role}
+    if caller["role"] not in {"sre", "platform-engineer"}:
+        raise HTTPException(403, "SRE or Platform Engineer required.")
+    return caller

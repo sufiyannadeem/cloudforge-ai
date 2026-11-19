@@ -4,15 +4,30 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
+	"time"
 )
 
-const testInternalToken = "0123456789abcdef0123456789abcdef" // 32 characters
+const testFrontendKey = "frontend-test-key-0123456789abcdef"
+const testAIOpsKey = "aiops-test-key-0123456789abcdef012"
+
+func signDeploymentRequest(req *http.Request, caller, key, role string) {
+	now := time.Now().Unix()
+	subject := ""
+	if role != "" {
+		subject = "operator"
+	}
+	req.Header.Set(identity.Header, identity.Sign(identity.Claims{
+		Issuer: caller, Audience: "deployment", Subject: subject, Role: role,
+		Method: req.Method, Target: req.URL.RequestURI(), Issued: now, Expiry: now + 25,
+		Nonce: "0123456789abcdef0123456789abcdef",
+	}, key))
+}
 
 func setupTestRouter(mgr *mockDeploymentManager) http.Handler {
 	if mgr == nil {
@@ -22,7 +37,7 @@ func setupTestRouter(mgr *mockDeploymentManager) http.Handler {
 	h := NewDeploymentHandler(mgr)
 	mux := NewRouter(h)
 
-	return NewRouterWithInternalToken(mux, testInternalToken)
+	return NewAuthenticatedRouter(mux, testFrontendKey, testAIOpsKey)
 }
 
 func TestRouterHealthBypassesAuth(t *testing.T) {
@@ -46,7 +61,7 @@ func TestRouterMetricsBypassesAuth(t *testing.T) {
 		_, _ = w.Write([]byte("metrics_data"))
 	}))
 
-	router := NewRouterWithInternalToken(mux, testInternalToken)
+	router := NewAuthenticatedRouter(mux, testFrontendKey, testAIOpsKey)
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
@@ -71,163 +86,37 @@ func TestRouterOpenAPIBypassesAuth(t *testing.T) {
 	}
 }
 
-func TestRouterRejectsMissingToken(t *testing.T) {
-	router := setupTestRouter(nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d", rec.Code)
-	}
-}
-
-func TestRouterRejectsShortToken(t *testing.T) {
-	mgr := &mockDeploymentManager{}
-	h := NewDeploymentHandler(mgr)
-	mux := NewRouter(h)
-
-	// Router with token shorter than 32 characters
-	router := NewRouterWithInternalToken(mux, "short-token")
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
-	req.Header.Set("X-CloudForge-Internal-Token", "short-token")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401 for short token, got %d", rec.Code)
-	}
-}
-
-func TestRouterRejectsMismatchedToken(t *testing.T) {
-	router := setupTestRouter(nil)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
-	req.Header.Set("X-CloudForge-Internal-Token", "wrong-token-32-chars-long-abcdef")
-	req.Header.Set("X-CloudForge-Role", "viewer")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status 401, got %d", rec.Code)
-	}
-}
-
-func TestRouterAllowsViewerForGet(t *testing.T) {
-	mgr := &mockDeploymentManager{
-		listFunc: func(ctx context.Context, limit, offset int) ([]model.Deployment, error) {
-			return []model.Deployment{}, nil
-		},
-	}
-	router := setupTestRouter(mgr)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deployments", nil)
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "viewer")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", rec.Code)
-	}
-}
-
-func TestRouterRejectsViewerForMutations(t *testing.T) {
-	router := setupTestRouter(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments", strings.NewReader(`{}`))
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "viewer")
-	req.Header.Set("X-CloudForge-Actor", "user-123")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403 for viewer mutation, got %d", rec.Code)
-	}
-}
-
-func TestRouterRejectsMutationWithoutActor(t *testing.T) {
-	router := setupTestRouter(nil)
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments", strings.NewReader(`{}`))
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "devops")
-	// Missing X-CloudForge-Actor
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403 when actor is missing, got %d", rec.Code)
-	}
-}
-
-func TestRouterAllowsDevOpsForCreate(t *testing.T) {
-	mgr := &mockDeploymentManager{
-		createFunc: func(ctx context.Context, input model.CreateDeploymentInput) (model.Deployment, error) {
-			return testDeployment(), nil
-		},
-	}
-	router := setupTestRouter(mgr)
-
-	body := `{"project_id":"` + uuid.New().String() + `","environment":"production","image":"nginx:1.27","git_commit_sha":"abcdef1234567","namespace":"prod"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments", strings.NewReader(body))
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "devops")
-	req.Header.Set("X-CloudForge-Actor", "operator-1")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected status 201, got %d", rec.Code)
-	}
-}
-
-func TestRouterLeastPrivilegeRejectsDevOpsForDelete(t *testing.T) {
-	router := setupTestRouter(nil)
-
-	id := uuid.New().String()
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/deployments/"+id, nil)
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "devops")
-	req.Header.Set("X-CloudForge-Actor", "operator-1")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected status 403 for devops delete, got %d", rec.Code)
-	}
-}
-
-func TestRouterLeastPrivilegeAllowsPlatformEngineerForDelete(t *testing.T) {
-	mgr := &mockDeploymentManager{
-		deleteFunc: func(ctx context.Context, id uuid.UUID) error {
-			return nil
-		},
-	}
-	router := setupTestRouter(mgr)
-
-	id := uuid.New().String()
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/deployments/"+id, nil)
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "platform-engineer")
-	req.Header.Set("X-CloudForge-Actor", "lead-engineer")
-	rec := httptest.NewRecorder()
-
-	router.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected status 204, got %d", rec.Code)
+func TestDeploymentCallerScope(t *testing.T) {
+	router := NewAuthenticatedRouter(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), testFrontendKey, testAIOpsKey)
+	target := "/api/v1/deployments/" + uuid.NewString()
+	for _, tc := range []struct {
+		method, path, issuer, key, role string
+		status                          int
+	}{
+		{"GET", target, "", "", "", 401},
+		{"GET", target, "frontend", testFrontendKey, "developer", 503},
+		{"DELETE", target, "frontend", testFrontendKey, "developer", 403},
+		{"DELETE", target, "frontend", testFrontendKey, "platform-engineer", 204},
+		{"GET", target + "/attempts", "aiops", testAIOpsKey, "", 204},
+		{"GET", "/api/v1/deployments?limit=10", "aiops", testAIOpsKey, "", 204},
+		{"POST", target + "/run", "aiops", testAIOpsKey, "", 403},
+		{"POST", target + "/run", "aiops", testAIOpsKey, "platform-engineer", 403},
+		{"POST", target + "/run", "frontend", testAIOpsKey, "platform-engineer", 401},
+		{"POST", target + "/remediation-run", "frontend", testFrontendKey, "platform-engineer", 403},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("X-CloudForge-Role", "platform-engineer")
+		req.Header.Set("X-CloudForge-Actor", "forged")
+		if tc.key != "" {
+			signDeploymentRequest(req, tc.issuer, tc.key, tc.role)
+		}
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		if res.Code != tc.status {
+			t.Errorf("%s %s as %q: got %d want %d", tc.method, tc.path, tc.issuer, res.Code, tc.status)
+		}
 	}
 }
 
@@ -244,14 +133,28 @@ func TestRouterRollbackRoute(t *testing.T) {
 	router := setupTestRouter(mgr)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/deployments/"+id.String()+"/rollback", nil)
-	req.Header.Set("X-CloudForge-Internal-Token", testInternalToken)
-	req.Header.Set("X-CloudForge-Role", "sre")
-	req.Header.Set("X-CloudForge-Actor", "oncall-sre")
+	signDeploymentRequest(req, "frontend", testFrontendKey, "platform-engineer")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected status 201, got %d", rec.Code)
+	}
+}
+
+func TestAuthenticatedRouterPreservesRegisteredPatternForMetrics(t *testing.T) {
+	const path = "/api/v1/deployments"
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	router := NewAuthenticatedRouter(mux, testFrontendKey, testAIOpsKey)
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	signDeploymentRequest(request, "frontend", testFrontendKey, "sre")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || request.Pattern != "GET "+path {
+		t.Fatalf("status = %d, registered pattern = %q", recorder.Code, request.Pattern)
 	}
 }

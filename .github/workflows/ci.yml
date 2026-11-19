@@ -180,6 +180,7 @@ jobs:
         working-directory: .
         run: |
           docker build \
+            --build-context service_identity=./services/service-identity \
             -t cloudforge-project-service:ci \
             -t cloudforge-project-service:${{ github.sha }} \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
@@ -268,6 +269,7 @@ jobs:
         working-directory: .
         run: |
           docker build \
+            --build-context service_identity=./services/service-identity \
             -t cloudforge-infrastructure-service:ci \
             -t cloudforge-infrastructure-service:${{ github.sha }} \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
@@ -369,6 +371,7 @@ jobs:
         working-directory: .
         run: |
           docker build \
+            --build-context service_identity=./services/service-identity \
             -t cloudforge-deployment-service:ci \
             -t cloudforge-deployment-service:${{ github.sha }} \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \

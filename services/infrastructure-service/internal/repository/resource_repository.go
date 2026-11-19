@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 var (
@@ -55,11 +56,11 @@ func (r *ResourceRepository) Create(
 			plan_created_at,
 			approval_expires_at,
 			created_at,
-			updated_at
+			updated_at, requested_by
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
-			$9, $10, $11, $12, $13, $14, $15, $16, $17
+			$9, $10, $11, $12, $13, $14, $15, $16, $17, NULLIF($18, '')
 		)
 	`
 
@@ -83,6 +84,7 @@ func (r *ResourceRepository) Create(
 		resource.ApprovalExpiresAt,
 		resource.CreatedAt,
 		resource.UpdatedAt,
+		resource.RequestedBy,
 	)
 
 	if err != nil {
@@ -116,8 +118,22 @@ func (r *ResourceRepository) GetByID(
 			destroy_plan_path,
 			destroy_plan_hash,
 			created_at,
-			updated_at
-		FROM infrastructure_resources
+			updated_at,
+			COALESCE(requested_by, ''),
+			COALESCE(destroy_requested_by, ''),
+			terraform_resource_id,
+			last_execution_error,
+			aws_last_verified_at,
+			COALESCE((
+			    SELECT v.status FROM infrastructure_plan_reviews v
+			    WHERE v.resource_id = r.id
+			      AND (r.status NOT IN ('awaiting_approval', 'awaiting_destroy_approval') OR (
+			          v.revision = r.updated_at
+			          AND v.operation = CASE WHEN r.status = 'awaiting_destroy_approval' THEN 'destroy' ELSE 'apply' END
+			      ))
+			    ORDER BY v.submitted_at DESC LIMIT 1
+			), '')
+		FROM infrastructure_resources r
 		WHERE id = $1
 	`
 
@@ -151,6 +167,12 @@ func (r *ResourceRepository) GetByID(
 		&destroyPlanHash,
 		&resource.CreatedAt,
 		&resource.UpdatedAt,
+		&resource.RequestedBy,
+		&resource.DestroyRequestedBy,
+		&resource.TerraformResourceID,
+		&resource.LastExecutionError,
+		&resource.AWSLastVerifiedAt,
+		&resource.ReviewStatus,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -199,7 +221,7 @@ func (r *ResourceRepository) List(
 	limit int,
 	offset int,
 ) ([]model.InfrastructureResource, error) {
-	const query = `
+	query := `
 		SELECT
 			id,
 			project_id,
@@ -219,13 +241,44 @@ func (r *ResourceRepository) List(
 			destroy_plan_path,
 			destroy_plan_hash,
 			created_at,
-			updated_at
-		FROM infrastructure_resources
-		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
+			updated_at,
+			COALESCE(requested_by, ''),
+			COALESCE(destroy_requested_by, ''),
+			terraform_resource_id,
+			last_execution_error,
+			aws_last_verified_at,
+			COALESCE((
+			    SELECT v.status FROM infrastructure_plan_reviews v
+			    WHERE v.resource_id = r.id
+			      AND (r.status NOT IN ('awaiting_approval', 'awaiting_destroy_approval') OR (
+			          v.revision = r.updated_at
+			          AND v.operation = CASE WHEN r.status = 'awaiting_destroy_approval' THEN 'destroy' ELSE 'apply' END
+			      ))
+			    ORDER BY v.submitted_at DESC LIMIT 1
+			), '')
+		FROM infrastructure_resources r
 	`
+	args := []any{limit, offset}
+	var filters []string
+	if member := identity.ListMember(ctx); member != "" {
+		filters = append(filters, `EXISTS (
+			SELECT 1 FROM projects p WHERE p.id = r.project_id AND `+identity.MembershipPredicate+`
+		)`)
+		args = append(args, member)
+	}
+	if pending, _ := ctx.Value(pendingReviewKey{}).(bool); pending {
+		filters = append(filters, `r.status IN ('awaiting_approval', 'awaiting_destroy_approval') AND EXISTS (
+			SELECT 1 FROM infrastructure_plan_reviews v
+			WHERE v.resource_id = r.id AND v.revision = r.updated_at
+			  AND v.status = 'submitted' AND v.expires_at > clock_timestamp()
+		)`)
+	}
+	if len(filters) > 0 {
+		query += " WHERE " + strings.Join(filters, " AND ")
+	}
+	query += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
-	rows, err := r.pool.Query(ctx, query, limit, offset)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list infrastructure resources: %w", err)
 	}
@@ -264,6 +317,12 @@ func (r *ResourceRepository) List(
 			&destroyPlanHash,
 			&resource.CreatedAt,
 			&resource.UpdatedAt,
+			&resource.RequestedBy,
+			&resource.DestroyRequestedBy,
+			&resource.TerraformResourceID,
+			&resource.LastExecutionError,
+			&resource.AWSLastVerifiedAt,
+			&resource.ReviewStatus,
 		); err != nil {
 			return nil, fmt.Errorf(
 				"scan infrastructure resource: %w",
@@ -394,7 +453,9 @@ func (r *ResourceRepository) TransitionStatus(
 
 	query := fmt.Sprintf(`
 		UPDATE infrastructure_resources
-		SET status = $1, updated_at = $2
+		SET status = CASE WHEN $1 = 'active' AND `+failedExecutionExists+` THEN 'destroy_failed' ELSE $1 END,
+		    plan_started_active = CASE WHEN $1 = 'planning' THEN status = 'active' ELSE plan_started_active END,
+		    updated_at = GREATEST($2::timestamptz, updated_at + interval '1 microsecond')
 		WHERE id = $3 AND status IN (%s)
 	`, strings.Join(placeholders, ", "))
 
@@ -421,7 +482,7 @@ func (r *ResourceRepository) SavePlan(
 		    plan_created_at = $4,
 		    approval_expires_at = $5,
 		    status = $6,
-		    updated_at = $7
+		    updated_at = GREATEST($7::timestamptz, updated_at + interval '1 microsecond')
 		WHERE id = $8 AND status = $9
 	`
 	result, err := r.pool.Exec(
@@ -457,7 +518,8 @@ func (r *ResourceRepository) SaveDestroyPlan(
 		    destroy_plan_hash = $2,
 		    approval_expires_at = $3,
 		    status = $4,
-		    updated_at = $5
+		    updated_at = GREATEST($5::timestamptz, updated_at + interval '1 microsecond'),
+		    destroy_requested_by = NULLIF($8, '')
 		WHERE id = $6 AND status = $7
 	`
 	result, err := r.pool.Exec(
@@ -469,6 +531,7 @@ func (r *ResourceRepository) SaveDestroyPlan(
 		time.Now().UTC(),
 		resource.ID,
 		model.ResourceStatusPlanning,
+		resource.DestroyRequestedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("persist terraform destroy plan: %w", err)
@@ -515,7 +578,10 @@ func (r *ResourceRepository) UpdateEditable(
 		}
 		add("configuration", configuration)
 	}
-	add("updated_at", time.Now().UTC())
+	if expectedStatus == model.ResourceStatusPending || expectedStatus == model.ResourceStatusFailed {
+		sets = append(sets, "plan_path = NULL", "plan_hash = NULL", "plan_created_at = NULL", "approval_expires_at = NULL")
+	}
+	sets = append(sets, "updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')")
 	args = append(args, id, expectedStatus)
 	query := fmt.Sprintf(`UPDATE infrastructure_resources SET %s WHERE id = $%d AND status = $%d`,
 		strings.Join(sets, ", "), len(args)-1, len(args))
@@ -542,8 +608,18 @@ func (r *ResourceRepository) DeleteIfStatusAllowed(
 			'provisioning',
 			'active',
 			'destroying',
+			'destroy_failed',
 			'awaiting_destroy_approval'
 		  )
+		  AND (status = 'destroyed' OR (
+		    NOT ` + failedExecutionExists + `
+		    AND aws_last_verified_at IS NULL
+		    AND NULLIF(terraform_resource_id, '') IS NULL
+		    AND NOT EXISTS (
+		        SELECT 1 FROM infrastructure_plan_reviews v
+		        WHERE v.resource_id = infrastructure_resources.id AND v.operation = 'apply' AND v.status = 'succeeded'
+		    )
+		  ))
 	`
 
 	result, err := r.pool.Exec(ctx, query, id)

@@ -18,6 +18,8 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/terraform"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func main() {
@@ -32,10 +34,7 @@ func main() {
 		logger.Fatalf("load configuration: %v", err)
 	}
 
-	internalToken := os.Getenv("CLOUDFORGE_INTERNAL_API_TOKEN")
-	if len(internalToken) < 32 || strings.Contains(strings.ToLower(internalToken), "replace-with") {
-		logger.Fatal("CLOUDFORGE_INTERNAL_API_TOKEN must contain at least 32 characters")
-	}
+	frontendKey := os.Getenv("CLOUDFORGE_FRONTEND_KEY")
 
 	ctx := context.Background()
 
@@ -64,11 +63,6 @@ func main() {
 		"/var/lib/cloudforge/terraform",
 	)
 
-	stateBucket := getEnv(
-		"TERRAFORM_STATE_BUCKET",
-		"",
-	)
-
 	terraformBinary := getEnv(
 		"TERRAFORM_BINARY",
 		"terraform",
@@ -86,12 +80,15 @@ func main() {
 
 	terraformGenerator := terraform.NewGenerator(
 		workspaceRoot,
-		stateBucket,
+		cfg.TerraformStateBucket,
 	)
+	terraformGenerator.StateRegion = cfg.TerraformStateRegion
+	terraformGenerator.ProvisionerRoleARN = strings.TrimSpace(os.Getenv("TERRAFORM_PROVISIONER_ROLE_ARN"))
 
 	terraformRunner := terraform.NewRunner(
 		terraformGenerator,
 	)
+	terraformRunner.RequireRemoteState = cfg.AppEnv == "production"
 
 	terraformRunner.TerraformBin = terraformBinary
 	terraformRunner.PlanTimeout = planTimeout
@@ -107,7 +104,17 @@ func main() {
 		provisioningService,
 	)
 
-	router := handler.NewRouterWithInternalToken(resourceHandler, internalToken)
+	resourceHandler.TerraformReadOnly = cfg.TerraformReadOnly
+	resourceHandler.DriftStore = resourceRepository
+	resourceHandler.DriftRunner = terraformRunner
+
+	router := handler.NewAuthenticatedRouter(resourceHandler, frontendKey, func(ctx context.Context, claims identity.Claims) error {
+		consumed, err := resourceRepository.ConsumeApprovalAssertion(ctx, claims.Nonce, claims.Expiry)
+		if err == nil && !consumed {
+			return identity.ErrReplay
+		}
+		return err
+	}, identity.ProjectAccess{DB: pool})
 
 	server := &http.Server{
 		Addr:              ":" + cfg.ServerPort,

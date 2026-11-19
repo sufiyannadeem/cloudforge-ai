@@ -38,6 +38,7 @@ type ResourceManager interface {
 }
 
 type ProvisioningManager interface {
+	Review(context.Context, uuid.UUID, model.PlanReviewInput) error
 	Plan(
 		ctx context.Context,
 		id uuid.UUID,

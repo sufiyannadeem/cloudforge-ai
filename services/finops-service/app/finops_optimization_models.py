@@ -80,6 +80,9 @@ class KubernetesWorkload(BaseModel):
     cpu_limit_cores: float | None = None
     memory_limit_bytes: float | None = None
 
+    cpu_usage_available: bool = False
+    memory_usage_available: bool = False
+
     # Optional pricing evidence. Prometheus does not invent these values.
     monthly_cpu_cost_usd_per_core: float | None = None
     monthly_memory_cost_usd_per_gib: float | None = None
@@ -107,10 +110,8 @@ class NodeObservation(BaseModel):
     memory_requested_bytes: float
     memory_usage_bytes: float
 
-    # True means the collector actually observed the utilization metric.
-    # Directly constructed observations remain backward-compatible.
-    cpu_usage_available: bool = True
-    memory_usage_available: bool = True
+    cpu_usage_available: bool = False
+    memory_usage_available: bool = False
 
     monthly_cost_usd: float | None = None
     pricing_source: str | None = None
@@ -168,6 +169,9 @@ class EC2Observation(BaseModel):
     target_instance_type: str | None = None
     target_monthly_cost_usd: float | None = None
     pricing_source: str | None = None
+    utilization_available: bool = False
+    period_seconds: int | None = None
+    datapoints_count: int | None = None
 
 
 class AWSOptimizationObservation(BaseModel):

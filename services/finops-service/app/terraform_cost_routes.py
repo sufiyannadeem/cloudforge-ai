@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from .access_control import require_finops_access
 from pydantic import BaseModel, Field
 
 from .terraform_cost_estimator import TerraformCostEstimator
@@ -14,6 +16,7 @@ from .terraform_cost_models import (
 router = APIRouter(
     prefix="/api/v1/terraform",
     tags=["terraform-cost"],
+    dependencies=[Depends(require_finops_access)],
 )
 
 

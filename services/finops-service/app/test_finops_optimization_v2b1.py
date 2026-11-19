@@ -27,6 +27,7 @@ def test_cpu_savings_requires_pricing_evidence():
                         replicas=2,
                         cpu_request_cores=2.0,
                         cpu_usage_cores=0.25,
+                        cpu_usage_available=True,
                     )
                 ]
             )
@@ -50,6 +51,7 @@ def test_cpu_savings_is_deterministic_with_pricing():
                     replicas=2,
                     cpu_request_cores=2.0,
                     cpu_usage_cores=0.25,
+                    cpu_usage_available=True,
                     monthly_cpu_cost_usd_per_core=10.0,
                     pricing_source="test-rate-card",
                 )
@@ -568,6 +570,7 @@ def test_ec2_downsizing_optimization():
                 resource_id="i-0abcdef1234567890",
                 instance_type="t3.large",
                 cpu_utilization_percent=8.0,
+                utilization_available=True,
                 monthly_cost_usd=75.0,
                 target_instance_type="t3.medium",
                 target_monthly_cost_usd=40.0,

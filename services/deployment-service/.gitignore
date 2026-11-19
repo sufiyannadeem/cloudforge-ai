@@ -1,5 +1,5 @@
 # Compiled binaries
-server
+/server
 bin/
 *.exe
 *.out

@@ -55,8 +55,10 @@ var (
 )
 
 type Generator struct {
-	WorkspaceRoot string
-	StateBucket   string
+	WorkspaceRoot      string
+	StateBucket        string
+	StateRegion        string
+	ProvisionerRoleARN string
 }
 
 type GeneratedWorkspace struct {
@@ -154,6 +156,10 @@ func (g *Generator) Generate(
 }
 
 func (g *Generator) versionsFile() string {
+	assumeRole := ""
+	if g.ProvisionerRoleARN != "" {
+		assumeRole = fmt.Sprintf("\n  assume_role {\n    role_arn = %q\n  }\n", hclEscape(g.ProvisionerRoleARN))
+	}
 	return fmt.Sprintf(`terraform {
   required_version = ">= 1.10.0, < 2.0.0"
 
@@ -167,7 +173,7 @@ func (g *Generator) versionsFile() string {
 
 provider "aws" {
   region = var.aws_region
-
+%s
   default_tags {
     tags = {
       ManagedBy       = "cloudforge-ai"
@@ -176,12 +182,16 @@ provider "aws" {
     }
   }
 }
-`, awsProvider)
+`, awsProvider, assumeRole)
 }
 
 func (g *Generator) backendFile(
 	resource model.InfrastructureResource,
 ) string {
+	region := g.StateRegion
+	if region == "" {
+		region = resource.Region
+	}
 	return fmt.Sprintf(`terraform {
   backend "s3" {
     bucket       = %q
@@ -191,7 +201,7 @@ func (g *Generator) backendFile(
     use_lockfile = true
   }
 }
-`, g.StateBucket, resource.ID.String(), resource.Region)
+`, g.StateBucket, resource.ID.String(), region)
 }
 
 func (g *Generator) variablesFile(
@@ -279,6 +289,11 @@ func (g *Generator) vpcFile(
 		return "", errors.New(
 			"configuration.cidr_block must be an IPv4 CIDR",
 		)
+	}
+
+	prefix, bits := network.Mask.Size()
+	if bits != 32 || prefix < 16 || prefix > 28 {
+		return "", errors.New("AWS VPC IPv4 CIDR prefix must be between /16 and /28")
 	}
 
 	enableDNSHostnames := boolValue(
@@ -398,7 +413,21 @@ func (g *Generator) ec2File(
 		return "", err
 	}
 
+	// These values come from the authorized request, never from supplied tags.
+	tags["cloudforge:resource-id"] = resource.ID.String()
+	tags["cloudforge:environment"] = resource.Environment
+	delete(tags, "cloudforge:project-id")
+	if resource.ProjectID != nil {
+		tags["cloudforge:project-id"] = resource.ProjectID.String()
+	}
+
 	var builder strings.Builder
+	ami := fmt.Sprintf("%q", amiID)
+	if parameter, ok := strings.CutPrefix(amiID, "resolve:ssm:"); ok {
+		// Resolve during planning so the reviewed plan pins the actual AMI.
+		builder.WriteString(fmt.Sprintf("data \"aws_ssm_parameter\" \"ami\" {\n  name = %q\n  with_decryption = false\n}\n\n", parameter))
+		ami = "data.aws_ssm_parameter.ami.value"
+	}
 
 	builder.WriteString(fmt.Sprintf(`locals {
   resource_id   = var.resource_id
@@ -406,10 +435,10 @@ func (g *Generator) ec2File(
 }
 
 resource "aws_instance" "this" {
-  ami                         = %q
+  ami                         = %s
   instance_type               = %q
   associate_public_ip_address = %t
-`, amiID, instanceType, associatePublicIP))
+`, ami, instanceType, associatePublicIP))
 
 	if hasSubnet && subnetID != "" {
 		builder.WriteString(
@@ -582,14 +611,7 @@ func (g *Generator) rdsFile(
 		return "", fmt.Errorf("unsupported or invalid database engine: %s", engine)
 	}
 
-	engineVersion, ok := stringValue(resource.Configuration, "engine_version")
-	if !ok {
-		if engine == "postgres" {
-			engineVersion = "16.3"
-		} else {
-			engineVersion = "8.0"
-		}
-	}
+	engineVersion, _ := stringValue(resource.Configuration, "engine_version")
 
 	instanceClass, ok := stringValue(resource.Configuration, "instance_class")
 	if !ok {
@@ -625,12 +647,26 @@ func (g *Generator) rdsFile(
 		return "", err
 	}
 
+	if len(subnetIDs) == 1 {
+		return "", errors.New("aws_rds requires at least two subnet_ids when a subnet group is requested")
+	}
+	if err := validateSubnetIDs(subnetIDs); err != nil {
+		return "", err
+	}
+
 	skipFinalSnapshot := boolValue(resource.Configuration, "skip_final_snapshot", true)
 	multiAZ := boolValue(resource.Configuration, "multi_az", false)
 
 	tags, err := tagsValue(resource.Configuration)
 	if err != nil {
 		return "", err
+	}
+
+	identifier := `replace(lower(var.resource_name), "_", "-")`
+	subnetGroup := `"cloudforge-db-subnet-${var.resource_name}"`
+	if g.ProvisionerRoleARN != "" {
+		identifier = fmt.Sprintf("%q", "cloudforge-"+resource.ID.String())
+		subnetGroup = identifier
 	}
 
 	var builder strings.Builder
@@ -652,7 +688,7 @@ variable "db_master_password" {
 	if len(subnetIDs) >= 2 {
 		builder.WriteString(fmt.Sprintf(`
 resource "aws_db_subnet_group" "this" {
-  name        = "cloudforge-db-subnet-${var.resource_name}"
+  name        = %s
   description = "Subnet group for CloudForge managed RDS instance"
   subnet_ids  = %s
 
@@ -663,22 +699,28 @@ resource "aws_db_subnet_group" "this" {
     %s
   )
 }
-`, renderStringList(subnetIDs), renderTags(tags)))
+`, subnetGroup, renderStringList(subnetIDs), renderTags(tags)))
 	}
 
 	builder.WriteString(fmt.Sprintf(`
 resource "aws_db_instance" "this" {
-  identifier          = replace(lower(var.resource_name), "_", "-")
+  identifier          = %s
   allocated_storage   = %d
   engine              = %q
-  engine_version      = %q
   instance_class      = %q
   db_name             = %q
   username            = %q
   password            = var.db_master_password
   skip_final_snapshot = %t
   multi_az            = %t
-`, allocatedStorage, engine, engineVersion, instanceClass, databaseName, username, skipFinalSnapshot, multiAZ))
+`, identifier, allocatedStorage, engine, instanceClass, databaseName, username, skipFinalSnapshot, multiAZ))
+
+	if engineVersion != "" {
+		builder.WriteString(fmt.Sprintf("  engine_version = %q\n", engineVersion))
+	}
+	if !skipFinalSnapshot {
+		builder.WriteString(fmt.Sprintf("  final_snapshot_identifier = %q\n", "cloudforge-final-"+resource.ID.String()))
+	}
 
 	if len(subnetIDs) >= 2 {
 		builder.WriteString("  db_subnet_group_name = aws_db_subnet_group.this.name\n")
@@ -717,12 +759,23 @@ output "db_instance_port" {
 	return builder.String(), nil
 }
 
+func validateSubnetIDs(ids []string) error {
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !subnetPattern.MatchString(id) || seen[id] {
+			return errors.New("subnet_ids must contain distinct AWS subnet IDs")
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
 func (g *Generator) eksFile(
 	resource model.InfrastructureResource,
 ) (string, error) {
-	clusterVersion, ok := stringValue(resource.Configuration, "cluster_version")
-	if !ok {
-		clusterVersion = "1.30"
+	version := "null"
+	if clusterVersion, ok := stringValue(resource.Configuration, "cluster_version"); ok {
+		version = fmt.Sprintf("%q", clusterVersion)
 	}
 
 	subnetIDs, err := stringSliceValue(resource.Configuration, "subnet_ids")
@@ -731,6 +784,10 @@ func (g *Generator) eksFile(
 	}
 	if len(subnetIDs) < 2 {
 		return "", errors.New("aws_eks requires at least two subnet_ids across multiple availability zones")
+	}
+
+	if err := validateSubnetIDs(subnetIDs); err != nil {
+		return "", err
 	}
 
 	nodeInstanceTypes, err := stringSliceValue(resource.Configuration, "node_instance_types")
@@ -744,10 +801,20 @@ func (g *Generator) eksFile(
 	desiredCapacity := intValue(resource.Configuration, "desired_capacity", 2)
 	minCapacity := intValue(resource.Configuration, "min_capacity", 1)
 	maxCapacity := intValue(resource.Configuration, "max_capacity", 4)
+	if minCapacity < 0 || maxCapacity < 1 || desiredCapacity < minCapacity || desiredCapacity > maxCapacity {
+		return "", errors.New("aws_eks capacity must satisfy 0 <= min_capacity <= desired_capacity <= max_capacity, with max_capacity positive")
+	}
 
 	tags, err := tagsValue(resource.Configuration)
 	if err != nil {
 		return "", err
+	}
+
+	clusterName := `replace(lower(var.resource_name), "_", "-")`
+	roleSuffix := "${var.resource_name}"
+	if g.ProvisionerRoleARN != "" {
+		clusterName = fmt.Sprintf("%q", "cloudforge-"+resource.ID.String())
+		roleSuffix = resource.ID.String()
 	}
 
 	return fmt.Sprintf(`locals {
@@ -756,7 +823,7 @@ func (g *Generator) eksFile(
 }
 
 resource "aws_iam_role" "cluster" {
-  name = "cloudforge-eks-cluster-role-${var.resource_name}"
+  name = "cloudforge-eks-cluster-role-%s"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -778,9 +845,9 @@ resource "aws_iam_role_policy_attachment" "cluster_policy" {
 }
 
 resource "aws_eks_cluster" "this" {
-  name     = replace(lower(var.resource_name), "_", "-")
+  name     = %s
   role_arn = aws_iam_role.cluster.arn
-  version  = %q
+  version  = %s
 
   vpc_config {
     subnet_ids = %s
@@ -799,7 +866,7 @@ resource "aws_eks_cluster" "this" {
 }
 
 resource "aws_iam_role" "node" {
-  name = "cloudforge-eks-node-role-${var.resource_name}"
+  name = "cloudforge-eks-node-role-%s"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -876,7 +943,7 @@ output "cluster_version" {
   description = "Kubernetes version."
   value       = aws_eks_cluster.this.version
 }
-`, renderTags(tags), clusterVersion, renderStringList(subnetIDs), renderTags(tags), renderTags(tags), renderStringList(subnetIDs), renderStringList(nodeInstanceTypes), desiredCapacity, minCapacity, maxCapacity, renderTags(tags)), nil
+`, roleSuffix, renderTags(tags), clusterName, version, renderStringList(subnetIDs), renderTags(tags), roleSuffix, renderTags(tags), renderStringList(subnetIDs), renderStringList(nodeInstanceTypes), desiredCapacity, minCapacity, maxCapacity, renderTags(tags)), nil
 }
 
 func (g *Generator) lbFile(
@@ -1166,6 +1233,9 @@ func tagsValue(
 		result := make(map[string]string, len(raw))
 
 		for key, value := range raw {
+			if strings.EqualFold(key, "CloudForge") {
+				continue
+			}
 			text, ok := value.(string)
 
 			if !ok {
@@ -1192,6 +1262,9 @@ func tagsValue(
 	result := make(map[string]string, len(rawStrings))
 
 	for key, value := range rawStrings {
+		if strings.EqualFold(key, "CloudForge") {
+			continue
+		}
 		result[hclEscape(key)] = hclEscape(value)
 	}
 

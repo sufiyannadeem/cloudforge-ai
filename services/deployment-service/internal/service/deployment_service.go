@@ -12,6 +12,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/workflow"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 var (
@@ -72,6 +73,16 @@ func (s *DeploymentService) Create(
 	ctx context.Context,
 	input model.CreateDeploymentInput,
 ) (model.Deployment, error) {
+	caller := identity.FromContext(ctx)
+	if caller.Human() && caller.Role != "platform-engineer" {
+		if input.ProjectID == uuid.Nil {
+			return model.Deployment{}, ErrInvalidProjectID
+		}
+		if err := identity.RequireProjectWrite(ctx, input.ProjectID.String()); err != nil {
+			return model.Deployment{}, err
+		}
+		input.Namespace = identity.ProjectNamespace(input.ProjectID.String())
+	}
 	if err := validateCreateInput(input); err != nil {
 		return model.Deployment{}, err
 	}
@@ -156,6 +167,10 @@ func (s *DeploymentService) Update(
 	id uuid.UUID,
 	input model.UpdateDeploymentInput,
 ) (model.Deployment, error) {
+	if caller := identity.FromContext(ctx); caller.Human() && caller.Role != "platform-engineer" &&
+		(input.Namespace != nil || input.Status != nil) {
+		return model.Deployment{}, identity.ErrProjectWrite
+	}
 	if id == uuid.Nil {
 		return model.Deployment{}, ErrInvalidDeploymentID
 	}
@@ -167,6 +182,16 @@ func (s *DeploymentService) Update(
 			err,
 		)
 	}
+
+	return s.update(ctx, deployment, input)
+}
+
+func (s *DeploymentService) update(
+	ctx context.Context,
+	expected model.Deployment,
+	input model.UpdateDeploymentInput,
+) (model.Deployment, error) {
+	deployment := expected
 
 	if input.Environment != nil {
 		if !isValidEnvironment(*input.Environment) {
@@ -233,9 +258,12 @@ func (s *DeploymentService) Update(
 		}
 	}
 
-	deployment.UpdatedAt = time.Now().UTC()
+	deployment.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+	if !deployment.UpdatedAt.After(expected.UpdatedAt) {
+		deployment.UpdatedAt = expected.UpdatedAt.Add(time.Microsecond)
+	}
 
-	if err := s.store.Update(ctx, deployment); err != nil {
+	if err := s.store.Update(ctx, deployment, expected); err != nil {
 		return model.Deployment{}, fmt.Errorf(
 			"update deployment: %w",
 			err,

@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -154,5 +155,68 @@ func TestResponseWriterDefaultsToStatusOK(t *testing.T) {
 
 	if !writer.wroteHeader {
 		t.Fatal("expected response writer to mark header as written")
+	}
+}
+
+func TestControlledLocalTrafficIncludesInjectedFailures(t *testing.T) {
+	serviceMetrics := New()
+	registry := prometheus.NewRegistry()
+	if err := serviceMetrics.Register(registry); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/observability-validation", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("fail") == "1" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	server := httptest.NewServer(Middleware(serviceMetrics)(mux))
+	defer server.Close()
+	for i := 0; i < 10; i++ {
+		path := "/api/v1/observability-validation"
+		expected := http.StatusOK
+		if i >= 8 {
+			path += "?fail=1"
+			expected = http.StatusInternalServerError
+		}
+		response, err := server.Client().Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		if response.StatusCode != expected {
+			t.Fatalf("request %d: %d", i, response.StatusCode)
+		}
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := map[string]float64{}
+	for _, family := range families {
+		if family.GetName() != "http_requests_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			var status, route string
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "status" {
+					status = label.GetValue()
+				}
+				if label.GetName() == "route" {
+					route = label.GetValue()
+				}
+			}
+			if route != "GET /api/v1/observability-validation" {
+				t.Fatalf("unscoped route %q", route)
+			}
+			observed[status] += metric.GetCounter().GetValue()
+		}
+	}
+	if observed["200"] != 8 || observed["500"] != 2 {
+		t.Fatalf("unexpected measured traffic: %v", observed)
 	}
 }

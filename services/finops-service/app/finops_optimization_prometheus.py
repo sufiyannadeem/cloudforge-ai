@@ -85,6 +85,8 @@ class PrometheusFinOpsCollector:
                     memory_usage_bytes=row.get("memory_usage", 0.0),
                     cpu_limit_cores=row.get("cpu_limit"),
                     memory_limit_bytes=row.get("memory_limit"),
+                    cpu_usage_available="cpu_usage" in row,
+                    memory_usage_available="memory_usage" in row,
                 )
             )
         return workloads

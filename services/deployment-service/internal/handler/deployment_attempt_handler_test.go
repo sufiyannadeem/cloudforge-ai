@@ -38,13 +38,6 @@ func (m *mockDeploymentAttemptStore) Update(
 	return nil
 }
 
-func (m *mockDeploymentAttemptStore) GetNextAttemptNumber(
-	ctx context.Context,
-	deploymentID uuid.UUID,
-) (int, error) {
-	return 1, nil
-}
-
 func (m *mockDeploymentAttemptStore) ListByDeploymentID(
 	ctx context.Context,
 	deploymentID uuid.UUID,
