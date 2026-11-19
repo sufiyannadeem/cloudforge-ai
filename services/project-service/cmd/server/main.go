@@ -30,6 +30,11 @@ func main() {
 		log.Fatalf("failed to load configuration: %v", err)
 	}
 
+	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "project", migrateOnly); err != nil {
+		log.Fatal(err)
+	}
+
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
 		os.Interrupt,
@@ -43,8 +48,13 @@ func main() {
 	}
 	defer dbPool.Close()
 
-	if err := migration.Run(ctx, dbPool); err != nil {
-		log.Fatalf("failed to run database migrations: %v", err)
+	if cfg.AppEnv != "production" || migrateOnly {
+		if err := migration.Run(ctx, dbPool); err != nil {
+			log.Fatalf("failed to run database migrations: %v", err)
+		}
+	}
+	if migrateOnly {
+		return
 	}
 
 	accountStore := accounts.NewStore(dbPool)

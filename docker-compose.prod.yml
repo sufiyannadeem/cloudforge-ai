@@ -12,7 +12,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE:?Set a reviewed digest-pinned PostgreSQL image}
     container_name: cloudforge-postgres-prod
     restart: always
     environment:
@@ -40,10 +40,11 @@ services:
     container_name: cloudforge-project-service-prod
     restart: always
     environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
       CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_PROJECT_KEY:?Set CLOUDFORGE_FRONTEND_PROJECT_KEY}
       APP_ENV: production
       SERVER_PORT: "8080"
-      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: ${PROJECT_DATABASE_URL:?Set a dedicated cf_project verify-full DSN}
       SHUTDOWN_TIMEOUT_SECONDS: "15"
     ports:
       - "127.0.0.1:8080:8080"
@@ -57,6 +58,9 @@ services:
       retries: 5
       start_period: 10s
 
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+
   infrastructure-service:
     build:
       context: ./services/infrastructure-service
@@ -67,10 +71,11 @@ services:
     container_name: cloudforge-infrastructure-service-prod
     restart: always
     environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
       CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY:?Set CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY}
       APP_ENV: production
       SERVER_PORT: "8081"
-      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: ${INFRASTRUCTURE_DATABASE_URL:?Set a dedicated cf_infrastructure verify-full DSN}
       SHUTDOWN_TIMEOUT_SECONDS: "15"
 
       # Terraform Execution
@@ -88,6 +93,7 @@ services:
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
       # Workspace volume only — ZERO developer ~/.aws credential mounts
       - terraform_workspaces:/var/lib/cloudforge/terraform
     depends_on:
@@ -112,12 +118,13 @@ services:
     container_name: cloudforge-deployment-service-prod
     restart: always
     environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
       PROMETHEUS_URL: http://prometheus:9090
       CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY:?Set CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY}
       CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
       APP_ENV: production
       SERVER_PORT: "8082"
-      DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
+      DATABASE_URL: ${DEPLOYMENT_DATABASE_URL:?Set a dedicated cf_deployment verify-full DSN}
       SHUTDOWN_TIMEOUT_SECONDS: "15"
 
       # Real Kubernetes execution in production (Simulated executor blocked in production)
@@ -135,6 +142,7 @@ services:
     ports:
       - "127.0.0.1:8082:8082"
     volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
       # Dedicated kubeconfig storage only — ZERO developer ~/.aws credential mounts
       - deployment_kube:/var/lib/cloudforge/kube
     depends_on:
@@ -156,11 +164,12 @@ services:
     container_name: cloudforge-aiops-service-prod
     restart: always
     environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
       CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_AIOPS_KEY:?Set CLOUDFORGE_FRONTEND_AIOPS_KEY}
       CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
       CLOUDFORGE_ALERTMANAGER_KEY: ${CLOUDFORGE_ALERTMANAGER_KEY:?Set CLOUDFORGE_ALERTMANAGER_KEY}
       APP_ENV: production
-      DATABASE_URL: postgresql://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge
+      DATABASE_URL: ${AIOPS_DATABASE_URL:?Set a dedicated cf_aiops verify-full DSN}
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_TIMEOUT_SECONDS: "5"
       SLO_WINDOW: "7d"
@@ -196,6 +205,9 @@ services:
       retries: 5
 
 
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+
   finops-service:
     build:
       context: ./services/finops-service
@@ -203,8 +215,9 @@ services:
     container_name: cloudforge-finops-service-prod
     restart: always
     environment:
-      FINOPS_AUDIT_DATABASE_URL: ${FINOPS_AUDIT_DATABASE_URL:-}
-      FINOPS_PROJECT_DATABASE_URL: ${FINOPS_PROJECT_DATABASE_URL:-}
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      FINOPS_AUDIT_DATABASE_URL: ${FINOPS_AUDIT_DATABASE_URL:?Set a cf_finops_audit verify-full DSN}
+      FINOPS_PROJECT_DATABASE_URL: ${FINOPS_PROJECT_DATABASE_URL:?Set a cf_finops_project verify-full DSN}
       CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_FINOPS_KEY:?Set CLOUDFORGE_FRONTEND_FINOPS_KEY}
       APP_ENV: production
       PROMETHEUS_URL: http://prometheus:9090
@@ -231,6 +244,9 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 5
+
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
 
   frontend:
     build:

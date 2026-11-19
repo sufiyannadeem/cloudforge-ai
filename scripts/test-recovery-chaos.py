@@ -232,7 +232,7 @@ class Drill:
             '--tmpfs', '/fault:rw,noexec,nosuid,size=1m,mode=1777',
             '--mount', f'type=bind,src={self.binary},dst=/project-service,readonly',
             '--mount', f'type=bind,src={self.oom_binary},dst=/oom-helper,readonly',
-            '-e', 'APP_ENV=production', '-e', 'SERVER_PORT=8080', '-e', 'SHUTDOWN_TIMEOUT_SECONDS=3',
+            '-e', 'APP_ENV=development', '-e', 'SERVER_PORT=8080', '-e', 'SHUTDOWN_TIMEOUT_SECONDS=3',
             '-e', 'CLOUDFORGE_FRONTEND_KEY=' + secrets.token_hex(32),
             '-e', 'DATABASE_URL=postgres://postgres:' + password + '@database:5432/cloudforge?sslmode=disable',
             '--entrypoint', '/project-service', self.image)
@@ -289,7 +289,7 @@ class Drill:
         proof = secrets.token_hex(32)
         self.sql(db, "CREATE TABLE recovery_drill_identity(run_id text PRIMARY KEY, proof text NOT NULL); INSERT INTO recovery_drill_identity VALUES ('" + self.run_id + "','" + proof + "')")
         env.update(CF_RECOVERY_DRILL_ID=self.run_id, CF_RECOVERY_DRILL_PROOF=proof, CF_RECOVERY_SOCKET=str(self.socket), DATABASE_URL='postgres://postgres:' + password + '@/cloudforge?host=' + str(self.socket) + '&sslmode=disable',
-                   APP_ENV='production', AI_PROVIDER='disabled', AWS_EC2_METADATA_DISABLED='true',
+                   APP_ENV='development', AI_PROVIDER='disabled', AWS_EC2_METADATA_DISABLED='true',
                    AWS_SECRETS_MANAGER_ENABLED='false', CLOUDFORGE_FRONTEND_KEY=secrets.token_hex(32),
                    CLOUDFORGE_ALERTMANAGER_KEY=secrets.token_hex(32))
         result = subprocess.run([str(ROOT / 'services/aiops-service/.venv/bin/python'),
@@ -322,7 +322,7 @@ class Drill:
             '--read-only', '--tmpfs', '/tmp:rw,noexec,nosuid,size=16m',
             '--mount', f'type=bind,src={ROOT / "services/aiops-service/app"},dst=/app/app,readonly',
             '-e', 'DATABASE_URL=postgres://postgres:' + password + '@database:5432/cloudforge?sslmode=disable',
-            '-e', 'APP_ENV=production', '-e', 'AI_PROVIDER=disabled', '-e', 'AWS_EC2_METADATA_DISABLED=true',
+            '-e', 'APP_ENV=development', '-e', 'AI_PROVIDER=disabled', '-e', 'AWS_EC2_METADATA_DISABLED=true',
             '-e', 'AWS_SECRETS_MANAGER_ENABLED=false', '-e', 'CLOUDFORGE_FRONTEND_KEY=' + secrets.token_hex(32),
             '-e', 'CLOUDFORGE_ALERTMANAGER_KEY=' + key, images['cloudforge-ai-aiops-service:latest'])
         self.fault('start', aiops)

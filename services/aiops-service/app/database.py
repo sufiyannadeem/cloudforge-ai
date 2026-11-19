@@ -7,15 +7,14 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 
 def _require_database_url() -> str:
-    if not DATABASE_URL:
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
         raise RuntimeError(
             "DATABASE_URL must be set; passwordless database connections are not allowed"
         )
-    return DATABASE_URL
+    return database_url
 
 
 @contextmanager
@@ -48,7 +47,12 @@ def claim_telemetry_assertion(nonce: str, expiry: int) -> bool:
         return result.rowcount == 1
 
 
-def initialize_database() -> None:
+def initialize_database(*, migration: bool = False) -> None:
+    if os.getenv("APP_ENV") == "production":
+        if not migration:
+            raise RuntimeError("Use the explicit migration command before runtime startup")
+        from .service_identity import production_database
+        production_database(_require_database_url(), "cf_migrator")
     with get_connection(connect_timeout=5) as connection:
         connection.execute("SET LOCAL lock_timeout = '60s'")
         connection.execute("SET LOCAL statement_timeout = '120s'")
@@ -377,3 +381,7 @@ def initialize_database() -> None:
         )
 
         print("AI-Ops database initialized successfully.")
+
+
+if __name__ == "__main__":
+    initialize_database(migration=True)

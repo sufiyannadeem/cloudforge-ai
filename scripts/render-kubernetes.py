@@ -62,6 +62,7 @@ def render(config):
     cpu = reliability.get('cpu_utilization', 70)
     if any(type(v) is not int for v in (minimum, maximum, cpu)) or not (2 <= minimum <= maximum <= 10) or not (30 <= cpu <= 90):
         raise ValueError('Invalid reliability replica bounds or CPU target')
+    database_ca = checked(r'[a-z0-9][a-z0-9.-]*', config.get('database_ca_configmap'), 'database_ca_configmap')
     bucket = checked(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', config['state_bucket'], 'state_bucket')
     storage = config['storage']
     checked(r'[a-z0-9][a-z0-9.-]*', storage['class'], 'storage.class')
@@ -141,6 +142,13 @@ def render(config):
                 'selector': {'matchLabels': {'app': name}},
             }, 'policy/v1'),
         ])
+        if name != 'frontend':
+            spec.setdefault('volumes', []).append({'name': 'database-ca', 'configMap': {'name': database_ca}})
+            container.setdefault('volumeMounts', []).append({'name': 'database-ca', 'mountPath': '/etc/cloudforge/db-ca', 'readOnly': True})
+        if name in {'project-service','infrastructure-service','deployment-service','aiops-service'}:
+            for source in container.get('envFrom', []):
+                if source.get('secretRef', {}).get('name') == 'cloudforge-postgres-credentials':
+                    source['secretRef']['name'] = 'cloudforge-' + name.removesuffix('-service') + '-db'
         for env in container.get('env', []):
             if env['name'] in {'AWS_REGION', 'AWS_DEFAULT_REGION'}:
                 env['value'] = region
@@ -152,6 +160,8 @@ def render(config):
             secret_keys.setdefault(name_ref, set())
         # All service connections use their actual ClusterIP Services.
         additional = {'AWS_STS_REGIONAL_ENDPOINTS': 'regional'}
+        if name != 'frontend':
+            additional['PGSSLROOTCERT'] = '/etc/cloudforge/db-ca/ca.crt'
         if name in {'project-service', 'deployment-service', 'infrastructure-service'}:
             additional['SHUTDOWN_TIMEOUT_SECONDS'] = '90' if name == 'infrastructure-service' else '20'
         if name in {'frontend', 'deployment-service', 'aiops-service', 'finops-service'}:
@@ -170,7 +180,7 @@ def render(config):
         container['env'] = [e for e in container.get('env', []) if e['name'] not in additional]
         container['env'] += [{'name': k, 'value': v} for k, v in additional.items()]
     # envFrom must be explicitly mapped, not unrestricted extraction of remote JSON.
-    required = {'cloudforge-postgres-credentials': {'DATABASE_URL'},
+    required = {**{'cloudforge-' + name + '-db': {'DATABASE_URL'} for name in ['project','infrastructure','deployment','aiops']},
                 'cloudforge-frontend-credentials': {'CLOUDFORGE_SESSION_SECRET'}}
     secret_keys = {name: keys | required.get(name, set()) for name, keys in secret_keys.items()}
     sa = document('ServiceAccount', 'cloudforge-secret-sync', {})

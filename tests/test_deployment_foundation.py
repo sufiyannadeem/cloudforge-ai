@@ -21,6 +21,7 @@ def config():
              state_bucket='fixture-private-state',
              provisioner_role_arn='arn:aws:iam::123456789012:role/fixture-provisioner',
              monitoring_namespace='monitoring', ingress_namespace='ingress', ingress_app='gateway')
+    c['database_ca_configmap'] = 'fixture-db-ca'
     c['storage'] = {'class': 'fixture-rwx', 'size': '10Gi'}
     c['images'] = {name: 'example.invalid/' + name + '@sha256:' + 'a' * 64 for name in c['images']}
     c['roles'] = {name: 'arn:aws:iam::123456789012:role/fixture-' + name for name in c['roles']}
@@ -96,7 +97,7 @@ def test_networks_do_not_grant_developers_direct_backend_access(config):
 
 def test_secret_mapping_is_exact_and_no_raw_values_can_be_rendered(config):
     bad = copy.deepcopy(config)
-    bad['secrets']['cloudforge-postgres-credentials']['properties']['EXTRA_ADMIN_PASSWORD'] = 'password'
+    bad['secrets']['cloudforge-project-db']['properties']['EXTRA_ADMIN_PASSWORD'] = 'password'
     with pytest.raises(ValueError): renderer.render(bad)
     bad = copy.deepcopy(config)
     del bad['secrets']['cloudforge-finops-audit-db']
@@ -183,3 +184,17 @@ def test_hpa_disruption_topology_and_shutdown_are_coherent(config):
 def test_invalid_scaling_profiles_do_not_render(config, profile):
     config['reliability'] = profile
     with pytest.raises(ValueError): renderer.render(config)
+
+
+def test_database_principals_are_not_shared_in_rendered_workloads(config):
+    docs = renderer.render(config)
+    db_refs = []
+    for item in docs:
+        if item['kind'] != 'Deployment': continue
+        name = item['metadata']['name']
+        pod = item['spec']['template']['spec']
+        if name != 'frontend':
+            assert any(v.get('configMap', {}).get('name') == 'fixture-db-ca' for v in pod['volumes'])
+        if name in ['project-service','infrastructure-service','deployment-service','aiops-service']:
+            db_refs.extend(x['secretRef']['name'] for x in pod['containers'][0]['envFrom'])
+    assert set(db_refs) == {'cloudforge-'+s+'-db' for s in ['project','infrastructure','deployment','aiops']}

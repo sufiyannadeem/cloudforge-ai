@@ -24,7 +24,7 @@ type Config struct {
 	RolloutTimeoutSeconds int
 }
 
-func Load() (Config, error) {
+func Load(migration ...bool) (Config, error) {
 	cfg := Config{
 		AppEnv:                 getEnv("APP_ENV", "development"),
 		ServerPort:             getEnvInt("SERVER_PORT", 8082),
@@ -41,14 +41,14 @@ func Load() (Config, error) {
 		RolloutTimeoutSeconds: getEnvInt("ROLLOUT_TIMEOUT_SECONDS", 120),
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(migration...); err != nil {
 		return Config{}, err
 	}
 
 	return cfg, nil
 }
 
-func (c Config) Validate() error {
+func (c Config) Validate(migration ...bool) error {
 	if c.AppEnv == "" {
 		return fmt.Errorf("APP_ENV cannot be empty")
 	}
@@ -83,7 +83,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("simulated deployment executor is not permitted in production environment")
 		}
 
-		if !c.HasKubernetesConfig() {
+		if !(len(migration) == 1 && migration[0]) && !c.HasKubernetesConfig() {
 			return fmt.Errorf("incomplete production Kubernetes configuration: KUBECONFIG, in-cluster credentials, or EKS_CLUSTER_NAME must be configured")
 		}
 	}

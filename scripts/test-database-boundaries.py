@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Real TLS/principal/migration checks on new labelled Docker fixtures only."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('recovery', ROOT/'scripts/test-recovery-chaos.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit('Usage: test-database-boundaries.py NEW_OUTPUT_DIRECTORY')
+    output = Path(sys.argv[1]).resolve();output.mkdir(mode=0o700)
+    drill = module.Drill(output);success = False
+    try:
+        drill.image = json.loads((ROOT/'deploy/recovery/postgres-image.json').read_text())['image_id']
+        module.command(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','1','-subj','/CN=database',
+                        '-addext','subjectAltName=DNS:database','-keyout',str(output/'server.key'),'-out',str(output/'ca.crt')])
+        (output/'ca.crt').chmod(0o644)
+        env = dict(os.environ, CGO_ENABLED='0',GOOS='linux')
+        for service in ['project','infrastructure','deployment']:
+            r=subprocess.run(['go','build','-o',str(output/service),'./cmd/server'], cwd=ROOT/f'services/{service}-service',env=env,capture_output=True,timeout=120)
+            if r.returncode:raise RuntimeError('Go migration binary build failed')
+        r=subprocess.run(['go','build','-o',str(output/'dbcheck'),str(ROOT/'scripts/fixtures/database-boundaries.go')],cwd=ROOT/'services/service-identity',env=env,capture_output=True,timeout=120)
+        if r.returncode:raise RuntimeError('Go database checker build failed')
+        network=drill.create('network','network');volume=drill.create('volume','database')
+        db=drill.postgres('database',network,volume,secrets.token_hex(32),'--network-alias','wrong-host')
+        for filename in ['server.key','ca.crt']:
+            drill.exec(db,'sh','-ec','umask 077; cat > /var/lib/postgresql/data/'+filename,data=(output/filename).read_bytes())
+        drill.sql(db,"ALTER SYSTEM SET ssl='on'; ALTER SYSTEM SET ssl_cert_file='/var/lib/postgresql/data/ca.crt'; ALTER SYSTEM SET ssl_key_file='/var/lib/postgresql/data/server.key'")
+        drill.exec(db,'sh','-ec','cat > /var/lib/postgresql/data/pg_hba.conf',data=b'local all all trust\nhostnossl all all all reject\nhostssl all all all scram-sha-256\n')
+        drill.sql(db,(ROOT/'deploy/postgres/001_principals.sql').read_text())
+        principals=['migrator','project','infrastructure','deployment','aiops','finops_project','finops_audit']
+        passwords={p:secrets.token_hex(32) for p in principals}
+        for principal,password in passwords.items():drill.sql(db,f"ALTER ROLE cf_{principal} PASSWORD '{password}'")
+        drill.fault('stop',db,'--time','10');drill.fault('start',db)
+        drill.wait(lambda:drill.sql(db,'SELECT 1')==b'1')
+        def dsn(principal,host='database',ssl='verify-full',ca='/ca.crt'):
+            return f'postgres://cf_{principal}:{passwords[principal]}@{host}/cloudforge?sslmode={ssl}&sslrootcert={ca}'
+        def run(suffix,image,args,principal,extra=(),expected=0):
+            c=drill.create('container',suffix,'--network',network,'--memory','384m','--cpus','1',
+                '--mount',f'type=bind,src={output/"ca.crt"},dst=/ca.crt,readonly',
+                '-e','APP_ENV=production','-e','DATABASE_URL='+dsn(principal),*extra,image,*args)
+            drill.fault('start',c);drill.docker('wait',c)
+            exitcode=int(drill.docker('inspect',c,'--format','{{.State.ExitCode}}').stdout)
+            if (expected==0 and exitcode!=0) or (expected!=0 and exitcode==0):raise RuntimeError('Isolated database client failed: '+suffix)
+        for service in ['project','infrastructure','deployment']:
+            run('migrate-'+service,drill.image,['migrate'],'migrator',
+                ('--mount',f'type=bind,src={output/service},dst=/migrator,readonly','--entrypoint','/migrator','-e','TERRAFORM_READ_ONLY=true'))
+        if drill.sql(db,'SELECT count(*) FROM schema_migrations')!=b'23':raise RuntimeError('migration receipts mismatch')
+        aiops_image=drill.docker('image','inspect','cloudforge-ai-aiops-service:latest','--format','{{.Id}}').stdout.decode().strip()
+        run('aiops-migrate',aiops_image,['python','-m','app.database'],'migrator',
+            ('--mount',f'type=bind,src={ROOT/"services/aiops-service/app"},dst=/app/app,readonly','--entrypoint',''))
+        drill.sql(db,(ROOT/'deploy/postgres/002_runtime_grants.sql').read_text())
+        for principal in principals[1:]:
+            run('check-'+principal,drill.image,[],principal,('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE='+principal))
+        for name,url in [('wrong-host',dsn('deployment','wrong-host')),('unverified',dsn('deployment',ssl='require'))]:
+            run('deny-'+name,drill.image,[],'deployment',('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE=deployment','-e','DATABASE_URL='+url),expected=1)
+        # The real HTTP server starts as a non-owner with no DDL permission.
+        server=drill.create('container','runtime','--network',network,'--memory','256m',
+            '--mount',f'type=bind,src={output/"ca.crt"},dst=/ca.crt,readonly',
+            '--mount',f'type=bind,src={output/"project"},dst=/server,readonly','--entrypoint','/server',
+            '-e','APP_ENV=production','-e','DATABASE_URL='+dsn('project'),'-e','CLOUDFORGE_FRONTEND_KEY='+secrets.token_hex(32),drill.image)
+        drill.fault('start',server);drill.wait(lambda:drill.http_status(server,'/ready')==200)
+        if drill.http_status(server,'/projects')!=401:raise RuntimeError('API authentication bypass')
+        success=True
+    except Exception as error:
+        print('FAIL:',str(error) if isinstance(error,RuntimeError) else type(error).__name__)
+    finally:
+        failures=drill.cleanup()
+        report={'status':'PASS' if success and not failures else 'FAIL','fixture':drill.run_id,
+                'checks':['23 one-shot migrations','AIOps one-shot schema','6 runtime principals','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup'],
+                'cleanup_failures':failures}
+        (output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+    return int(not success or bool(failures))
+
+if __name__=='__main__':raise SystemExit(main())

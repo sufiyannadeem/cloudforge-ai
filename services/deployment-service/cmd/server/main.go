@@ -39,13 +39,19 @@ func main() {
 
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load()
+	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
+	cfg, err := config.Load(migrateOnly)
 	if err != nil {
 		logger.Error(
 			"failed to load configuration",
 			"error",
 			err,
 		)
+		os.Exit(1)
+	}
+
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "deployment", migrateOnly); err != nil {
+		logger.Error("database security policy failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -67,13 +73,18 @@ func main() {
 
 	migrationRunner := migration.NewRunner(pool)
 
-	if err := migrationRunner.Run(ctx); err != nil {
-		logger.Error(
-			"failed to run database migrations",
-			"error",
-			err,
-		)
-		os.Exit(1)
+	if cfg.AppEnv != "production" || migrateOnly {
+		if err := migrationRunner.Run(ctx); err != nil {
+			logger.Error(
+				"failed to run database migrations",
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+	}
+	if migrateOnly {
+		return
 	}
 
 	deploymentRepository := repository.NewDeploymentRepository(pool)

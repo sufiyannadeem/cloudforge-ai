@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from fastapi import FastAPI, HTTPException
 
+from .service_identity import production_database
 from .project_costs import router as project_costs_router
 from .aws_secrets_loader import populate_env_from_secrets_manager
 from .aws_finops_routes import router as aws_finops_router
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
                 "CLOUDFORGE_FRONTEND_KEY must be configured with at least 32 characters in production"
             )
 
+    for name, principal in [("FINOPS_PROJECT_DATABASE_URL", "cf_finops_project"), ("FINOPS_AUDIT_DATABASE_URL", "cf_finops_audit")]:
+        production_database(os.getenv(name, ""), principal)
     yield
 
 
@@ -85,6 +88,7 @@ def ready() -> dict[str, str]:
                 raise HTTPException(status_code=503, detail="Database readiness unavailable")
             continue
         try:
+            production_database(dsn, "cf_finops_project" if name == "FINOPS_PROJECT_DATABASE_URL" else "cf_finops_audit")
             with psycopg.connect(dsn, connect_timeout=2, autocommit=True,
                                  options="-c statement_timeout=1000") as db:
                 db.execute("SELECT 1")

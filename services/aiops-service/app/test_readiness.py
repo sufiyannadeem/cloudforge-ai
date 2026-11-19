@@ -7,7 +7,8 @@ from . import main
 def test_readiness_is_bounded_and_does_not_expose_database_errors(monkeypatch):
     monkeypatch.setenv('APP_ENV', 'production')
     for name in ['DATABASE_URL', 'FINOPS_PROJECT_DATABASE_URL', 'FINOPS_AUDIT_DATABASE_URL']:
-        monkeypatch.setenv(name, 'postgresql://fixture.invalid/database')
+        principal = {'DATABASE_URL': 'cf_aiops', 'FINOPS_PROJECT_DATABASE_URL': 'cf_finops_project', 'FINOPS_AUDIT_DATABASE_URL': 'cf_finops_audit'}[name]
+        monkeypatch.setenv(name, f'postgresql://{principal}@fixture.invalid/database?sslmode=verify-full')
     calls = []
     class Database:
         def execute(self, sql):

@@ -42,3 +42,18 @@ def frontend_identity(request: Request, audience: str) -> dict:
     except (KeyError, ValueError, TypeError):
         raise HTTPException(401, "Invalid service identity") from None
     return claims
+
+
+def production_database(dsn: str, principal: str) -> None:
+    """Reject shared identities, local sockets and unverifiable production TLS."""
+    if os.getenv("APP_ENV") != "production":
+        return
+    from psycopg.conninfo import conninfo_to_dict
+    try:
+        config = conninfo_to_dict(dsn)
+    except Exception:
+        raise RuntimeError("Invalid production database configuration") from None
+    host = config.get("host", "")
+    if (config.get("user") != principal or config.get("sslmode") != "verify-full"
+            or not host or host.startswith("/") or "," in host):
+        raise RuntimeError("Production requires a dedicated database principal and hostname-verified TLS")

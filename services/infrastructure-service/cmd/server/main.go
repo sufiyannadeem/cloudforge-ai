@@ -36,6 +36,11 @@ func main() {
 
 	frontendKey := os.Getenv("CLOUDFORGE_FRONTEND_KEY")
 
+	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "infrastructure", migrateOnly); err != nil {
+		log.Fatal(err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -49,8 +54,13 @@ func main() {
 
 	migrationRunner := migration.NewRunner(pool)
 
-	if err := migrationRunner.Run(ctx); err != nil {
-		logger.Fatalf("run database migrations: %v", err)
+	if cfg.AppEnv != "production" || migrateOnly {
+		if err := migrationRunner.Run(ctx); err != nil {
+			logger.Fatalf("run database migrations: %v", err)
+		}
+	}
+	if migrateOnly {
+		return
 	}
 
 	resourceRepository := repository.NewResourceRepository(pool)

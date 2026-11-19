@@ -38,12 +38,6 @@
         "CLOUDFORGE_FRONTEND_PROJECT_KEY": "CLOUDFORGE_FRONTEND_PROJECT_KEY"
       }
     },
-    "cloudforge-postgres-credentials": {
-      "arn": null,
-      "properties": {
-        "DATABASE_URL": "DATABASE_URL"
-      }
-    },
     "cloudforge-frontend-infrastructure": {
       "arn": null,
       "properties": {
@@ -97,6 +91,30 @@
       "properties": {
         "CLOUDFORGE_SESSION_SECRET": "CLOUDFORGE_SESSION_SECRET"
       }
+    },
+    "cloudforge-project-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-infrastructure-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-deployment-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-aiops-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
     }
   },
   "rollouts": {
@@ -107,5 +125,6 @@
     "min_replicas": 2,
     "max_replicas": 4,
     "cpu_utilization": 70
-  }
+  },
+  "database_ca_configmap": null
 }

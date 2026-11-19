@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from .service_identity import frontend_identity
+from .service_identity import frontend_identity, production_database
 from .analysis_routes import router as incident_intelligence_router
 from .remediation_routes import router as remediation_router
 from .anomaly_routes import router as anomaly_router
@@ -65,7 +65,9 @@ async def lifespan(app: FastAPI):
             )
 
 
-    initialize_database()
+    production_database(os.getenv("DATABASE_URL", ""), "cf_aiops")
+    if os.getenv("APP_ENV") != "production":
+        initialize_database()
     yield
 
 
@@ -160,6 +162,7 @@ def ready() -> dict[str, str]:
                 raise HTTPException(status_code=503, detail="Database readiness unavailable")
             continue
         try:
+            production_database(dsn, "cf_aiops")
             with psycopg.connect(dsn, connect_timeout=2, autocommit=True,
                                  options="-c statement_timeout=1000") as db:
                 db.execute("SELECT 1")
