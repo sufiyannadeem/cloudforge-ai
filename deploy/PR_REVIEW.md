@@ -1,5 +1,10 @@
 # Batch 22 PR review
 
+**Batch 30 revalidation:** all 16 heads and recommendations were rechecked against
+current main, rc1 and the local release branch. See [current GitHub evidence and
+operator sequence](BATCH30_RELEASE_PREPARATION.md); the assessment below remains
+the original review, not proof of current green checks.
+
 Read-only GitHub review on 2026-11-19. Compared all 16 open PR heads with fetched
 `origin/main` (`7eafd35`) and `v1.0.0-rc1` (`70f7464`), including manifest changes,
 lockfiles and patch applicability. No PR was changed. All currently have failed

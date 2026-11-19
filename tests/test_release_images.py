@@ -1,5 +1,6 @@
 from pathlib import Path
 import hashlib
+import copy
 import importlib.util
 import json
 import pytest
@@ -43,3 +44,19 @@ def test_workflow_scan_publish_approval_and_exact_image_handoff():
     source=(ROOT/'.github/workflows/release-images.yml').read_text()
     assert 'ignore-unfixed: false' in source and 'docker save' in source
     assert 'push: false' in source and 'Publish without rebuilding' in source
+    assert source.index('verify_release_environment') < source.index('docker login')
+
+
+def test_release_environment_requires_independent_review_and_branch_restriction():
+    environment={'name':'release','deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False},
+                 'protection_rules':[{'type':'required_reviewers','prevent_self_review':True,
+                                      'reviewers':[{'type':'User','reviewer':{'id':123}}]}]}
+    m.verify_release_environment(environment)
+    for field,value in [('name','other'),('deployment_branch_policy',None),('protection_rules',[])]:
+        bad=copy.deepcopy(environment);bad[field]=value
+        with pytest.raises(ValueError):m.verify_release_environment(bad)
+    for field,value in [('prevent_self_review',False),('reviewers',[])]:
+        bad=copy.deepcopy(environment);bad['protection_rules'][0][field]=value
+        with pytest.raises(ValueError):m.verify_release_environment(bad)
+    bad=copy.deepcopy(environment);bad['deployment_branch_policy']={'protected_branches':False,'custom_branch_policies':True}
+    with pytest.raises(ValueError):m.verify_release_environment(bad)

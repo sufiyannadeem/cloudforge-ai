@@ -18,6 +18,12 @@ and artifact-read permission. It has no AWS or deployment permission.
 Publishing is disabled by default and allowed only for an explicit manual
 main-branch request. This is **PARTIAL / hosted verification BLOCKED**, not a
 claim that an environment with missing reviewer configuration is protected.
+The publish job now checks the actual GitHub environment before downloading
+artifacts or logging into GHCR. Missing/unreadable policy, absent reviewers,
+permitted self-review or unrestricted branches fails closed. It requires
+protected-branches-only policy (not custom patterns); main protection and disabled
+administrator bypass must still be independently verified. This configuration
+check does not prove signed provenance or replace GitHub's approval enforcement.
 Signing/attestation policy and registry retention must be configured and verified
 before production acceptance. SBOM/metadata are not cryptographic provenance.
 

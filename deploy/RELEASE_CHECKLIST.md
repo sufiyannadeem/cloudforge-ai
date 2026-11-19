@@ -90,6 +90,8 @@ The historical local frontend image ID is `sha256:405ca951da593e1f97263288954a92
 
 ## Batch 28 integration gates
 
+- [ ] Complete [Batch 30 GitHub release preparation](BATCH30_RELEASE_PREPARATION.md): independent reviews, both required aggregate checks, real protected release environment and hosted digest/signature acceptance. No push/publication is authorized by this checklist.
+
 - [ ] Use the [Batch 29 local gate](BATCH29_RELEASE_GATE.md) for current classifications, confirmed DDL-authority fix, focused evidence and ordered acceptance. LOCAL-PASS never authorizes deployment or cloud writes.
 
 - [ ] Use [the current closure evidence](BATCH28_CLOSURE.md). Complete the approved per-service DB ownership/grant/credential/CA handoff; production rejects shared principals or unverified TLS. Do not run bootstrap SQL against existing data without review.

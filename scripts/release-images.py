@@ -12,6 +12,18 @@ SERVICES = {'project-service','infrastructure-service','deployment-service','aio
 DIGEST = re.compile(r'[a-z0-9][a-z0-9.:/_-]*@sha256:[0-9a-f]{64}')
 
 
+def verify_release_environment(environment):
+    """A named environment alone does not establish independent approval."""
+    policy = environment.get('deployment_branch_policy') or {}
+    reviews = [rule for rule in environment.get('protection_rules', [])
+               if rule.get('type') == 'required_reviewers']
+    if (environment.get('name') != 'release' or policy.get('protected_branches') is not True
+            or policy.get('custom_branch_policies') is not False or len(reviews) != 1
+            or reviews[0].get('prevent_self_review') is not True
+            or not reviews[0].get('reviewers')):
+        raise ValueError('Release requires protected branches and independent environment reviewers')
+
+
 def artifacts(root, revision):
     if not re.fullmatch(r'[0-9a-f]{40}', revision): raise ValueError('Expected exact Git revision')
     result = []

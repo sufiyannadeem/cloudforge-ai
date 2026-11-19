@@ -107,11 +107,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Download verified run artifacts and authenticate registry
+      - name: Verify release approval policy, download artifacts and authenticate registry
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/environments/release" > release-environment.json
+          python3 - <<'PYPOLICY'
+          import json,runpy
+          runpy.run_path('scripts/release-images.py')['verify_release_environment'](json.load(open('release-environment.json')))
+          PYPOLICY
           gh run download "$GITHUB_RUN_ID" --pattern 'image-*' --dir artifacts
           printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - name: Publish without rebuilding and record actual registry digests
