@@ -11,6 +11,7 @@ on:
       - main
       - develop
       - "feature/**"
+      - "feat/**"
 
   workflow_dispatch:
 
@@ -57,11 +58,13 @@ jobs:
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: "v0.76.2"
           scan-type: fs
           scan-ref: .
+          trivyignores: deploy/kubernetes/trivy-rbac-exceptions.yaml
           scanners: vuln,secret,misconfig
           severity: ${{ env.TRIVY_SEVERITY }}
-          ignore-unfixed: true
+          ignore-unfixed: false
           exit-code: "1"
           format: table
 
@@ -79,8 +82,10 @@ jobs:
       - name: Trivy configuration scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: "v0.76.2"
           scan-type: config
           scan-ref: .
+          trivyignores: deploy/kubernetes/trivy-rbac-exceptions.yaml
           severity: ${{ env.TRIVY_SEVERITY }}
           exit-code: "1"
           format: table
@@ -98,16 +103,19 @@ jobs:
             context: services/project-service
             dockerfile: services/project-service/Dockerfile
             image: cloudforge-project-service:security
+            identity_context: service_identity=./services/service-identity
 
           - name: infrastructure-service
             context: services/infrastructure-service
             dockerfile: services/infrastructure-service/Dockerfile
             image: cloudforge-infrastructure-service:security
+            identity_context: service_identity=./services/service-identity
 
           - name: deployment-service
             context: services/deployment-service
             dockerfile: services/deployment-service/Dockerfile
             image: cloudforge-deployment-service:security
+            identity_context: service_identity=./services/service-identity
 
           - name: aiops-service
             context: services/aiops-service
@@ -135,6 +143,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-contexts: ${{ matrix.identity_context }}
           tags: |
             ${{ matrix.image }}
             cloudforge-${{ matrix.name }}:${{ github.sha }}
@@ -148,16 +157,18 @@ jobs:
       - name: Scan ${{ matrix.name }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: "v0.76.2"
           image-ref: ${{ matrix.image }}
           scanners: vuln,secret,misconfig
           severity: ${{ env.TRIVY_SEVERITY }}
-          ignore-unfixed: true
+          ignore-unfixed: false
           exit-code: "1"
           format: table
 
       - name: Generate image SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: "v0.76.2"
           image-ref: ${{ matrix.image }}
           format: cyclonedx
           output: ${{ matrix.name }}-sbom.json
@@ -185,6 +196,7 @@ jobs:
       - name: Generate SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: "v0.76.2"
           scan-type: fs
           scan-ref: .
           format: cyclonedx

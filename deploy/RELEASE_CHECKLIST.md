@@ -1,8 +1,10 @@
 # Release checklist
 
-Local verification on 2026-11-19 passed the frontend production image build, TypeScript, targeted lint, 11 frontend test files, four Playwright tests, Go race/security suites, 232 Python tests, and isolated PostgreSQL tests. The optional FinOps audit fixture passed separately with its database configured. All 22 Go-service migrations applied in order and passed a second idempotence run, including browser administration migration 006. npm audit reported zero vulnerabilities.
+Historical pre-Batch-23 verification on 2026-11-19 passed the frontend production image build, TypeScript, targeted lint, 11 frontend test files, four Playwright tests, Go race/security suites, 232 Python tests, and isolated PostgreSQL tests. The optional FinOps audit fixture passed separately with its database configured. All 22 Go-service migrations applied in order and passed a second idempotence run, including browser administration migration 006. npm audit reported zero vulnerabilities.
 
-The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e7452c2be0dbb6e2c89e6079911`. It contains Next.js 16.4.5 and Node 22.23.5 and runs as UID 1001. It has not been deployed. Production Compose syntax and dependency order were checked with explicit validation placeholders. Target secrets, IAM, published image digests and live acceptance remain release gates.
+Those results are historical, not a fresh build of the current checkout. Current recovery evidence covers 23 migrations; see [the Batch 27 audit](PRODUCTION_READINESS_AUDIT.md) before release.
+
+The historical local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e7452c2be0dbb6e2c89e6079911`. It contains Next.js 16.4.5 and Node 22.23.5 and runs as UID 1001. It has not been deployed. Production Compose syntax and dependency order were checked with explicit validation placeholders. Target secrets, IAM, published image digests and live acceptance remain release gates.
 
 ## Images and local verification
 
@@ -15,9 +17,9 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 
 - [ ] Back up PostgreSQL and verify restore in an isolated environment before rollout. Preserve existing migration receipts and all historical migration files.
 - [ ] Start project-service first. Its migration runner applies project migrations 001–006 in lexical order, including account, ownership, email, FinOps audit, and browser administration tables. Require its healthy state before dependent APIs start.
-- [ ] Start infrastructure-service (001–011) and deployment-service (001–005). Each runs its own migrations before serving HTTP. Require healthy state before FinOps and AIOps.
+- [ ] Start infrastructure-service (001–011) and deployment-service (001–006). Each runs its own migrations before serving HTTP. Require healthy state before FinOps and AIOps.
 - [ ] Start AIOps, which initializes its PostgreSQL schema during application startup. Start FinOps after project and infrastructure schemas exist. Start the frontend after backend readiness.
-- [ ] Confirm the shared schema_migrations table contains all 22 Go-service receipts, including 006_browser_admin_audit.sql, 011_terraform_drift.sql and 005_deployment_diagnostics.sql. Re-running all three runners must preserve those receipts.
+- [ ] Confirm the shared schema_migrations table contains all 23 Go-service receipts, including 006_browser_admin_audit.sql, 011_terraform_drift.sql and 006_rollout_strategies.sql. Re-running all three runners must preserve those receipts.
 - [ ] Grant FinOps attribution its separate read-only login for projects, memberships, infrastructure resources and EC2 attribution. Grant the audit login only schema usage and SELECT/INSERT on finops_anomaly_captures. Set both DSNs through private secret references.
 
 ## Secrets and IAM
@@ -78,3 +80,9 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 - [ ] Obtain separate acceptance for Kubernetes/GitOps/PVC reconstruction, state/secrets recovery, live Prometheus/SLO response and node faults; retain the bounded local kernel-OOM and alert-transport evidence separately. Local Docker timings are not production RTO/RPO claims.
 
 - [ ] Use the [reviewed PostgreSQL 16.16 recovery image](RECOVERY_IMAGE_SECURITY.md), verify its actual digest and scan results. Local config digest pinning is not a published registry image; publish/provenance and production Compose/cluster image selection require separate release approval. Do not replace existing databases during a drill.
+
+## Batch 27 production sign-off
+
+- [ ] Resolve the P0 shared database principal/TLS/image gaps in the [production audit](PRODUCTION_READINESS_AUDIT.md). Per-service IAM and signed HTTP identities do not replace per-service database grants.
+- [ ] Run the repaired hosted image-security workflow: shared identity build contexts, pinned scanner, exact RBAC exceptions and unfixed vulnerability enforcement. Local structure tests are not a successful GitHub image build/scan.
+- [ ] Complete the prioritized acceptance sequence in the audit. No deployment approval is implied by local verification; GitOps reconciliation and centralized audit/search remain missing capabilities.

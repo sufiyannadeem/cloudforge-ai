@@ -350,3 +350,39 @@ def test_ci_gate_skip_markers_cannot_hide_required_checks(event, message, status
     assert response.returncode != 0
     assert "security-gate-ci" in response.stdout
     assert "All CloudForge AI CI checks passed!" not in response.stdout
+
+
+def test_security_image_builds_wire_local_shared_identity_context():
+    security = yaml.safe_load((REPO_ROOT / '.github/workflows/security.yml').read_text())
+    job = security['jobs']['image-security']
+    entries = job['strategy']['matrix']['include']
+    build = next(step for step in job['steps'] if step.get('uses', '').startswith('docker/build-push-action@'))
+    assert build['with']['build-contexts'] == '${{ matrix.identity_context }}'
+    for entry in entries:
+        source = (REPO_ROOT / entry['dockerfile']).read_text()
+        if 'COPY --from=service_identity' in source:
+            assert entry['identity_context'] == 'service_identity=./services/service-identity'
+            assert (REPO_ROOT / 'services/service-identity/go.mod').is_file()
+        else:
+            assert not entry.get('identity_context')
+    assert build['with']['push'] is False
+
+
+def test_security_trigger_scans_and_frontend_toolchain_match_release_policy():
+    # BaseLoader retains the YAML 1.2 `on` key as a string (GitHub syntax).
+    security = yaml.load((REPO_ROOT / '.github/workflows/security.yml').read_text(), Loader=yaml.BaseLoader)
+    assert 'feat/**' in security['on']['push']['branches']
+    for filename in ['ci.yml', 'security.yml']:
+        workflow = yaml.safe_load((REPO_ROOT / '.github/workflows' / filename).read_text())
+        for job in workflow['jobs'].values():
+            for step in job.get('steps', []):
+                if not step.get('uses', '').startswith('aquasecurity/trivy-action@'):
+                    continue
+                settings = step['with']
+                assert settings['version'] == 'v0.76.2'
+                assert settings.get('ignore-unfixed') is not True
+                if settings.get('exit-code') == '1' and settings.get('scan-type') in ['fs','config'] and settings.get('scan-ref') == '.':
+                    assert settings['trivyignores'] == 'deploy/kubernetes/trivy-rbac-exceptions.yaml'
+    ci = yaml.safe_load((REPO_ROOT / '.github/workflows/ci.yml').read_text())
+    node = next(step for step in ci['jobs']['frontend-ci']['steps'] if step.get('uses', '').startswith('actions/setup-node@'))
+    assert node['with']['node-version'] == 22
