@@ -27,4 +27,4 @@ USER appuser
 
 EXPOSE 8091
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091", "--timeout-graceful-shutdown", "20", "--timeout-keep-alive", "5", "--limit-concurrency", "16"]

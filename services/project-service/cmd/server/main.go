@@ -94,7 +94,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + cfg.ServerPort,
-		Handler:           requestIDMiddleware(loggingMiddleware(mux)),
+		Handler:           identity.WithReadiness(requestIDMiddleware(loggingMiddleware(mux)), dbPool.Ping, ctx),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

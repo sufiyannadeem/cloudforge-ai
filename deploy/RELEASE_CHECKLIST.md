@@ -61,3 +61,11 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 - [ ] Review pinned controller/CRDs, project-only rollout RBAC, namespace admission and controller networking. Verify actual revision-scoped workload metrics before approving the example AnalysisTemplate; never substitute platform metrics or healthy defaults.
 - [ ] Rehearse independent body-bound promotion, self-approval/replay denial, failed analysis/abort and real stable traffic restoration. Canary is replica-based; no weighted router is configured.
 - [ ] Test worker restart/lease recovery, timeout/manual reconciliation and rollback under the real controller. Local fixtures, schema validation and Prometheus tests do not establish live Kubernetes readiness.
+
+## Batch 24 reliability gates
+
+- [ ] Review [reliability prerequisites and offline commands](kubernetes/RELIABILITY.md). Verify Kubernetes 1.30+, two hosts/zones, metrics-server, HA database capacity and cross-zone RWX before enabling traffic.
+- [ ] Verify all six HPA minimums, PDBs, topology, probes, bounded shutdown and migration serialization in the target environment. Do not reset HPA-owned replicas on release.
+- [ ] Verify private kube-state-metrics scraping and fresh operator dashboard evidence; missing metrics must remain N/A.
+- [ ] Preserve infrastructure execution drain/reconciliation during maintenance; its automatic scale-down/eviction is blocked, but direct deletion and failures remain possible.
+- [ ] Review pinned Cluster Autoscaler chart/image, dedicated IRSA, exact tagged ASGs and upstream RBAC. Resolve Terraform desired-size ownership before activation. Record cost/quota limits and live scaling/drain evidence separately.

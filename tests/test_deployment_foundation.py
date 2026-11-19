@@ -142,3 +142,44 @@ def test_progressive_delivery_is_an_explicit_configured_opt_in(config):
     assert {'name': 'ARGO_ANALYSIS_TEMPLATE', 'value': 'cloudforge-release-health'} in env
     config['rollouts']['analysis_template'] = None
     with pytest.raises(ValueError): renderer.render(config)
+
+
+def test_hpa_disruption_topology_and_shutdown_are_coherent(config):
+    docs = renderer.render(config)
+    by_kind = lambda kind: {d['metadata']['name']: d for d in docs if d['kind'] == kind}
+    deployments, hpas, budgets = by_kind('Deployment'), by_kind('HorizontalPodAutoscaler'), by_kind('PodDisruptionBudget')
+    assert len(deployments) == len(hpas) == len(budgets) == 6
+    for name, deployment in deployments.items():
+        pod = deployment['spec']['template']['spec']
+        container = pod['containers'][0]
+        assert 'replicas' not in deployment['spec']  # No conflict with an existing HPA's scale.
+        hpa = hpas[name]['spec']
+        assert hpa['scaleTargetRef'] == {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'name': name}
+        assert 2 == hpa['minReplicas'] <= hpa['maxReplicas'] == 4
+        assert hpa['metrics'][0]['resource']['target']['averageUtilization'] == 70
+        assert hpa['behavior']['scaleDown']['stabilizationWindowSeconds'] >= 300
+        assert budgets[name]['spec']['selector'] == deployment['spec']['selector']
+        assert deployment['spec']['strategy']['rollingUpdate']['maxUnavailable'] == 0
+        assert {rule['topologyKey'] for rule in pod['topologySpreadConstraints']} == {'kubernetes.io/hostname', 'topology.kubernetes.io/zone'}
+        for rule in pod['topologySpreadConstraints']:
+            assert rule['minDomains'] == 2 and rule['maxSkew'] == 1 and rule['whenUnsatisfiable'] == 'DoNotSchedule'
+            assert rule['labelSelector'] == deployment['spec']['selector']
+        assert container['lifecycle']['preStop']['exec']['command'] == ['/bin/sh', '-c', 'sleep 5']
+        assert container['resources']['requests']['cpu'] and container['resources']['limits']['memory']
+        assert container['resources']['limits']['ephemeral-storage'] == '4Gi'
+        if name != 'frontend':
+            assert container['readinessProbe']['httpGet']['path'] == '/ready'
+    infrastructure = deployments['infrastructure-service']['spec']['template']
+    assert infrastructure['metadata']['annotations']['cluster-autoscaler.kubernetes.io/safe-to-evict'] == 'false'
+    assert budgets['infrastructure-service']['spec']['maxUnavailable'] == 0
+    assert hpas['infrastructure-service']['spec']['behavior']['scaleDown']['selectPolicy'] == 'Disabled'
+    assert infrastructure['spec']['terminationGracePeriodSeconds'] == 120
+
+
+@pytest.mark.parametrize('profile', [
+    {'min_replicas': 1}, {'min_replicas': 5, 'max_replicas': 4},
+    {'max_replicas': 100}, {'cpu_utilization': 0}, {'min_replicas': True},
+])
+def test_invalid_scaling_profiles_do_not_render(config, profile):
+    config['reliability'] = profile
+    with pytest.raises(ValueError): renderer.render(config)

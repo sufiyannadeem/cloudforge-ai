@@ -155,7 +155,7 @@ func TestStrategyManifestsPreserveReadinessAndControllerOwnership(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	for _, required := range []string{"kind: Rollout", "progressDeadlineAbort: true", "setWeight: 20", "setWeight: 50", "setWeight: 100", "templateName: cloudforge-release-health", "podTemplateHashValue: Latest", "readinessProbe:"} {
+	for _, required := range []string{"kind: Rollout", "progressDeadlineAbort: true", "setWeight: 20", "setWeight: 50", "setWeight: 100", "templateName: cloudforge-release-health", "podTemplateHashValue: Latest", "readinessProbe:", "startupProbe:", "terminationGracePeriodSeconds: 60", "topologyKey: kubernetes.io/hostname", "topologyKey: topology.kubernetes.io/zone", "whenUnsatisfiable: ScheduleAnyway"} {
 		if !strings.Contains(manifest, required) {
 			t.Fatal(required)
 		}

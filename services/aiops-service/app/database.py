@@ -49,7 +49,10 @@ def claim_telemetry_assertion(nonce: str, expiry: int) -> bool:
 
 
 def initialize_database() -> None:
-    with get_connection() as connection:
+    with get_connection(connect_timeout=5) as connection:
+        connection.execute("SET LOCAL lock_timeout = '60s'")
+        connection.execute("SET LOCAL statement_timeout = '120s'")
+        connection.execute("SELECT pg_advisory_xact_lock(719920526321)")
         connection.execute("""
             CREATE TABLE IF NOT EXISTS aiops_telemetry_nonces (
                 nonce TEXT PRIMARY KEY,

@@ -102,5 +102,10 @@
   "rollouts": {
     "enabled": false,
     "analysis_template": null
+  },
+  "reliability": {
+    "min_replicas": 2,
+    "max_replicas": 4,
+    "cpu_utilization": 70
   }
 }

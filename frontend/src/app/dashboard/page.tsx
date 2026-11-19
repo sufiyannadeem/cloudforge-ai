@@ -5,6 +5,7 @@ import { dashboardCapabilities, dashboardProfiles } from "@/lib/role-access";
 import AppShell from "@/components/layout/AppShell";
 import MetricCard from "@/components/dashboard/MetricCard";
 import ServiceHealthGrid from "@/components/dashboard/ServiceHealthGrid";
+import PlatformReliability from "@/components/dashboard/PlatformReliability";
 import OperationalInsights from "@/components/dashboard/OperationalInsights";
 import ActivityTimeline from "@/components/dashboard/ActivityTimeline";
 import PlatformCommandCenter from "@/components/dashboard/PlatformCommandCenter";
@@ -186,6 +187,7 @@ export default async function DashboardPage() {
         <PlatformCommandCenter role={session.role} />
 
         {capabilities.platformTelemetry && <>
+        <PlatformReliability />
         <section>
           <div className="mb-4">
             <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">

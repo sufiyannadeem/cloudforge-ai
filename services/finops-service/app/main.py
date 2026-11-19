@@ -2,7 +2,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import psycopg
+from fastapi import FastAPI, HTTPException
 
 from .project_costs import router as project_costs_router
 from .aws_secrets_loader import populate_env_from_secrets_manager
@@ -76,6 +77,19 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def ready() -> dict[str, str]:
+    # Connectivity is bounded and failure details never leave the health endpoint.
+    for name in ['FINOPS_PROJECT_DATABASE_URL', 'FINOPS_AUDIT_DATABASE_URL']:
+        dsn = os.getenv(name)
+        if not dsn:
+            if os.getenv("APP_ENV") == "production":
+                raise HTTPException(status_code=503, detail="Database readiness unavailable")
+            continue
+        try:
+            with psycopg.connect(dsn, connect_timeout=2, autocommit=True,
+                                 options="-c statement_timeout=1000") as db:
+                db.execute("SELECT 1")
+        except (psycopg.Error, RuntimeError):
+            raise HTTPException(status_code=503, detail="Database readiness unavailable") from None
     return {
         "service": "finops-service",
         "status": "ready",

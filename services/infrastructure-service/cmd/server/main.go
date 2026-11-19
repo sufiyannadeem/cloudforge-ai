@@ -36,7 +36,8 @@ func main() {
 
 	frontendKey := os.Getenv("CLOUDFORGE_FRONTEND_KEY")
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	pool, err := database.NewPool(ctx, database.Config{
 		DatabaseURL: cfg.DatabaseURL,
@@ -118,7 +119,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              ":" + cfg.ServerPort,
-		Handler:           router,
+		Handler:           identity.WithReadiness(router, pool.Ping, ctx),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       applyTimeout + 5*time.Minute,
 		WriteTimeout:      applyTimeout + 5*time.Minute,
@@ -139,18 +140,11 @@ func main() {
 		}
 	}()
 
-	signalContext, stop := signal.NotifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
 	select {
 	case err := <-serverErrors:
 		logger.Fatalf("server error: %v", err)
 
-	case <-signalContext.Done():
+	case <-ctx.Done():
 		logger.Println("shutdown signal received")
 	}
 

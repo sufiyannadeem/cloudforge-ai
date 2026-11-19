@@ -169,6 +169,11 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
+      - name: Verify concurrent startup migrations in isolated schemas
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: go test -race -tags integration ./internal/migration -count=1
+
       - name: Run Go vet
         run: go vet ./...
 
@@ -257,6 +262,11 @@ jobs:
             -c "CREATE DATABASE cloudforge_test;"
       - name: Run unit & integration tests
         run: go test -v ./...
+
+      - name: Verify concurrent startup migrations in isolated schemas
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: go test -race -tags integration ./internal/migration -count=1
 
       - name: Run Go vet
         run: go vet ./...

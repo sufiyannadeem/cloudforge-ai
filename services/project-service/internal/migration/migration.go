@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -19,7 +20,18 @@ type Migration struct {
 	SQL  string
 }
 
-func Run(ctx context.Context, db *pgxpool.Pool) error {
+func Run(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return fmt.Errorf("database pool cannot be nil")
+	}
+	db, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer db.Rollback(ctx)
+	if _, err := db.Exec(ctx, "SELECT pg_advisory_xact_lock(719920526321)"); err != nil {
+		return err
+	}
 	if err := createMigrationTable(ctx, db); err != nil {
 		return fmt.Errorf("create migration table: %w", err)
 	}
@@ -57,12 +69,12 @@ func Run(ctx context.Context, db *pgxpool.Pool) error {
 		}
 	}
 
-	return nil
+	return db.Commit(ctx)
 }
 
 func createMigrationTable(
 	ctx context.Context,
-	db *pgxpool.Pool,
+	db pgx.Tx,
 ) error {
 	const query = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -115,7 +127,7 @@ func loadMigrations() ([]Migration, error) {
 
 func isMigrationApplied(
 	ctx context.Context,
-	db *pgxpool.Pool,
+	db pgx.Tx,
 	version string,
 ) (bool, error) {
 	const query = `
@@ -135,17 +147,11 @@ func isMigrationApplied(
 
 func applyMigration(
 	ctx context.Context,
-	db *pgxpool.Pool,
+	db pgx.Tx,
 	currentMigration Migration,
 ) error {
-	tx, err := db.Begin(ctx)
-	if err != nil {
-		return err
-	}
 
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, currentMigration.SQL); err != nil {
+	if _, err := db.Exec(ctx, currentMigration.SQL); err != nil {
 		return err
 	}
 
@@ -154,15 +160,11 @@ func applyMigration(
 		VALUES ($1)
 	`
 
-	if _, err := tx.Exec(
+	if _, err := db.Exec(
 		ctx,
 		insertQuery,
 		currentMigration.Name,
 	); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 

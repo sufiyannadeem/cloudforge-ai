@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,7 +30,15 @@ func (r *Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("database pool cannot be nil")
 	}
 
-	if err := r.createMigrationsTable(ctx); err != nil {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(719920526321)"); err != nil {
+		return err
+	}
+	if err := createMigrationsTable(ctx, tx); err != nil {
 		return err
 	}
 
@@ -41,15 +50,15 @@ func (r *Runner) Run(ctx context.Context) error {
 	sort.Strings(files)
 
 	for _, file := range files {
-		if err := r.applyMigration(ctx, file); err != nil {
+		if err := applyMigration(ctx, tx, file); err != nil {
 			return fmt.Errorf("apply migration %s: %w", file, err)
 		}
 	}
 
-	return nil
+	return tx.Commit(ctx)
 }
 
-func (r *Runner) createMigrationsTable(ctx context.Context) error {
+func createMigrationsTable(ctx context.Context, tx pgx.Tx) error {
 	const query = `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			version VARCHAR(255) PRIMARY KEY,
@@ -57,19 +66,19 @@ func (r *Runner) createMigrationsTable(ctx context.Context) error {
 		)
 	`
 
-	if _, err := r.pool.Exec(ctx, query); err != nil {
+	if _, err := tx.Exec(ctx, query); err != nil {
 		return fmt.Errorf("create schema_migrations table: %w", err)
 	}
 
 	return nil
 }
 
-func (r *Runner) applyMigration(ctx context.Context, file string) error {
+func applyMigration(ctx context.Context, tx pgx.Tx, file string) error {
 	version := strings.TrimPrefix(file, "migrations/")
 
 	var applied bool
 
-	err := r.pool.QueryRow(
+	err := tx.QueryRow(
 		ctx,
 		`SELECT EXISTS (
 			SELECT 1 FROM schema_migrations WHERE version = $1
@@ -90,13 +99,6 @@ func (r *Runner) applyMigration(ctx context.Context, file string) error {
 		return fmt.Errorf("read migration file: %w", err)
 	}
 
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin migration transaction: %w", err)
-	}
-
-	defer tx.Rollback(ctx)
-
 	if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
 		return fmt.Errorf("execute migration SQL: %w", err)
 	}
@@ -107,10 +109,6 @@ func (r *Runner) applyMigration(ctx context.Context, file string) error {
 		version,
 	); err != nil {
 		return fmt.Errorf("record migration: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit migration transaction: %w", err)
 	}
 
 	return nil

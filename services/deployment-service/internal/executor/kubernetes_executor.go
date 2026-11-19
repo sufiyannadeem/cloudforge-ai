@@ -452,7 +452,7 @@ func generateKubernetesManifest(d model.Deployment, name string, deadlineSeconds
 			podSecurity += "      - conditionType: " + gate + "\n"
 		}
 	}
-	return fmt.Sprintf(`apiVersion: apps/v1
+	manifest := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: %s
@@ -504,6 +504,13 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12
         readinessProbe:
           httpGet:
             path: /health
@@ -556,6 +563,26 @@ spec:
 		// Service spec selector
 		name,
 	)
+	// Soft spreading preserves single-node development and existing application
+	// scheduling while preferring separate hosts/zones in capable clusters.
+	reliability := fmt.Sprintf(`    spec:
+      terminationGracePeriodSeconds: 60
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: %s
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: %s
+`, name, name)
+	return strings.Replace(manifest, "    spec:\n", reliability, 1)
+
 }
 
 func validateClusterName(name string) error {

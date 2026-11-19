@@ -56,6 +56,12 @@ def render(config):
         raise ValueError('rollouts.enabled must be a boolean')
     if rollouts['enabled']:
         checked(r'[a-z0-9][a-z0-9-]*', rollouts['analysis_template'], 'rollouts.analysis_template')
+    reliability = config.get('reliability', {})
+    minimum = reliability.get('min_replicas', 2)
+    maximum = reliability.get('max_replicas', 4)
+    cpu = reliability.get('cpu_utilization', 70)
+    if any(type(v) is not int for v in (minimum, maximum, cpu)) or not (2 <= minimum <= maximum <= 10) or not (30 <= cpu <= 90):
+        raise ValueError('Invalid reliability replica bounds or CPU target')
     bucket = checked(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', config['state_bucket'], 'state_bucket')
     storage = config['storage']
     checked(r'[a-z0-9][a-z0-9.-]*', storage['class'], 'storage.class')
@@ -76,7 +82,7 @@ def render(config):
     docs = [d for d in yaml.safe_load_all((ROOT / 'deploy/kubernetes/cloudforge-secrets-example.yml').read_text())
             if d and d['kind'] != 'Secret']
     secret_keys = {}
-    for d in docs:
+    for d in list(docs):
         if d['kind'] == 'ServiceAccount':
             d['metadata'].pop('annotations', None)
             service = d['metadata']['name'].removeprefix('cloudforge-')
@@ -95,7 +101,46 @@ def render(config):
         container['imagePullPolicy'] = 'Always'
         container['securityContext'].update({'allowPrivilegeEscalation': False, 'capabilities': {'drop': ['ALL']}})
         spec['securityContext']['seccompProfile'] = {'type': 'RuntimeDefault'}
-        spec['terminationGracePeriodSeconds'] = 30
+        spec['terminationGracePeriodSeconds'] = 120 if name == 'infrastructure-service' else 60
+        # HPA owns scale after creation; reapplying a release must not reset it.
+        d['spec'].pop('replicas', None)
+        d['spec']['minReadySeconds'] = 10
+        d['spec']['progressDeadlineSeconds'] = 600
+        d['spec']['strategy'] = {'type': 'RollingUpdate', 'rollingUpdate': {'maxSurge': 1, 'maxUnavailable': 0}}
+        spec['topologySpreadConstraints'] = [
+            {'maxSkew': 1, 'minDomains': 2, 'topologyKey': key, 'whenUnsatisfiable': 'DoNotSchedule',
+             'labelSelector': {'matchLabels': {'app': name}}}
+            for key in ('kubernetes.io/hostname', 'topology.kubernetes.io/zone')
+        ]
+        container['lifecycle'] = {'preStop': {'exec': {'command': ['/bin/sh', '-c', 'sleep 5']}}}
+        container['resources']['requests']['ephemeral-storage'] = '128Mi'
+        container['resources']['limits']['ephemeral-storage'] = '4Gi'
+        if name != 'frontend':
+            container['readinessProbe']['httpGet']['path'] = '/ready'
+            container['readinessProbe']['timeoutSeconds'] = 8 if name == 'finops-service' else 4
+            if name == 'finops-service':
+                container['readinessProbe']['periodSeconds'] = 10
+        behavior = {
+            'scaleUp': {'stabilizationWindowSeconds': 60, 'policies': [{'type': 'Pods', 'value': 1, 'periodSeconds': 60}]},
+            'scaleDown': {'stabilizationWindowSeconds': 300, 'policies': [{'type': 'Pods', 'value': 1, 'periodSeconds': 60}]},
+        }
+        if name == 'infrastructure-service':
+            # Terraform runs in synchronous HTTP requests. Never terminate those
+            # pods automatically; planned drain/reconciliation remains required.
+            behavior['scaleDown']['selectPolicy'] = 'Disabled'
+            d['spec']['template']['metadata'].setdefault('annotations', {})['cluster-autoscaler.kubernetes.io/safe-to-evict'] = 'false'
+        docs.extend([
+            document('HorizontalPodAutoscaler', name, {
+                'scaleTargetRef': {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'name': name},
+                'minReplicas': minimum, 'maxReplicas': maximum,
+                'metrics': [{'type': 'Resource', 'resource': {'name': 'cpu', 'target': {'type': 'Utilization', 'averageUtilization': cpu}}}],
+                'behavior': behavior,
+            }, 'autoscaling/v2'),
+            document('PodDisruptionBudget', name, {
+                'maxUnavailable': 0 if name == 'infrastructure-service' else 1,
+                'selector': {'matchLabels': {'app': name}},
+            }, 'policy/v1'),
+        ])
         for env in container.get('env', []):
             if env['name'] in {'AWS_REGION', 'AWS_DEFAULT_REGION'}:
                 env['value'] = region
@@ -107,6 +152,8 @@ def render(config):
             secret_keys.setdefault(name_ref, set())
         # All service connections use their actual ClusterIP Services.
         additional = {'AWS_STS_REGIONAL_ENDPOINTS': 'regional'}
+        if name in {'project-service', 'deployment-service', 'infrastructure-service'}:
+            additional['SHUTDOWN_TIMEOUT_SECONDS'] = '90' if name == 'infrastructure-service' else '20'
         if name in {'frontend', 'deployment-service', 'aiops-service', 'finops-service'}:
             additional['PROMETHEUS_URL'] = f'http://prometheus.{monitor_ns}.svc:9090'
         if name == 'deployment-service':

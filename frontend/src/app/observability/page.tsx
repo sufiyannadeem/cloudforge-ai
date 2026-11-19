@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useViewerSession } from "@/components/layout/ViewerSession";
 import { selectAuthorizedProject } from "@/lib/role-access";
+import PlatformReliability from "@/components/dashboard/PlatformReliability";
 import AppShell from "@/components/layout/AppShell";
 import { frontendApi } from "@/lib/frontend-api";
 import type { Project } from "@/types/api";
@@ -229,6 +230,7 @@ export default function ObservabilityPage() {
   return (
     <AppShell>
       <main className="min-w-0 space-y-6 bg-[var(--cf-background)] p-4 text-[var(--cf-text)] md:p-6">
+        <PlatformReliability />
         <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">

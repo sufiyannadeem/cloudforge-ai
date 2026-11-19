@@ -257,7 +257,7 @@ func main() {
 	server := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.ServerPort),
 
-		Handler: instrumentedRouter,
+		Handler: identity.WithReadiness(instrumentedRouter, pool.Ping, shutdownContext),
 
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

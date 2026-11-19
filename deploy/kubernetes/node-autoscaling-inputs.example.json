@@ -1,0 +1,11 @@
+{
+  "account_id": null,
+  "region": null,
+  "cluster_name": null,
+  "cluster_minor": null,
+  "chart_version": null,
+  "image": null,
+  "role_arn": null,
+  "oidc_provider_arn": null,
+  "asg_arns": []
+}

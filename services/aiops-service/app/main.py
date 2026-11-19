@@ -152,6 +152,19 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def ready() -> dict[str, str]:
+    # Connectivity is bounded and failure details never leave the health endpoint.
+    for name in ['DATABASE_URL']:
+        dsn = os.getenv(name)
+        if not dsn:
+            if os.getenv("APP_ENV") == "production":
+                raise HTTPException(status_code=503, detail="Database readiness unavailable")
+            continue
+        try:
+            with psycopg.connect(dsn, connect_timeout=2, autocommit=True,
+                                 options="-c statement_timeout=1000") as db:
+                db.execute("SELECT 1")
+        except (psycopg.Error, RuntimeError):
+            raise HTTPException(status_code=503, detail="Database readiness unavailable") from None
     return {
         "service": "aiops-service",
         "status": "ready",

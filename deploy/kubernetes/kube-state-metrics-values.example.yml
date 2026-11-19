@@ -1,0 +1,15 @@
+# Review with a pinned upstream kube-state-metrics Helm chart before installation.
+# The actual scrape Service, image digest and workload identity remain external inputs.
+namespaces:
+  - cloudforge
+collectors:
+  - deployments
+  - horizontalpodautoscalers
+metricAllowlist:
+  - kube_deployment_spec_replicas
+  - kube_deployment_status_replicas_available
+  - kube_deployment_status_observed_generation
+  - kube_deployment_metadata_generation
+  - kube_horizontalpodautoscaler_status_current_replicas
+  - kube_horizontalpodautoscaler_status_desired_replicas
+  - kube_horizontalpodautoscaler_status_condition
