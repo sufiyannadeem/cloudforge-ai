@@ -36,7 +36,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         service_identity: ./services/service-identity
-    image: cloudforge-project-service:prod
+    image: ${PROJECT_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-project-service-prod
     restart: always
     environment:
@@ -67,7 +67,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         service_identity: ./services/service-identity
-    image: cloudforge-infrastructure-service:prod
+    image: ${INFRASTRUCTURE_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-infrastructure-service-prod
     restart: always
     environment:
@@ -114,7 +114,7 @@ services:
       dockerfile: Dockerfile
       additional_contexts:
         service_identity: ./services/service-identity
-    image: cloudforge-deployment-service:prod
+    image: ${DEPLOYMENT_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-deployment-service-prod
     restart: always
     environment:
@@ -160,7 +160,7 @@ services:
   aiops-service:
     build:
       context: ./services/aiops-service
-    image: cloudforge-aiops-service:prod
+    image: ${AIOPS_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-aiops-service-prod
     restart: always
     environment:
@@ -211,7 +211,7 @@ services:
   finops-service:
     build:
       context: ./services/finops-service
-    image: cloudforge-finops-service:prod
+    image: ${FINOPS_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-finops-service-prod
     restart: always
     environment:
@@ -252,7 +252,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    image: cloudforge-frontend:prod
+    image: ${FRONTEND_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-frontend-prod
     restart: always
     ports:
@@ -287,7 +287,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:v3.5.0
+    image: ${PROMETHEUS_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-prometheus-prod
     restart: always
     ports:
@@ -314,7 +314,7 @@ services:
     #     > monitoring/alertmanager/alertmanager.generated.yml
     #
     # alertmanager.generated.yml is listed in .gitignore and must NEVER be committed.
-    image: prom/alertmanager:v0.27.0
+    image: ${ALERTMANAGER_IMAGE:?Set a reviewed immutable registry digest}
     container_name: cloudforge-alertmanager-prod
     restart: always
     ports:

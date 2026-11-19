@@ -1,0 +1,123 @@
+name: Reviewed Image Release
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the scanned images after protected release approval
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: reviewed-images-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: project-service
+            context: services/project-service
+            dockerfile: services/project-service/Dockerfile
+            identity_context: service_identity=./services/service-identity
+          - name: infrastructure-service
+            context: services/infrastructure-service
+            dockerfile: services/infrastructure-service/Dockerfile
+            identity_context: service_identity=./services/service-identity
+          - name: deployment-service
+            context: services/deployment-service
+            dockerfile: services/deployment-service/Dockerfile
+            identity_context: service_identity=./services/service-identity
+          - name: aiops-service
+            context: services/aiops-service
+            dockerfile: services/aiops-service/Dockerfile
+          - name: finops-service
+            context: services/finops-service
+            dockerfile: services/finops-service/Dockerfile
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+          - name: postgres
+            context: deploy/recovery
+            dockerfile: deploy/recovery/Postgres.Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          build-contexts: ${{ matrix.identity_context }}
+          tags: cloudforge-${{ matrix.name }}:release
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          load: true
+          push: false
+          provenance: false
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.76.2
+          image-ref: cloudforge-${{ matrix.name }}:release
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.76.2
+          image-ref: cloudforge-${{ matrix.name }}:release
+          format: cyclonedx
+          output: sbom.json
+      - name: Preserve the exact scanned image
+        env:
+          SERVICE: ${{ matrix.name }}
+        run: |
+          mkdir artifact
+          docker save "cloudforge-${SERVICE}:release" --output artifact/image.tar
+          mv sbom.json artifact/sbom.json
+          python3 - <<'PYMETA'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          archive=Path('artifact/image.tar')
+          with archive.open('rb') as stream: checksum=hashlib.file_digest(stream,'sha256').hexdigest()
+          image='cloudforge-'+os.environ['SERVICE']+':release'
+          image_id=subprocess.check_output(['docker','image','inspect',image,'--format','{{.Id}}'],text=True).strip()
+          Path('artifact/metadata.json').write_text(json.dumps({'service':os.environ['SERVICE'],'revision':os.environ['GITHUB_SHA'],'local_image':image,'image_id':image_id,'archive_sha256':checksum}))
+          PYMETA
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: image-${{ matrix.name }}
+          path: artifact/
+          retention-days: 3
+          if-no-files-found: error
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: build-scan
+    environment: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download verified run artifacts and authenticate registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --pattern 'image-*' --dir artifacts
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish without rebuilding and record actual registry digests
+        env:
+          RELEASE_PUBLISH_APPROVED: 'true'
+        run: python3 scripts/release-images.py --publish --artifacts artifacts --revision "$GITHUB_SHA" --output images.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: immutable-release-images
+          path: images.json
+          if-no-files-found: error
