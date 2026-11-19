@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"os"
@@ -135,6 +136,8 @@ func main() {
 			AWSCLIPath:       cfg.AWSCLIPath,
 			KubeConfig:       cfg.KubeConfig,
 			Timeout:          time.Duration(cfg.RolloutTimeoutSeconds) * time.Second,
+			ArgoEnabled:      os.Getenv("ARGO_ROLLOUTS_ENABLED") == "true",
+			AnalysisTemplate: os.Getenv("ARGO_ANALYSIS_TEMPLATE"),
 		}
 
 		k8sExec, err := executor.NewProductionKubernetesExecutor(deploymentService, k8sOpts)
@@ -174,6 +177,7 @@ func main() {
 		}
 
 		deploymentExec = k8sExec
+		deploymentService.SetProgressiveEnabled(os.Getenv("ARGO_ROLLOUTS_ENABLED") == "true")
 		deploymentRepository.SetExecutionMode("kubernetes")
 		telemetryHandler = handler.NewProjectTelemetryHandler(k8sExec, os.Getenv("PROMETHEUS_URL"), deploymentRepository)
 		logger.Info(
@@ -218,6 +222,12 @@ func main() {
 		deploymentService,
 	)
 
+	if source, ok := deploymentExec.(interface {
+		RolloutState(context.Context, uuid.UUID) (executor.RolloutState, error)
+		Promote(context.Context, uuid.UUID, executor.RolloutState) error
+	}); ok {
+		deploymentHandler.Rollouts = &handler.RolloutHandler{Source: source, Store: deploymentRepository}
+	}
 	queuedDeploymentHandler := handler.NewQueuedDeploymentHandler(
 		deploymentService,
 		nil,

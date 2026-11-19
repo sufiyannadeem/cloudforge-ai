@@ -85,7 +85,9 @@ func runLeased(ctx context.Context, store ExecutionStore, exec executor.Executor
 	}()
 
 	var executionErr error
-	if lease.ModeMismatch {
+	if lease.ProgressiveUnsupported {
+		executionErr = errors.New("progressive delivery requires Kubernetes; simulation is not permitted")
+	} else if lease.ModeMismatch {
 		executionErr = errors.New("execution mode changed; manual reconciliation required")
 	} else if lease.Reconcile {
 		executionErr = reconcileExecution(runCtx, exec, lease.DeploymentID)
@@ -128,6 +130,14 @@ func runLeased(ctx context.Context, store ExecutionStore, exec executor.Executor
 }
 
 func reconcileExecution(ctx context.Context, exec executor.Executor, id uuid.UUID) error {
+	if observer, ok := exec.(interface {
+		RecoverProgressive(context.Context, uuid.UUID) (bool, error)
+	}); ok {
+		if handled, err := observer.RecoverProgressive(ctx, id); handled {
+			return err
+		}
+	}
+
 	reconciler, ok := exec.(interface {
 		Reconcile(context.Context, uuid.UUID) error
 	})

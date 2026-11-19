@@ -49,7 +49,7 @@ func (k *KubernetesExecutor) DiagnoseProject(ctx context.Context, id uuid.UUID) 
 		return ProjectDiagnosis{}, ErrTelemetryUnavailable
 	}
 	result := ProjectDiagnosis{Source: "live_kubernetes", ObservedAt: time.Now().UTC(), Desired: workload.Spec.Replicas}
-	observed := workload.Metadata.Generation > 0 && workload.Status.ObservedGeneration == workload.Metadata.Generation
+	observed := workload.Metadata.Generation > 0 && int64(workload.Status.ObservedGeneration) == workload.Metadata.Generation
 	deadline := false
 	if observed {
 		result.Available = &workload.Status.AvailableReplicas

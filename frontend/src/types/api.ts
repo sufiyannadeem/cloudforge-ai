@@ -1,3 +1,5 @@
+import type { DeploymentStrategy } from "./deployments";
+
 export interface ApiError {
   message: string;
   code?: string;
@@ -114,6 +116,8 @@ export type DeploymentAttemptStatus =
   | "cancelled";
 
 export interface Deployment {
+  strategy?: DeploymentStrategy;
+  created_by?: string;
   id: string;
   project_id: string;
   environment: string;

@@ -101,3 +101,13 @@ func TestDurableWorkerDoesNotReconcileWithDifferentExecutionMode(t *testing.T) {
 		t.Fatal("mismatched execution mode reached the executor")
 	}
 }
+
+func TestDurableWorkerCannotSimulateProgressiveDelivery(t *testing.T) {
+	store := &testExecutionStore{}
+	exec := &readOnlyRecoveryExecutor{t: t}
+	lease := repository.ExecutionLease{DeploymentID: uuid.New(), Token: uuid.New(), ProgressiveUnsupported: true}
+	runLeased(t.Context(), store, exec, lease, nil, slog.Default())
+	if exec.reconciled || store.begun.Load() || !store.finished.Load() {
+		t.Fatal("unsupported strategy reached the executor")
+	}
+}

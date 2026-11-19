@@ -54,6 +54,10 @@ func NewRouterWithDependenciesAndMetrics(
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", h.Health)
+	if h.Rollouts != nil {
+		mux.HandleFunc("GET /api/v1/deployments/{id}/rollout", h.Rollouts.State)
+		mux.HandleFunc("POST /api/v1/deployments/{id}/promote", h.Rollouts.Promote)
+	}
 
 	mux.HandleFunc(
 		"POST /api/v1/deployments",
@@ -210,6 +214,9 @@ func NewAuthenticatedRouter(mux http.Handler, frontendKey, aiopsKey string, scop
 			_, err := uuid.Parse(id)
 			allowed = (r.Method == http.MethodGet && r.URL.Path == "/api/v1/deployments") || err == nil && ((r.Method == http.MethodGet && (suffix == "" || suffix == "attempts")) ||
 				(r.Method == http.MethodPost && suffix == "remediation-run"))
+		}
+		if strings.HasSuffix(path, "/promote") {
+			allowed = allowed && caller.Human() && caller.Role == "platform-engineer"
 		}
 		if !allowed {
 			writeError(w, http.StatusForbidden, "insufficient deployment permissions")

@@ -7,6 +7,7 @@ import { useViewerSession } from "@/components/layout/ViewerSession";
 import { canWriteProject } from "@/lib/role-access";
 import AppShell from "@/components/layout/AppShell";
 import ProjectTelemetry from "@/components/deployments/ProjectTelemetry";
+import RolloutControls from "@/components/deployments/RolloutControls";
 import RollbackModal from "@/components/deployments/RollbackModal";
 import {
   Deployment,
@@ -26,6 +27,10 @@ interface DeploymentForm {
   image: string;
   git_commit_sha: string;
   namespace: string;
+  strategy: "rolling" | "blue-green" | "canary";
+  max_surge: number;
+  max_unavailable: number;
+  readiness_gates: string;
 }
 
 const initialForm: DeploymentForm = {
@@ -34,6 +39,10 @@ const initialForm: DeploymentForm = {
   image: "ghcr.io/cloudforge/api-service:v1.0.0",
   git_commit_sha: "c0ffee1",
   namespace: "cloudforge-dev",
+  strategy: "rolling",
+  max_surge: 1,
+  max_unavailable: 0,
+  readiness_gates: "",
 };
 
 function csrfHeaders(): Record<string, string> {
@@ -79,7 +88,7 @@ export default function DeploymentsPage() {
 
   const loadDeployments = useCallback(async () => {
     try {
-      setLoading(true);
+      // Keep revision approval panels mounted during background polling.
       setError("");
 
       const response = await fetch(
@@ -186,7 +195,7 @@ export default function DeploymentsPage() {
   }, [deployments, selectedDeploymentId, loadDeployments, loadAttempts, loadTelemetry]);
 
   const updateField = (
-    field: keyof DeploymentForm,
+    field: "project_id" | "environment" | "image" | "git_commit_sha" | "namespace",
     value: string,
   ) => {
     setForm((current) => ({
@@ -217,7 +226,14 @@ export default function DeploymentsPage() {
             "Content-Type": "application/json",
             ...csrfHeaders(),
           },
-          body: JSON.stringify(form),
+          body: JSON.stringify({
+            project_id: form.project_id, environment: form.environment, image: form.image,
+            git_commit_sha: form.git_commit_sha,
+            namespace: form.strategy === "rolling" ? form.namespace : `cf-${form.project_id}`,
+            strategy: { type: form.strategy, max_surge: form.strategy === "rolling" ? form.max_surge : 0,
+              max_unavailable: form.strategy === "rolling" ? form.max_unavailable : 0,
+              readiness_gates: form.readiness_gates.split(",").map((gate) => gate.trim()).filter(Boolean) },
+          }),
         },
       );
 
@@ -543,6 +559,26 @@ export default function DeploymentsPage() {
                   />
                 </div>
 
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-semibold">Deployment strategy</legend>
+                  <select aria-label="Deployment strategy" className="w-full rounded-lg border p-3" value={form.strategy}
+                    onChange={(event) => setForm((current) => ({ ...current, strategy: event.target.value as DeploymentForm["strategy"] }))}>
+                    <option value="rolling">Rolling (default)</option>
+                    <option value="blue-green">Blue-green (Argo Rollouts)</option>
+                    <option value="canary">Canary (Argo, replica-based)</option>
+                  </select>
+                  <label className="block">Additional readiness conditions (optional)
+                    <input aria-label="Additional readiness conditions" className="w-full rounded border p-2" value={form.readiness_gates}
+                      onChange={(event) => setForm((current) => ({ ...current, readiness_gates: event.target.value }))} />
+                  </label>
+                  <p className="text-xs">Comma-separated qualified condition names. Their controller must set them; unmet conditions block readiness.</p>
+                  {form.strategy === "rolling" ? <div className="flex gap-3">
+                    <label>Max surge <input aria-label="Max surge" type="number" min={0} max={2} value={form.max_surge}
+                      onChange={(event) => setForm((current) => ({ ...current, max_surge: Number(event.target.value) }))} /></label>
+                    <label>Max unavailable <input aria-label="Max unavailable" type="number" min={0} max={2} value={form.max_unavailable}
+                      onChange={(event) => setForm((current) => ({ ...current, max_unavailable: Number(event.target.value) }))} /></label>
+                  </div> : <p className="text-xs">Requires configured Argo CRDs/controller and a verified stable baseline. Blue-green requires independent Platform Engineer promotion. Canary requires Prometheus analysis; traffic weights are not configured.</p>}
+                </fieldset>
                 <div>
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Kubernetes Namespace
@@ -550,8 +586,8 @@ export default function DeploymentsPage() {
                   <input
                     required
                     placeholder="e.g. cloudforge-dev"
-                    value={operator ? form.namespace : (form.project_id ? `cf-${form.project_id}` : "")}
-                    readOnly={!operator}
+                    value={operator && form.strategy === "rolling" ? form.namespace : (form.project_id ? `cf-${form.project_id}` : "")}
+                    readOnly={!operator || form.strategy !== "rolling"}
                     onChange={(event) =>
                       updateField("namespace", event.target.value)
                     }
@@ -654,6 +690,10 @@ export default function DeploymentsPage() {
 
                         <td className="p-4 text-xs">
                           {executionModeLabel(deployment.execution_mode)}
+                          <p>{deployment.strategy?.type ?? "rolling"}</p>
+                          {deployment.strategy?.type && deployment.strategy.type !== "rolling" &&
+                            <RolloutControls deployment={deployment} operator={operator} csrfHeaders={csrfHeaders} />}
+
                         </td>
 
                         <td className="p-4">

@@ -65,6 +65,8 @@ func (b *limitedCommandBuffer) Write(data []byte) (int, error) {
 
 // KubernetesOptions provides configuration for Kubernetes / EKS workload deployment.
 type KubernetesOptions struct {
+	ArgoEnabled      bool
+	AnalysisTemplate string
 	ClusterName      string
 	AWSRegion        string
 	DefaultNamespace string
@@ -76,6 +78,8 @@ type KubernetesOptions struct {
 
 // KubernetesExecutor performs real workload delivery to Kubernetes / EKS clusters.
 type KubernetesExecutor struct {
+	argoEnabled      bool
+	analysisTemplate string
 	deploymentGetter DeploymentGetter
 	kubectlPath      string
 	awsCLIPath       string
@@ -155,6 +159,7 @@ func NewKubernetesExecutorWithOptions(
 
 	return &KubernetesExecutor{
 		deploymentGetter: getter,
+		argoEnabled:      opts.ArgoEnabled, analysisTemplate: opts.AnalysisTemplate,
 		kubectlPath:      kubectlPath,
 		awsCLIPath:       awsCLIPath,
 		kubeconfigPath:   strings.TrimSpace(opts.KubeConfig),
@@ -292,11 +297,51 @@ func (k *KubernetesExecutor) ExecuteWithClaim(
 		}, fmt.Errorf("cluster authentication: %w", err)
 	}
 
+	progressiveHistory := false
+	if !deployment.Strategy.Progressive() {
+		if history, ok := k.deploymentGetter.(interface {
+			HasProgressiveHistory(context.Context, uuid.UUID) (bool, error)
+		}); ok {
+			progressiveHistory, err = history.HasProgressiveHistory(ctx, deploymentID)
+			if err != nil {
+				return Result{}, errors.New("deployment strategy history could not be verified")
+			}
+		}
+	}
+	if !deployment.Strategy.Progressive() && (k.argoEnabled || progressiveHistory) {
+		data, err := k.readScoped(ctx, deployment.Namespace, "api-resources", "--api-group=argoproj.io", "-o", "name")
+		if err != nil {
+			return Result{}, ErrRolloutUnavailable
+		}
+		if progressiveHistory && !strings.Contains(string(data), "rollouts.argoproj.io") {
+			return Result{}, errors.New("progressive history exists but Argo resources cannot be checked; reconcile before native execution")
+		}
+		if strings.Contains(string(data), "rollouts.argoproj.io") {
+			existing, err := k.readScoped(ctx, deployment.Namespace, "get", "rollouts.argoproj.io", sanitizeWorkloadName(deployment), "--ignore-not-found", "-o", "json")
+			if err != nil || len(strings.TrimSpace(string(existing))) > 0 {
+				return Result{}, errors.New("Argo Rollout exists for this workload; independent migration required before native rolling")
+			}
+		}
+	}
+	var prepared argoObject
+	if deployment.Strategy.Progressive() {
+		prepared, err = k.prepareArgo(ctx, deployment)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	workloadName := sanitizeWorkloadName(deployment)
 	manifest := generateKubernetesManifest(deployment, workloadName, int(k.timeout.Seconds()))
+	if deployment.Strategy.Progressive() {
+		manifest = k.argoManifest(deployment)
+		manifest = strings.Replace(manifest, "metadata:\n", fmt.Sprintf("metadata:\n  resourceVersion: %q\n  uid: %q\n", prepared.Metadata.ResourceVersion, prepared.Metadata.UID), 1)
+	}
 
 	// Step 1: Apply workload manifest (Deployment and corresponding Service) to cluster
 	applyArgs := []string{"apply", "-f", "-", "-n", deployment.Namespace}
+	if deployment.Strategy.Progressive() {
+		applyArgs = append(applyArgs, "--server-side", "--field-manager=cloudforge-rollouts")
+	}
 	if k.kubeconfigPath != "" {
 		applyArgs = append(applyArgs, "--kubeconfig", k.kubeconfigPath)
 	}
@@ -331,6 +376,13 @@ func (k *KubernetesExecutor) ExecuteWithClaim(
 		}, fmt.Errorf("apply workload: %s", errMsg)
 	}
 
+	if deployment.Strategy.Progressive() {
+		err := k.waitArgo(ctx, deploymentID)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{DeploymentID: deploymentID, Status: "succeeded", Message: "Argo confirmed healthy revision", Duration: time.Since(start)}, nil
+	}
 	// Step 2: Track rollout status until ready or deadline exceeded
 	timeoutStr := fmt.Sprintf("%ds", int(k.timeout.Seconds()))
 	rolloutArgs := []string{
@@ -385,11 +437,21 @@ func generateKubernetesManifest(d model.Deployment, name string, deadlineSeconds
 	if deadlineSeconds <= 0 {
 		deadlineSeconds = 120
 	}
+	// Kubernetes requires progressDeadlineSeconds > minReadySeconds.
+	if deadlineSeconds <= 10 {
+		deadlineSeconds = 11
+	}
 	podSecurity := ""
 	if d.Namespace == "cf-"+d.ProjectID.String() {
 		podSecurity = "      automountServiceAccountToken: false\n"
 	}
 
+	if len(d.Strategy.ReadinessGates) > 0 {
+		podSecurity += "      readinessGates:\n"
+		for _, gate := range d.Strategy.ReadinessGates {
+			podSecurity += "      - conditionType: " + gate + "\n"
+		}
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -406,12 +468,13 @@ metadata:
     cloudforge.ai/project-id: %s
 spec:
   replicas: 2
+  minReadySeconds: 10
   progressDeadlineSeconds: %d
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+      maxSurge: %d
+      maxUnavailable: %d
   selector:
     matchLabels:
       app.kubernetes.io/name: %s
@@ -483,7 +546,7 @@ spec:
 		// Deployment metadata
 		name, d.Namespace, d.ID, name, name, d.GitCommitSHA, d.Environment, d.ProjectID,
 		// spec
-		deadlineSeconds, name,
+		deadlineSeconds, d.Strategy.Normalized().MaxSurge, d.Strategy.Normalized().MaxUnavailable, name,
 		// template metadata
 		d.ID, name, name, d.GitCommitSHA, d.Environment, d.ProjectID,
 		// container
@@ -521,6 +584,15 @@ func validateAWSRegion(region string) error {
 }
 
 func validateDeploymentForExecution(d model.Deployment) error {
+	if d.Strategy.Progressive() && !regexp.MustCompile(`@sha256:[a-f0-9]{64}$`).MatchString(d.Image) {
+		return errors.New("progressive delivery requires an immutable sha256 image")
+	}
+	if d.Strategy.Progressive() && d.Namespace != "cf-"+d.ProjectID.String() {
+		return errors.New("progressive delivery requires the verified project namespace")
+	}
+	if err := d.Strategy.Validate(); err != nil {
+		return err
+	}
 	if d.ProjectID == uuid.Nil {
 		return errors.New("project ID cannot be nil")
 	}

@@ -122,6 +122,8 @@ services:
 
       # Real Kubernetes execution in production (Simulated executor blocked in production)
       DEPLOYMENT_EXECUTOR: kubernetes
+      ARGO_ROLLOUTS_ENABLED: ${ARGO_ROLLOUTS_ENABLED:-false}
+      ARGO_ANALYSIS_TEMPLATE: ${ARGO_ANALYSIS_TEMPLATE:-}
       EKS_CLUSTER_NAME: ${EKS_CLUSTER_NAME:?Set EKS_CLUSTER_NAME in production}
       KUBERNETES_NAMESPACE: ${KUBERNETES_NAMESPACE:-default}
       KUBECONFIG: /var/lib/cloudforge/kube/config

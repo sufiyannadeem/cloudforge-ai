@@ -66,6 +66,7 @@ function isAuthorizedForRoute(
   if (service === "project") return path[0] !== "admin" || role === "platform-engineer";
 
   if (service === "deployment") {
+    if (path.at(-1) === "promote") return role === "platform-engineer";
     return method !== "DELETE" || role === "platform-engineer";
   }
 
@@ -162,7 +163,7 @@ async function proxyRequest(
     body = await request.arrayBuffer();
   }
 
-  const approvalBody = request.method === "POST" && ((service === "infrastructure" && /\/(apply|review)$/.test(targetUrl.pathname)) || (service === "project" && targetUrl.pathname === "/admin/accounts"))
+  const approvalBody = request.method === "POST" && ((service === "infrastructure" && /\/(apply|review)$/.test(targetUrl.pathname)) || (service === "project" && targetUrl.pathname === "/admin/accounts") || (service === "deployment" && /\/promote$/.test(targetUrl.pathname)))
     ? body ?? new ArrayBuffer(0)
     : undefined;
   try {

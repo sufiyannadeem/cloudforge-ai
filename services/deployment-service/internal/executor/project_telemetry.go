@@ -53,7 +53,7 @@ type kubeObject struct {
 		Containers []struct{ Name, Image string }
 	}
 	Status struct {
-		ObservedGeneration int64
+		ObservedGeneration observedGeneration
 		AvailableReplicas  int
 		Phase              string
 		Conditions         []struct{ Type, Status, Reason string }
@@ -69,6 +69,14 @@ type kubeObject struct {
 			}
 		}
 	}
+}
+
+type observedGeneration int64
+
+func (g *observedGeneration) UnmarshalJSON(data []byte) error {
+	value, err := strconv.ParseInt(strings.Trim(string(data), "\""), 10, 64)
+	*g = observedGeneration(value)
+	return err
 }
 
 func owns(object kubeObject, kind, name, id string) bool {
@@ -122,8 +130,12 @@ func (k *KubernetesExecutor) scopedPods(ctx context.Context, id uuid.UUID) (mode
 		return deployment, workload, nil, ErrTelemetryUnavailable
 	}
 	name := sanitizeWorkloadName(deployment)
-	data, err := k.readScoped(ctx, deployment.Namespace, "get", "deployment", name, "-o", "json")
-	if err != nil || json.Unmarshal(data, &workload) != nil || workload.Kind != "Deployment" ||
+	kind, resource := "Deployment", "deployment"
+	if deployment.Strategy.Progressive() {
+		kind, resource = "Rollout", "rollouts.argoproj.io"
+	}
+	data, err := k.readScoped(ctx, deployment.Namespace, "get", resource, name, "-o", "json")
+	if err != nil || json.Unmarshal(data, &workload) != nil || workload.Kind != kind ||
 		workload.Metadata.Name != name || !matchesScopedObject(workload, deployment) ||
 		workload.Metadata.Annotations["cloudforge.ai/deployment-id"] != id.String() {
 		return deployment, workload, nil, ErrTelemetryUnavailable
@@ -138,7 +150,7 @@ func (k *KubernetesExecutor) scopedPods(ctx context.Context, id uuid.UUID) (mode
 	sets := make(map[string]string)
 	for _, item := range objects.Items {
 		if item.Kind == "ReplicaSet" && matchesScopedObject(item, deployment) &&
-			owns(item, "Deployment", name, workload.Metadata.UID) {
+			owns(item, kind, name, workload.Metadata.UID) {
 			sets[item.Metadata.UID] = item.Metadata.Name
 		}
 	}
@@ -245,7 +257,7 @@ func (k *KubernetesExecutor) ProjectHealth(ctx context.Context, id uuid.UUID, pr
 		return ProjectHealth{}, err
 	}
 	health := ProjectHealth{Desired: workload.Spec.Replicas}
-	if workload.Metadata.Generation > 0 && workload.Status.ObservedGeneration == workload.Metadata.Generation {
+	if workload.Metadata.Generation > 0 && int64(workload.Status.ObservedGeneration) == workload.Metadata.Generation {
 		health.Available = &workload.Status.AvailableReplicas
 	}
 	if len(pods) > 0 {

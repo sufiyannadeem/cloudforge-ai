@@ -60,7 +60,7 @@ func (r *DeploymentRepository) Create(
 			namespace,
 			status,
 			created_at,
-			updated_at
+			updated_at, strategy, created_by
 		)
 		VALUES (
 			$1,
@@ -71,7 +71,7 @@ func (r *DeploymentRepository) Create(
 			$6,
 			$7,
 			$8,
-			$9
+			$9, $10, $11
 		)
 	`
 
@@ -87,6 +87,7 @@ func (r *DeploymentRepository) Create(
 		deployment.Status,
 		deployment.CreatedAt,
 		deployment.UpdatedAt,
+		deployment.Strategy.Normalized(), deployment.CreatedBy,
 	)
 
 	if err != nil {
@@ -115,7 +116,7 @@ func (r *DeploymentRepository) GetByID(
 			status,
 			execution_mode,
 			created_at,
-			updated_at
+			updated_at, strategy, created_by
 		FROM deployments
 		WHERE id = $1
 	`
@@ -137,6 +138,7 @@ func (r *DeploymentRepository) GetByID(
 		&deployment.ExecutionMode,
 		&deployment.CreatedAt,
 		&deployment.UpdatedAt,
+		&deployment.Strategy, &deployment.CreatedBy,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -170,7 +172,7 @@ func (r *DeploymentRepository) List(
 			status,
 			execution_mode,
 			created_at,
-			updated_at
+			updated_at, strategy, created_by
 		FROM deployments r
 	`
 	args := []any{limit, offset}
@@ -205,6 +207,7 @@ func (r *DeploymentRepository) List(
 			&deployment.ExecutionMode,
 			&deployment.CreatedAt,
 			&deployment.UpdatedAt,
+			&deployment.Strategy, &deployment.CreatedBy,
 		)
 
 		if err != nil {
@@ -423,13 +426,14 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 	const query = `
 		SELECT previous.id, previous.project_id, previous.environment, previous.image,
 		       previous.git_commit_sha, previous.namespace, previous.status,
-		       previous.execution_mode, previous.created_at, previous.updated_at
+		       previous.execution_mode, previous.created_at, previous.updated_at, previous.strategy, previous.created_by
 		FROM deployments current
 		JOIN deployments previous ON previous.project_id = current.project_id
 		  AND previous.environment = current.environment AND previous.namespace = current.namespace
 		  AND previous.created_at < current.created_at
 		WHERE current.id = $3 AND current.project_id = $1 AND current.environment = $2
 		  AND current.execution_mode = $4 AND current.status IN ('succeeded', 'failed')
+		  AND (current.strategy->>'type' <> 'rolling' OR previous.strategy->>'type' = 'rolling')
 		  AND previous.execution_mode = $4 AND previous.status = 'succeeded'
 		  AND ($4 <> 'kubernetes' OR previous.image ~ '@sha256:[a-fA-F0-9]{64}$')
 		ORDER BY previous.created_at DESC, previous.id DESC
@@ -456,6 +460,7 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 		&deployment.ExecutionMode,
 		&deployment.CreatedAt,
 		&deployment.UpdatedAt,
+		&deployment.Strategy, &deployment.CreatedBy,
 	)
 
 	if err != nil {

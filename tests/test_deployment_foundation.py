@@ -131,3 +131,14 @@ def test_finops_keeps_bounded_monitoring_access(config):
     docs = renderer.render(config)
     policy = next(d for d in docs if d['kind'] == 'NetworkPolicy' and d['metadata']['name'] == 'finops-service-egress')
     assert {'to': [renderer.peer('prometheus', 'monitoring')], 'ports': [renderer.tcp(9090)]} in policy['spec']['egress']
+
+
+def test_progressive_delivery_is_an_explicit_configured_opt_in(config):
+    config['rollouts'] = {'enabled': True, 'analysis_template': 'cloudforge-release-health'}
+    docs = renderer.render(config)
+    worker = next(d for d in docs if d['kind'] == 'Deployment' and d['metadata']['name'] == 'deployment-service')
+    env = worker['spec']['template']['spec']['containers'][0]['env']
+    assert {'name': 'ARGO_ROLLOUTS_ENABLED', 'value': 'true'} in env
+    assert {'name': 'ARGO_ANALYSIS_TEMPLATE', 'value': 'cloudforge-release-health'} in env
+    config['rollouts']['analysis_template'] = None
+    with pytest.raises(ValueError): renderer.render(config)

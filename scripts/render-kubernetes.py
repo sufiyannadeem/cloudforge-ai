@@ -51,6 +51,11 @@ def render(config):
         raise ValueError('Unexpected workload role')
     if len(set(roles.values()) | {config['provisioner_role_arn']}) != len(roles) + 1:
         raise ValueError('Workload, sync and provisioner roles must be distinct')
+    rollouts = config.get('rollouts', {'enabled': False})
+    if not isinstance(rollouts['enabled'], bool):
+        raise ValueError('rollouts.enabled must be a boolean')
+    if rollouts['enabled']:
+        checked(r'[a-z0-9][a-z0-9-]*', rollouts['analysis_template'], 'rollouts.analysis_template')
     bucket = checked(r'[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]', config['state_bucket'], 'state_bucket')
     storage = config['storage']
     checked(r'[a-z0-9][a-z0-9.-]*', storage['class'], 'storage.class')
@@ -104,6 +109,10 @@ def render(config):
         additional = {'AWS_STS_REGIONAL_ENDPOINTS': 'regional'}
         if name in {'frontend', 'deployment-service', 'aiops-service', 'finops-service'}:
             additional['PROMETHEUS_URL'] = f'http://prometheus.{monitor_ns}.svc:9090'
+        if name == 'deployment-service':
+            additional['ARGO_ROLLOUTS_ENABLED'] = str(rollouts['enabled']).lower()
+            if rollouts['enabled']:
+                additional['ARGO_ANALYSIS_TEMPLATE'] = rollouts['analysis_template']
         if name == 'aiops-service':
             additional['DEPLOYMENT_SERVICE_URL'] = 'http://deployment-service:8082'
             additional['AI_PROVIDER'] = ai['provider']

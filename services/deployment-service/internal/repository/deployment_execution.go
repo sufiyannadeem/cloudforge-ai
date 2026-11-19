@@ -14,11 +14,12 @@ import (
 var ErrExecutionLeaseLost = errors.New("deployment execution lease lost")
 
 type ExecutionLease struct {
-	DeploymentID uuid.UUID
-	Token        uuid.UUID // Also identifies the attempt owned by the lease.
-	Reconcile    bool
-	ModeMismatch bool
-	Environment  string
+	DeploymentID           uuid.UUID
+	Token                  uuid.UUID // Also identifies the attempt owned by the lease.
+	Reconcile              bool
+	ModeMismatch           bool
+	ProgressiveUnsupported bool
+	Environment            string
 }
 
 func (r *DeploymentRepository) ClaimExecution(ctx context.Context, ttl time.Duration) (ExecutionLease, error) {
@@ -31,14 +32,18 @@ func (r *DeploymentRepository) ClaimExecution(ctx context.Context, ttl time.Dura
 	lease := ExecutionLease{Token: uuid.New()}
 	var startedAt time.Time
 	var previousMode string
+	var workloadScope string
+	var progressive bool
 	err = tx.QueryRow(ctx, `
-		SELECT id, environment, status = 'running' AND (execution_started OR execution_token IS NULL), execution_mode, clock_timestamp()
-		FROM deployments
-		WHERE status = 'queued'
-		   OR (status = 'running' AND (execution_expires_at IS NULL OR execution_expires_at <= clock_timestamp()))
+		SELECT id, environment, status = 'running' AND (execution_started OR execution_token IS NULL), execution_mode, clock_timestamp(), project_id::text || '/' || namespace, strategy->>'type' IN ('blue-green','canary')
+  FROM deployments d
+  WHERE (status = 'queued'
+     OR (status = 'running' AND (execution_expires_at IS NULL OR execution_expires_at <= clock_timestamp())))
+  AND NOT EXISTS (SELECT 1 FROM deployments active WHERE active.project_id=d.project_id
+    AND active.namespace=d.namespace AND active.id<>d.id AND active.status='running')
 		ORDER BY updated_at, id
 		LIMIT 1 FOR UPDATE SKIP LOCKED
-	`).Scan(&lease.DeploymentID, &lease.Environment, &lease.Reconcile, &previousMode, &startedAt)
+	`).Scan(&lease.DeploymentID, &lease.Environment, &lease.Reconcile, &previousMode, &startedAt, &workloadScope, &progressive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExecutionLease{}, nil
 	}
@@ -46,7 +51,24 @@ func (r *DeploymentRepository) ClaimExecution(ctx context.Context, ttl time.Dura
 		return ExecutionLease{}, err
 	}
 
+	// Different deployment rows may target the same controller/Service selector.
+	// Serialize the scope check and claim, not just each individual deployment ID.
+	var locked bool
+	if err := tx.QueryRow(ctx, "SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))", workloadScope).Scan(&locked); err != nil {
+		return ExecutionLease{}, err
+	}
+	if !locked {
+		return ExecutionLease{}, nil
+	}
+	var occupied bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM deployments WHERE project_id::text || '/' || namespace=$1 AND id<>$2 AND status='running')`, workloadScope, lease.DeploymentID).Scan(&occupied); err != nil {
+		return ExecutionLease{}, err
+	}
+	if occupied {
+		return ExecutionLease{}, nil
+	}
 	mode := r.executionMode
+	lease.ProgressiveUnsupported = progressive && mode != "kubernetes"
 	if lease.Reconcile && previousMode != "unknown" && previousMode != mode {
 		lease.ModeMismatch = true
 		mode = previousMode

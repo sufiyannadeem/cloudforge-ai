@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,7 +17,8 @@ import (
 )
 
 var (
-	ErrInvalidProjectID = errors.New(
+	ErrProgressiveUnavailable = errors.New("Argo Rollouts is not enabled for this deployment service")
+	ErrInvalidProjectID       = errors.New(
 		"project ID is required",
 	)
 
@@ -58,7 +60,8 @@ var (
 )
 
 type DeploymentService struct {
-	store repository.DeploymentStore
+	store              repository.DeploymentStore
+	progressiveEnabled bool
 }
 
 func NewDeploymentService(
@@ -69,11 +72,29 @@ func NewDeploymentService(
 	}
 }
 
+func (s *DeploymentService) SetProgressiveEnabled(enabled bool) { s.progressiveEnabled = enabled }
+
 func (s *DeploymentService) Create(
 	ctx context.Context,
 	input model.CreateDeploymentInput,
 ) (model.Deployment, error) {
 	caller := identity.FromContext(ctx)
+	input.Strategy = input.Strategy.Normalized()
+	if err := input.Strategy.Validate(); err != nil {
+		return model.Deployment{}, err
+	}
+	if input.Strategy.Progressive() && caller.Human() && caller.Role != "platform-engineer" {
+		input.Namespace = identity.ProjectNamespace(input.ProjectID.String())
+	}
+	if input.Strategy.Progressive() && !regexp.MustCompile(`@sha256:[a-f0-9]{64}$`).MatchString(input.Image) {
+		return model.Deployment{}, fmt.Errorf("%w: progressive delivery requires an immutable sha256 image", ErrInvalidImage)
+	}
+	if input.Strategy.Progressive() && input.Namespace != identity.ProjectNamespace(input.ProjectID.String()) {
+		return model.Deployment{}, ErrInvalidNamespace
+	}
+	if input.Strategy.Progressive() && (!s.progressiveEnabled || !caller.Human()) {
+		return model.Deployment{}, ErrProgressiveUnavailable
+	}
 	if caller.Human() && caller.Role != "platform-engineer" {
 		if input.ProjectID == uuid.Nil {
 			return model.Deployment{}, ErrInvalidProjectID
@@ -90,6 +111,8 @@ func (s *DeploymentService) Create(
 	now := time.Now().UTC()
 
 	deployment := model.Deployment{
+		Strategy:     input.Strategy,
+		CreatedBy:    caller.Subject,
 		ID:           uuid.New(),
 		ProjectID:    input.ProjectID,
 		Environment:  input.Environment,
@@ -192,6 +215,9 @@ func (s *DeploymentService) update(
 	input model.UpdateDeploymentInput,
 ) (model.Deployment, error) {
 	deployment := expected
+	if deployment.Strategy.Progressive() && (input.Image != nil || input.Environment != nil || input.Namespace != nil || input.GitCommitSHA != nil || input.Status != nil) {
+		return model.Deployment{}, repository.ErrDeploymentConflict
+	}
 
 	if input.Environment != nil {
 		if !isValidEnvironment(*input.Environment) {
@@ -330,6 +356,7 @@ func (s *DeploymentService) Rollback(
 		Image:        prev.Image,
 		GitCommitSHA: prev.GitCommitSHA,
 		Namespace:    current.Namespace,
+		Strategy:     current.Strategy,
 	}
 
 	return s.Create(ctx, rollbackInput)
@@ -427,4 +454,13 @@ func (s *DeploymentService) ReleaseQueuedDeployment(
 	}
 
 	return nil
+}
+
+func (s *DeploymentService) HasProgressiveHistory(ctx context.Context, id uuid.UUID) (bool, error) {
+	if store, ok := s.store.(interface {
+		HasProgressiveHistory(context.Context, uuid.UUID) (bool, error)
+	}); ok {
+		return store.HasProgressiveHistory(ctx, id)
+	}
+	return false, nil
 }

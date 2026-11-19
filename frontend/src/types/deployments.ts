@@ -12,7 +12,11 @@ export type DeploymentAttemptStatus =
   | "failed"
   | "cancelled";
 
+export interface DeploymentStrategy { type: "rolling" | "blue-green" | "canary"; max_surge: number; max_unavailable: number; readiness_gates?: string[]; }
+
 export interface Deployment {
+  strategy?: DeploymentStrategy;
+  created_by?: string;
   id: string;
   project_id: string;
   environment: string;

@@ -1,0 +1,159 @@
+# Synthetic, network-isolated workload analysis evidence; not live monitoring data.
+rule_files: []
+evaluation_interval: 15s
+tests:
+- name: healthy measured release
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status="200"}
+    values: 0+10x20
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 200
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: all requests fail
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status="500"}
+    values: 0+10x20
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 200
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples: []
+- name: stale samples must not pass
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status="200"}
+    values: 0+10x4 stale _x15
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples: []
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples: []
+- name: insufficient request count
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status="200"}
+    values: 0+1x20
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 20
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: foreign project excluded
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="unrelated",rollouts_pod_template_hash="new",status="200"}
+    values: 0+10x20
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples: []
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples: []
+- name: missing status attribution
+  interval: 15s
+  input_series:
+  - series: http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}
+    values: 0+10x20
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples: []
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples: []
+- name: no samples unavailable
+  interval: 15s
+  input_series: []
+  promql_expr_test:
+  - expr: 'sum(increase(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new",status=~"[1-5][0-9][0-9]"}[5m]))
+
+      and on() (max(timestamp(http_requests_total{namespace="cf-fixture",rollouts_pod_template_hash="new"}))
+      > time() - 60)
+
+      '
+    eval_time: 5m
+    exp_samples: []
+  - expr: "(sum(rate(http_requests_total{namespace=\"cf-fixture\",rollouts_pod_template_hash=\"\
+      new\",status=~\"[1-4][0-9][0-9]\"}[5m])) /\n sum(rate(http_requests_total{namespace=\"\
+      cf-fixture\",rollouts_pod_template_hash=\"new\",status=~\"[1-5][0-9][0-9]\"\
+      }[5m])))\nand on() (max(timestamp(http_requests_total{namespace=\"cf-fixture\"\
+      ,rollouts_pod_template_hash=\"new\"})) > time() - 60)\n"
+    eval_time: 5m
+    exp_samples: []

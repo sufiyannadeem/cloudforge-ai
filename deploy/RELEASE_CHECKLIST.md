@@ -52,3 +52,12 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 - [ ] Validate CNI enforcement, selected TLS ingress, cluster DNS, database/API/provider endpoint CIDRs and monitoring selectors. Deny unrelated namespace access. Default-deny policies require actual endpoint/network acceptance; they do not configure ingress certificates or database TLS.
 - [ ] Review Services and startup/readiness/liveness probes against published images. Start a single project-service migrator first; check all migration receipts before scaling and starting dependent APIs in the documented order.
 - [ ] Keep Terraform read-only until separate bootstrap/locking approval. Perform live IAM, EKS RBAC, monitoring, cost-attribution, recovery and rollback acceptance only under separately approved operations.
+
+## Batch 23 strategy acceptance gates
+
+- [ ] Apply deployment `006_rollout_strategies.sql` before the new image (23 Go migration receipts total); verify strategy defaults and promotion audit retention without rewriting old receipts.
+- [ ] Keep rolling as default and Argo opt-in disabled until [strategy prerequisites](kubernetes/ROLLOUT_STRATEGIES.md) pass. Validate additional readiness-condition controllers and rollback using a prior immutable image.
+- [ ] Independently review the first native-to-Argo baseline handoff, absence of overlapping controllers, server-side field ownership, stable ReplicaSet identity and active/shared Service selectors. Initial unapproved Argo activation is intentionally blocked.
+- [ ] Review pinned controller/CRDs, project-only rollout RBAC, namespace admission and controller networking. Verify actual revision-scoped workload metrics before approving the example AnalysisTemplate; never substitute platform metrics or healthy defaults.
+- [ ] Rehearse independent body-bound promotion, self-approval/replay denial, failed analysis/abort and real stable traffic restoration. Canary is replica-based; no weighted router is configured.
+- [ ] Test worker restart/lease recovery, timeout/manual reconciliation and rollback under the real controller. Local fixtures, schema validation and Prometheus tests do not establish live Kubernetes readiness.

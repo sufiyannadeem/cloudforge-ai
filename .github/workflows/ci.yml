@@ -360,6 +360,14 @@ jobs:
       - name: Run unit & integration tests
         run: go test -v ./...
 
+      - name: Verify deployment leases, strategies and approvals in isolated schemas
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          go test -race -tags integration ./internal/repository \
+            -run '^(TestExecutionLeaseRecovery|TestKubernetesRollbackUsesEarlierImmutableReleaseInSameNamespace|TestClaimRemediationApproval|TestStrategyPersistenceAndIndependentPromotion|TestDifferentDeploymentRowsCannotExecuteSameWorkload|TestProgressiveRequestsNeverFallBackToSimulation)$' \
+            -count=1
+
       - name: Run Go vet
         run: go vet ./...
 

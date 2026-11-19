@@ -98,5 +98,9 @@
         "CLOUDFORGE_SESSION_SECRET": "CLOUDFORGE_SESSION_SECRET"
       }
     }
+  },
+  "rollouts": {
+    "enabled": false,
+    "analysis_template": null
   }
 }
