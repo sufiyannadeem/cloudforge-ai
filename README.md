@@ -1,211 +1,162 @@
-# CloudForge AI 🚀
+# CloudForge AI
 
-> **Production DevSecOps & Platform Engineering Control Plane for AWS & Kubernetes**
-> Developers self-serve AWS infrastructure and deploy containerized workloads; Platform Engineers enforce policy-as-code guardrails, monitor SRE golden signals, and optimize cloud spend.
+CloudForge AI brings four projects into one Go, Python and Next.js application.
 
----
+| Project | Implemented scope | Verification boundary |
+| --- | --- | --- |
+| **Internal AI DevOps Platform** | Individual accounts, role dashboards, project ownership, no-code infrastructure requests, saved-plan approvals, deployment history and operational observability. | Local application, database and browser workflows have been tested. Real resource creation, teardown and EKS delivery await approved live acceptance. |
+| **AI Kubernetes Agent** | Project-scoped pod, rollout, warning-event, restart, usage and redacted-log evidence; deterministic diagnoses and recommendations; persisted diagnostic history. | Executor and authorization tests cover the integration. Actual EKS evidence and workload rollback await cluster validation. |
+| **AI Cloud Cost Detective** | Cost Explorer clients, cost quality labels, anomalies, pricing estimates, optimization recommendations, verified EC2 project attribution and durable cost audit captures. | Read-only Cost Explorer access and local audit persistence have been exercised. Complete project billing for newly provisioned resources remains unverified. |
+| **Terraform Drift Detection** | On-demand refreshed observation plans, provider-drift versus desired-change classification, severity, recommendations and project-scoped scan history. | Local parser, repository, authorization and UI tests cover the workflow. Detection against real managed AWS resources awaits live verification. |
 
-## 🏛️ System Architecture
+Status labels refer to code and local tests. Production acceptance is a separate gate. See the [release checklist](deploy/RELEASE_CHECKLIST.md) for dated local verification and outstanding deployment gates.
+
+## Architecture
 
 ```mermaid
-flowchart TD
-    subgraph UI ["Developer & Platform Console (Next.js 16)"]
-        portal["Developer Portal\n/infrastructure"]
-        deployUI["Deployment Console\n/deployments"]
-        opsUI["Operations & SRE\n/dashboard"]
-        finopsUI["FinOps Intelligence\n/finops"]
-    end
+flowchart LR
+    browser["Role-specific browser UI"] --> next["Next.js authenticated proxy"]
+    next -->|"signed user + service assertions"| projects["Project service"]
+    next -->|"signed requests"| infra["Infrastructure service"]
+    next -->|"signed requests"| deployments["Deployment service"]
+    next -->|"signed requests"| aiops["AIOps service"]
+    next -->|"signed requests"| finops["FinOps service"]
 
-    subgraph CoreServices ["Core Platform Services (Go)"]
-        projectSvc["Project Service\n:8080"]
-        infraSvc["Infrastructure Service\n:8081\n(Terraform Runner)"]
-        deploySvc["Deployment Service\n:8082\n(EKS Engine)"]
-    end
+    projects --> db[("PostgreSQL")]
+    infra --> db
+    deployments --> db
+    aiops --> db
+    finops -->|"separate attribution and audit logins"| db
 
-    subgraph IntelligenceServices ["Intelligence & Telemetry (Python / FastAPI)"]
-        aiopsSvc["AIOps Service\n:8084\n(Anomaly Detection & Remediation)"]
-        finopsSvc["FinOps Service\n:8083\n(Cost Explorer, Budgets, Rightsizing)"]
-    end
+    infra --> terraform["Terraform generator and runner"]
+    terraform -->|"refresh plans; separately approved apply/destroy"| aws["AWS"]
+    deployments -->|"explicit Kubernetes executor"| kube["Kubernetes / EKS"]
+    kube -->|"scoped evidence"| deployments
 
-    subgraph Observability ["Observability Stack"]
-        prom["Prometheus :9090"]
-        grafana["Grafana :3001"]
-        alertmgr["Alertmanager :9093"]
-    end
-
-    subgraph AWS ["Amazon Web Services (AWS)"]
-        tf["Terraform Engine\n(init → validate → plan → hash → apply)"]
-        vpc["VPC & Subnets"]
-        ec2["EC2 Compute"]
-        s3["S3 Storage"]
-        rds["RDS PostgreSQL"]
-        eks["EKS Cluster"]
-        alb["Application Load Balancer"]
-        ce["AWS Cost Explorer & Budgets API"]
-    end
-
-    portal -->|Provision Requests| infraSvc
-    infraSvc -->|Isolated Workspace Execution| tf
-    tf -->|Provision Resources| vpc & ec2 & s3 & rds & eks & alb
-
-    deployUI -->|Deploy Workloads| deploySvc
-    deploySvc -->|Deploy & Pod Telemetry| eks
-
-    opsUI -->|Golden Signals| prom
-    prom -->|Telemetry Collection| deploySvc & alertmgr & grafana
-
-    aiopsSvc -->|PromQL Analysis| prom
-    aiopsSvc -.->|Remediation Guardrail| portal
-
-    finopsUI -->|Cost & Optimization Queries| finopsSvc
-    finopsSvc -->|Read-Only Boto3| ce
-    finopsSvc -->|Pre-Provisioning Cost Estimates| infraSvc
+    prometheus["Prometheus"] -->|"scrape metrics"| deployments
+    aiops -->|"SLO and anomaly queries"| prometheus
+    finops -->|"read-only cost and resource verification"| aws
+    alerts["Alertmanager"] -->|"authenticated alerts"| aiops
+    grafana["Grafana"] --> prometheus
 ```
 
----
+Terraform drift scanning reuses infrastructure-service. Kubernetes diagnosis reuses deployment-service. Cost investigation reuses FinOps and AIOps interfaces. These capabilities share identity and project records through PostgreSQL.
 
-## ⚡ Key Capabilities
+| Component | Repository path | Local port |
+| --- | --- | --- |
+| Next.js frontend | `frontend/` | 3000 |
+| Project service | `services/project-service/` | 8080 |
+| Infrastructure service | `services/infrastructure-service/` | 8081 |
+| Deployment service | `services/deployment-service/` | 8082 |
+| AIOps service | `services/aiops-service/` | 8090 |
+| FinOps service | `services/finops-service/` | 8091 |
+| Prometheus / Grafana / Alertmanager | `monitoring/` | 9090 / 3001 / 9093 |
 
-### 1. Self-Service AWS Infrastructure Provisioning
-- **6 Core AWS Resources**: Provision standard building blocks without hand-crafting HCL:
-  - `aws_vpc`: CIDR blocks, DNS hostnames & support, custom tags
-  - `aws_ec2`: Instance types, Amazon Linux SSM resolution or custom AMIs, subnet placement
-  - `aws_s3`: Object versioning, server-side encryption, public access block, TLS transport enforcement
-  - `aws_rds`: PostgreSQL engines, storage allocation, subnet groups
-  - `aws_eks`: Multi-AZ subnets, managed node groups, cluster versioning
-  - `aws_lb`: Application Load Balancers, target groups, HTTP/HTTPS listeners
-- **Strict Human-in-the-Loop Lifecycle**:
-  `Create → Plan → Awaiting Approval → Approve & Apply → Active` (and symmetric `Destroy Plan → Awaiting Approval → Approve & Destroy`).
-- **Tamper-Proof Plan Execution**: Computes SHA-256 hashes of generated Terraform binary plans with an enforced 30-minute approval TTL. Applies are rejected if plans are modified, corrupted, or expired.
-- **Strict Safety Guardrail**: AI never directly mutates AWS resources. All cloud infrastructure modifications require human authorization through deterministic Terraform plans.
+The frontend pins Next.js 16.4.5 and uses Node 22 in its production Dockerfile. Backend services use Go 1.25 and Python 3.12; PostgreSQL uses version 16. The infrastructure image includes Terraform. Versions and build inputs are defined in the service Dockerfiles, module files and lockfiles.
 
-### 2. Application Deployment Platform
-- **EKS Workload Delivery**: Automates container rollouts across development, staging, and production environments.
-- **Live Pod Telemetry**: Real-time replica tracking, container health checks, commit SHA badges, and live deployment log viewers.
-- **One-Click Rollbacks**: Human-authorized rollback mechanism restoring known-healthy deployment revisions.
+## 1. Internal AI DevOps Platform
 
-### 3. Operations & SRE Observability Console
-- **SRE Golden Signals**: Real-time tracking of Availability (%), Request Rate (req/sec), Error Rate (%), P95 Latency (ms), In-Flight Requests, and Active Deployments.
-- **Multi-Window Multi-Burn-Rate Alerts**: Google SRE error budget alerting monitoring 99.9% availability, request success, and latency budgets across 5m, 30m, 1h, and 6h windows.
-- **Service Health Grid**: Continuous health monitoring covering all platform microservices.
-- **Prometheus & Grafana**: Pre-configured scrape configurations and dashboards for operational diagnostics.
+### Projects, accounts and dashboards
 
-### 4. FinOps Closed-Loop Cost Intelligence
-- **Real AWS Integration**:
-  - Connects to **AWS Cost Explorer** for daily cost trends and per-service attribution.
-  - Queries **AWS Budgets API** for real-time spend vs budget thresholds and forecasting.
-  - Inspects resources via the **AWS Resource Groups Tagging API**.
-- **Terraform Plan Cost Estimation**: Pre-calculates monthly unit costs before mutating AWS. Flags soft limit ($100) and hard limit ($500) policy violations.
-- **Evidence-Based Rightsizing**:
-  - Analyzes CPU & memory utilization against provisioned capacities.
-  - Emits rightsizing recommendations (e.g. `t3.large` at $75/mo with 8% CPU → downsize to `t3.medium` at $40/mo → **$35/mo savings**).
-  - Enforces zero hallucinated savings: savings are computed only when backed by explicit pricing evidence.
-- **Cost Anomaly Detection**: Statistical Z-score deviation detection (Critical, High, Medium) with sparkline visualizations.
-- **Offline Demo Fallback**: Graceful offline fallback demonstrating full telemetry when live AWS credentials are not yet configured.
+- PostgreSQL accounts retain username as the login identifier, with optional validated email.
+- Platform Engineers manage users, roles, activation, session revocation and project memberships through `/administration`. Administrative changes have transactional audit records and replay protection.
+- New projects belong to their verified creator. Membership levels are owner, maintainer and viewer. Legacy projects require explicit verified ownership before Developer access.
+- Developer, SRE and Platform Engineer dashboards expose different navigation and actions. Backend authorization also checks direct API requests.
 
-### 5. AIOps Remediation & Guardrails
-- **Automated Root Cause Analysis (RCA)**: Investigates cluster capacity exhaustion, database provisioning anomalies, and crash loops.
-- **Human-Approved Remediations**: Remediation actions require operator review and approval with minimum sample thresholds before execution.
+| Role | Supported access |
+| --- | --- |
+| `platform-engineer` | Platform administration, account/membership management, infrastructure review and execution, and operational visibility. |
+| `sre` | Operational observability, incidents, permitted remediation workflows, read-only infrastructure/cost visibility and authorized diagnostics. Terraform mutations are denied. |
+| `developer` | Authorized project creation and management, infrastructure requests and plans, application deployments, and read-only scoped telemetry/costs. Viewers cannot make project mutations. Terraform approval/apply/destroy are denied. |
 
----
+Resource authorization derives relationships from backend records. Some project-management routes additionally require project membership, including for operational users.
 
-## 🛠️ Technology Stack
+### No-code infrastructure lifecycle
 
-| Domain | Technologies |
-|---|---|
-| **Frontend** | Next.js 16 (App Router, React 19, TypeScript, Tailwind CSS) |
-| **Backend Services** | Go 1.25, `net/http`, `pgx/v5` PostgreSQL driver |
-| **AI & FinOps** | Python 3.12, FastAPI, Pydantic v2, `boto3`, NumPy |
-| **IaC & Provisioning** | HashiCorp Terraform 1.16 |
-| **Cloud Provider** | Amazon Web Services (AWS) |
-| **Observability** | Prometheus 3.5, Grafana 12.1, Alertmanager 0.28 |
-| **Database** | PostgreSQL 16 Alpine |
-| **Containerization** | Docker, Docker Compose (Multi-stage non-root builds) |
-| **CI / Automation** | GitHub Actions |
+Guided forms cover EC2, VPC, S3, RDS and EKS. The generator also supports load balancers. Inputs and provider dependencies are validated by the existing service and Terraform paths.
 
----
+The implemented workflow is request → saved plan → submission → independent Platform Engineer approval → apply → execution outcome. Destruction has a separate saved-plan review and execution flow.
 
-## 📁 Repository Structure
+Approvals bind the plan hash, revision, operation, project, environment and requester. Approval expiry, self-approval checks and atomic execution claims prevent reuse of an unrelated or stale decision. Plan output exposed to the UI is summarized to avoid sensitive values.
 
-```text
-cloudforge-ai/
-├── .github/
-│   └── workflows/
-│       ├── ci.yml                 # Unified CI matrix with hardened ci-gate aggregator
-│       └── security.yml           # Gitleaks, Trivy filesystem/config/image scans, SBOM
-├── frontend/                      # Next.js 16 Platform Console
-│   ├── src/app/                   # App Router pages (/infrastructure, /deployments, /finops, /dashboard)
-│   ├── src/components/            # UI components and approval modals
-│   └── src/lib/                   # API clients and authentication helpers
-├── infrastructure/
-│   └── terraform/
-│       ├── bootstrap/             # S3 remote state bucket with native S3 locking
-│       └── environments/dev/      # VPC, ECR, and core module declarations
-├── monitoring/
-│   └── prometheus/                # Prometheus configuration and SLO burn-rate rules
-├── scripts/
-│   └── bootstrap-local-auth.py    # Local authentication key generator
-├── services/
-│   ├── project-service/           # Workspace & project registry (Go)
-│   ├── infrastructure-service/    # Terraform IaC generator and sandboxed runner (Go)
-│   ├── deployment-service/        # Kubernetes / EKS deployment engine (Go)
-│   ├── finops-service/            # AWS pricing evidence, cost explorer, & rightsizing (Python)
-│   └── aiops-service/             # Incident investigation & remediation guardrails (Python)
-├── tests/                         # CI pipeline hardening and end-to-end verification
-├── docker-compose.yml             # Unified 10-service local development stack
-├── trivy.yaml                     # Trivy scanner configuration
-├── .trivyignore                   # Documented security scan exceptions
-├── .gitleaks.toml                 # Secret scanning rule configuration
-├── .env.example                   # Environment configuration template
-└── README.md
-```
+Inventory distinguishes workflow state, Terraform state identifiers and independent AWS verification. A recorded state ID does not establish current AWS health; the API can explicitly report that health as unverified. Failed or partial destruction requires reconciliation and a fresh approval-bound plan.
 
----
+**Local Compose defaults to Terraform read-only mode.** Production execution requires a configured remote backend and role chain. AWS bootstrap and live apply/destroy are separate approval boundaries.
 
-## 🚀 Quickstart & Local Setup
+### Deployments and observability
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/sufiyannadeem/cloudforge-ai.git
-cd cloudforge-ai
-```
+PostgreSQL is the durable deployment queue. Conditional transitions, transactional attempt allocation, execution leases and ownership fencing protect deployment history across concurrent workers and restarts. Kubernetes execution includes reconciliation and bounded recovery paths.
 
-### 2. Configure Environment & Credentials
-Copy the example environment template:
-```bash
-cp .env.example .env
-```
+Deployment API, history and UI label simulated, Kubernetes and unknown legacy execution. Local Compose defaults to simulated deployment execution. An EKS workload rollout is still a separately configured and verified integration.
 
-Open `.env` and configure a secure local PostgreSQL password:
-```env
-# Database
-POSTGRES_PASSWORD=your-secure-local-password
+The observability console includes SLOs, error budgets, burn rates and statistical anomalies. Availability, request-success and latency SLOs require window coverage and fresh measurements. The default seven-day window needs 90% coverage at the configured scrape interval; the local scrape interval is 15 seconds. Missing evidence displays N/A or insufficient data. Five-minute evidence and seven-day compliance are evaluated independently.
 
-# AWS Credentials (Optional: enables live AWS provisioning & FinOps monitoring)
-AWS_ACCESS_KEY_ID=your-aws-access-key-id
-AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
-AWS_REGION=eu-west-1
-AWS_DEFAULT_REGION=eu-west-1
+Anomaly detection requires at least five recent samples. A newly started or sparsely sampled environment can legitimately show insufficient data while the scrape target is healthy.
 
-# FinOps Role
-CLOUDFORGE_FINOPS_ROLE=platform-engineer
-```
+## 2. AI Kubernetes Agent
 
-> **AWS Credential Best Practices:**
-> - **Local Development:** CloudForge can also read credentials automatically from `~/.aws/credentials` or short-lived session tokens (`AWS_SESSION_TOKEN`).
-> - **Production Deployments:** Never use long-lived access keys in production. Instead, utilize IAM-based workload identity via **EKS Pod Identity** or **IAM Roles for Service Accounts (IRSA)**, or the standard AWS SDK default credential chain.
+The diagnostics panel verifies the deployment's project and namespace, follows Kubernetes ownership metadata, and inspects a bounded sample of one pod. It can recognize evidence such as OOM termination, image-pull failure, scheduling or mount problems, probe failure, restart backoff and rollout deadline failure.
 
-### 3. Configure Authentication
-Generate independent CSRF and per-service identity keys in `.env`:
+CPU and memory readings require a working Kubernetes Metrics API. Restart monitoring additionally depends on the relevant Prometheus series and labels. Diagnostic history stores structured evidence and the signed actor, excluding raw log lines and event messages.
+
+The current Kubernetes diagnosis is **rule-based**. Optional incident AI enrichment is implemented through disabled, mock, OpenAI-compatible and Bedrock provider modes. Local Compose explicitly selects mock enrichment; its output is test/demo output. Live model integration requires configuration and separate verification.
+
+Viewing diagnostics executes no remediation. Supported remediation operations require trusted persisted human approval and policy checks. AI text cannot authorize arbitrary commands or infrastructure execution.
+
+## 3. AI Cloud Cost Detective
+
+FinOps integrates AWS Cost Explorer, pricing, budgets and resource inspection where the corresponding API and permissions are available. Responses distinguish actual costs, estimates and unavailable evidence. The analytical API can also process supplied inventory, which requires independent verification before it can establish AWS evidence.
+
+Project cost access currently supports **verified EC2 attribution**. It checks persisted project/resource mappings, account, region, environment and live resource identity/tags before requesting resource-specific billing data. Missing attribution, permissions or billing samples fail closed. Developers receive project-scoped read-only results.
+
+Cost anomalies compare daily evidence against a historical baseline and distinguish estimates. A missing baseline or malformed billing data produces insufficient/unavailable results. Optimization recommendations expose savings only where pricing and utilization evidence support them.
+
+Operator cost captures persist evidence and the signed actor in PostgreSQL. They require a separate audit DSN. The attribution DSN remains read-only.
+
+Incident pages can display cost evidence when persisted incident identifiers match a verified project/resource attribution. Matching identifiers associate the evidence; causal investigation remains separate. Unsupported resource attribution displays unavailable.
+
+## 4. Terraform Drift Detection
+
+Platform Engineers and SREs can request scans for active resources. Authorized project users can read applicable history. Each scan generates a private temporary workspace for the existing remote backend and runs a refreshed Terraform observation plan with locking disabled.
+
+Findings distinguish `resource_drift` from desired configuration changes, identify supported resource types/addresses, classify removal/replacement risk, and give review recommendations. Raw plan values are not published. PostgreSQL records scan status, actor, findings and time; a changed resource revision invalidates a stale scan.
+
+Drift remediation uses the existing infrastructure workflow with a **fresh saved plan and Platform Engineer approval**. There is no automatic repair. Current alerts are dashboard findings; scheduled fleet scanning and external drift notifications are planned.
+
+## Security model
+
+- Passwords use salted PBKDF2 hashes. Opaque session tokens are stored as hashes. Session expiry, revocation, deactivation and role changes are enforced through the account store.
+- Cookie sessions and CSRF checks protect browser mutations. Production cookies require HTTPS. Backend assertions validate issuer, audience, signature, expiry, method and request target; sensitive operations also bind the body and enforce replay protection.
+- Caller-provided role, actor or approval headers do not establish authority. Terraform decisions and sensitive remediation approvals resolve trusted persisted state.
+- Project authorization is enforced in backend list, detail and action paths. Kubernetes namespace/pod selectors and FinOps resource mappings are validated independently of client claims.
+- Logs use bounded queries and pattern-based redaction. Redaction cannot guarantee removal of every application-specific secret.
+- Credentials, runtime environment files, Terraform state/plans and generated secret configuration stay outside Git. `.env.example` and Kubernetes examples contain placeholders. The frontend Docker context excludes `.env*`.
+- Use scoped workload identity and secret references for deployment. Actual target IAM, role assumption, state locking, secret access and recovery remain acceptance gates.
+
+The [deployment guide](deploy/kubernetes/README.md), [bootstrap runbook](infrastructure/terraform/bootstrap/README.md) and [release checklist](deploy/RELEASE_CHECKLIST.md) document the target-environment requirements.
+
+## Local setup
+
+Docker with Compose is required for the local stack. Source tests additionally need Node 22, Go 1.25, Python 3.12 and the dependencies in each module/lockfile.
+
+From the repository root, preserve any existing private configuration.
 
 ```bash
+test -f .env || cp .env.example .env
+chmod 600 .env
+# Edit .env privately and set a strong POSTGRES_PASSWORD.
+# Leave AWS credential placeholders empty for local-only work.
 python3 scripts/bootstrap-local-auth.py
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
 ```
 
-### 4. Start the Platform and Bootstrap the Administrator
+The authentication helper generates independent signing and session keys without printing them. Local startup does not authorize cloud operations. Terraform remains read-only and deployments remain simulated until explicitly configured otherwise.
+
+Bootstrap an administrator only when the account store is empty.
 
 ```bash
-docker compose up -d --build
 read -rp 'Administrator username: ' cloudforge_bootstrap_user
 read -rsp 'New password (at least 15 bytes): ' cloudforge_bootstrap_password
 printf '\n'
@@ -214,193 +165,71 @@ printf '%s\n' "$cloudforge_bootstrap_password" |
 unset cloudforge_bootstrap_password cloudforge_bootstrap_user
 ```
 
-Bootstrap requires an empty account store. Use the same project-service CLI with
-`account create USER ROLE`, `account set-role USER ROLE`, `account deactivate USER`,
-`account activate USER`, or `account revoke USER`. Provisioning commands read a fresh
-password from standard input. Roles are `platform-engineer`, `sre`, and `developer`.
-Old operator credentials and cookies are retired. Explicit
-`account import-legacy USER OLD_ROLE` provisions a fresh account, retaining SRE or
-mapping other legacy roles to developer. Use HTTPS outside local loopback development.
+Open `http://localhost:3000` and sign in. Browser administration is available to Platform Engineers. The account CLI also supports create, set-role, set-email, activate, deactivate and revoke operations; password-taking commands read stdin.
 
-New projects belong to their signed creator. Owners manage viewer and maintainer
-access through `/projects/{id}/members`. A Platform Engineer must explicitly
-assign an owner to an unowned legacy project using `PUT /projects/{id}/owner`.
-Developer deployments use `cf-<project UUID>` namespaces. Provision those
-namespaces with project workload isolation policies before running deployments.
+For optional project cost/audit persistence, provision the restricted database logins and set `FINOPS_PROJECT_DATABASE_URL` and `FINOPS_AUDIT_DATABASE_URL` through private configuration. See the deployment guide for table grants. AWS-backed results remain unavailable until approved credentials and verified resource mappings exist.
 
-Verify that all containers are healthy:
-```bash
-docker compose ps
-```
+Use `docker compose logs --tail=100 SERVICE` for diagnostics. Preserve PostgreSQL and Prometheus volumes when stopping or updating the stack.
 
-### 5. Access Platform Consoles
+## Database and migration order
 
-| Service | Port | Endpoint URL | Description |
-|---|---|---|---|
-| **CloudForge UI** | `3000` | [http://localhost:3000](http://localhost:3000) | Main Platform Engineering console (Next.js 16) |
-| **Developer Portal** | `3000` | [http://localhost:3000/infrastructure](http://localhost:3000/infrastructure) | AWS Infrastructure Provisioning |
-| **Deployments** | `3000` | [http://localhost:3000/deployments](http://localhost:3000/deployments) | EKS Application Delivery |
-| **Operations (SRE)** | `3000` | [http://localhost:3000/dashboard](http://localhost:3000/dashboard) | Golden Signals & Service Health |
-| **FinOps Intelligence**| `3000` | [http://localhost:3000/finops](http://localhost:3000/finops) | AWS Cost Explorer & Rightsizing |
-| **Project Service** | `8080` | [http://localhost:8080](http://localhost:8080) | Core Project & Workspace API |
-| **Infrastructure Service** | `8081` | [http://localhost:8081](http://localhost:8081) | Terraform Provisioning Engine |
-| **Deployment Service** | `8082` | [http://localhost:8082](http://localhost:8082) | Deployment Delivery Service |
-| **FinOps Service** | `8083` | [http://localhost:8083](http://localhost:8083) | Cost Intelligence & Policy Engine |
-| **AIOps Service** | `8084` | [http://localhost:8084](http://localhost:8084) | Remediation & Incident Service |
-| **Prometheus** | `9090` | [http://localhost:9090](http://localhost:9090) | Telemetry & SLO Alert Engine |
-| **Grafana** | `3001` | [http://localhost:3001](http://localhost:3001) | SRE Metrics Dashboards |
-| **Alertmanager** | `9093` | [http://localhost:9093](http://localhost:9093) | Alert Grouping & Routing |
+Go services embed their PostgreSQL migrations and run them before serving requests.
 
-### Docker Management Commands
-```bash
-# View service logs
-docker compose logs -f project-service
+1. Project service applies migrations 001–006, including `006_browser_admin_audit.sql`.
+2. Infrastructure service applies 001–011 and deployment-service applies 001–005.
+3. AIOps initializes its own schema at startup. FinOps starts after the project and infrastructure tables exist.
+4. Start the frontend after backend readiness.
 
-# Stop all services
-docker compose down
+The 22 Go-service migration receipts share `schema_migrations` with distinct filenames. Production Compose encodes the relevant health dependencies. Historical migration files are retained; new schema changes are additive. Back up and verify restore before a real rollout.
 
-# Stop and wipe PostgreSQL volumes (Warning: resets local database)
-docker compose down -v
-```
+## Tests and verification
 
----
-
-## 🔌 API Endpoints & Health Checks
-
-### Project Service API (`http://localhost:8080`)
-
-#### Create a project
-```bash
-curl -i -X POST http://localhost:8080/projects \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "CloudForge Demo",
-    "description": "Demo project",
-    "repository_url": "https://github.com/example/cloudforge-demo",
-    "default_branch": "main"
-  }'
-```
-
-#### Get a project by UUID
-```bash
-curl -i http://localhost:8080/projects/<PROJECT_ID>
-```
-
-#### List projects (with pagination)
-```bash
-curl -i "http://localhost:8080/projects?limit=20&offset=0"
-```
-* Default limit: `20` (max `100`), default offset: `0`.
-
-#### Update a project
-```bash
-curl -i -X PATCH http://localhost:8080/projects/<PROJECT_ID> \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Updated Project",
-    "description": "Updated description"
-  }'
-```
-
-#### Delete a project
-```bash
-curl -i -X DELETE http://localhost:8080/projects/<PROJECT_ID>
-```
-* Expected response: `204 No Content`.
-
-### Health Check Endpoints
-Each service provides `/health` or `/health/live` endpoints for container orchestration:
-```bash
-curl -i http://localhost:8080/health
-```
-Expected response:
-```json
-{
-  "service": "project-service",
-  "status": "ok"
-}
-```
-* Responses include an `X-Request-ID` header for distributed request tracing.
-
----
-
-## 🗄️ Database & Embedded Migrations
-
-### Local PostgreSQL Configuration
-
-| Setting | Value |
-|---|---|
-| Database | `cloudforge` |
-| Username | `cloudforge` |
-| Password | From `.env` (`POSTGRES_PASSWORD`) |
-| Host from machine | `localhost:5432` |
-| Host inside Compose | `postgres:5432` |
-
-### Database Migrations
-Migrations run automatically when services start. The migration runner:
-1. Creates the migration tracking table (`schema_migrations`).
-2. Discovers embedded SQL migration files.
-3. Evaluates unapplied migration steps.
-4. Executes migrations inside a transaction.
-5. Commits and updates the version history.
-
----
-
-## 🧪 Testing & Verification
-
-Run tests from the repository root:
+Install the Python test environments from the committed lockfiles.
 
 ```bash
-# Infrastructure Service
-(cd services/infrastructure-service && go test -v ./...)
+for service in aiops-service finops-service; do
+  python3 -m venv "services/$service/.venv"
+  "services/$service/.venv/bin/python" -m pip install --require-hashes -r "services/$service/requirements.lock"
+done
 
-# Project Service
-(cd services/project-service && go test ./...)
+(cd services/service-identity && go test -race ./...)
+(cd services/project-service && go test -race ./internal/accounts ./internal/handler ./internal/service)
+(cd services/infrastructure-service && go test -race ./internal/config ./internal/handler ./internal/service ./internal/terraform)
+(cd services/deployment-service && go test -race ./internal/metrics ./internal/handler ./internal/service ./internal/executor ./internal/worker)
 
-# Deployment Service
-(cd services/deployment-service && go test ./...)
-
-# FinOps Service (149 passed)
-PYTHONPATH=services/finops-service .venv/bin/pytest services/finops-service/app
-
-# AIOps Service (110 passed)
-PYTHONPATH=services/aiops-service .venv/bin/pytest services/aiops-service/app
-
-# Frontend Type Check & ESLint
-(cd frontend && npx tsc --noEmit && npx eslint src/app/)
-
-# CI Pipeline Security & Gate Hardening Tests (16 passed)
-.venv/bin/pytest tests/test_ci_pipeline_hardening.py
+(cd services/aiops-service && .venv/bin/python -m pytest -q)
+(cd services/finops-service && .venv/bin/python -m pytest -q)
+(cd frontend && npm ci && node --test tests/*.test.mjs && npx tsc --noEmit)
 ```
 
-### Database Integration Tests
-Repository integration tests against PostgreSQL require `TEST_DATABASE_URL` and a running test database:
+Database tests are separate. Account/session and deployment execution integration tests use `DATABASE_URL` with the `integration` build tag. Repository suites use `TEST_DATABASE_URL`; some clean their test tables, so use a disposable database/schema. Missing database configuration can skip these checks.
+
 ```bash
-export TEST_DATABASE_URL="postgres://cloudforge:${POSTGRES_PASSWORD}@localhost:5432/cloudforge_test?sslmode=disable"
-(cd services/infrastructure-service && go test -v ./internal/repository/...)
-(cd services/project-service && go test -v ./internal/repository/...)
+scripts/test-finops-audit-postgres.sh
+services/aiops-service/.venv/bin/python monitoring/prometheus/test-slo-evidence.py
+docker run --rm --network none --entrypoint /bin/promtool \
+  -v "$PWD/monitoring/prometheus:/fixtures:ro" -w /fixtures \
+  prom/prometheus:v3.5.0 test rules availability-burn.test.yml
 ```
-*(Note: If `TEST_DATABASE_URL` is not set, repository integration tests are intentionally skipped).*
 
----
+The FinOps runner uses the existing local Docker PostgreSQL and a temporary schema. The SLO fixture scales the production window while preserving coverage/freshness logic.
 
-## 🔒 Security & Safety Principles
+Playwright covers the three roles, project creation, browser administration, negative authorization, CSRF and logout. Use dedicated test accounts and follow the [browser test instructions](frontend/e2e/README.md). Run `npm run test:e2e` from `frontend/`; role tests are skipped when credentials are absent.
 
-1. **Human Approval Gates**: Terraform `apply` and `destroy` cannot execute autonomously. Every plan requires an explicit human review and cryptographic hash verification before execution.
-2. **Deterministic FinOps**: Cost optimization recommendations require human authorization. FinOps never issues mutating AWS API calls.
-3. **Sensitive Data Redaction**: Terraform runner output automatically masks AWS access keys, secret tokens, and passwords from stdout/stderr.
-4. **Isolated Workspaces**: Every infrastructure resource is allocated an isolated directory preventing Terraform state collisions.
-5. **CI/CD & Supply-Chain Hardening**:
-   - **Secret Scanning**: Gitleaks enforcement across all commits and branches to block credentials.
-   - **Vulnerability Failure Gates**: Trivy filesystem, dependency, and container image scans configured with strict `exit-code: 1` failure gates on `HIGH` and `CRITICAL` findings.
-   - **Justified Policy Exceptions**: Documented in `.trivyignore` (e.g. S3 state bootstrap AES256 server-side encryption preventing bootstrap circular dependencies prior to KMS provisioning).
-   - **Terraform Policy & Formatting Gates**: Automated `terraform fmt -check`, `terraform validate`, and Trivy IaC configuration policy enforcement.
-   - **Artifact Traceability**: Container images tagged with immutable Git commit SHAs (`cloudforge-<service>:${{ github.sha }}`) and OpenContainers metadata labels (`org.opencontainers.image.revision`, `org.opencontainers.image.source`).
-   - **Commit Loop Protection**: Workflow `permissions: contents: read`, `persist-credentials: false`, and `[skip ci]` / `[ci skip]` guards preventing automated Git push loops.
-   - **Hardened CI Gate**: The `ci-gate` job evaluates all required upstream checks with `if: always()`, identifies individual job failures, and flags unexpected skips.
-   - **SBOM Generation**: Automated CycloneDX Software Bill of Materials (SBOM) generation and artifact publication for all container images and the root repository.
+For secret scanning, use Gitleaks with redacted output and review both tracked files and Git history. Verified placeholders, deterministic test constants and non-secret metric/idempotency identifiers must be classified narrowly. Keep reports private and never paste detected values.
 
----
+## Current limitations and verification status
 
-## 📄 License
-Apache 2.0. Built for Cloud Platform Engineering & Production DevSecOps.
+- **Locally verified** — account/session/RBAC behavior, project isolation, no-code forms and request persistence, approval/replay checks, queue ownership, audit persistence, drift parsing, simulated-versus-real labels, browser workflows and controlled observability scenarios.
+- **Implemented but partially integrated** — one-pod Kubernetes diagnosis, incident-to-cost evidence matching, per-capability audit views, and EC2-only project billing attribution. These have explicit evidence/unavailable states.
+- **Awaiting live AWS/EKS verification** — bootstrap IAM and S3 controls, actual locking/role assumption, approved EC2/VPC/S3/RDS/EKS provisioning and cleanup, runtime secret delivery, EKS rollout/rollback, real diagnostic evidence and drift against managed AWS resources.
+- **History-dependent** — seven-day SLO coverage and billing/anomaly baselines need real samples. Target readiness alone cannot establish compliance or cost evidence.
+- **Deployment-specific** — production TLS, backup/restore, concurrency/load behavior, alert delivery and least-privilege workload grants require validation in the intended environment.
+
+The local stack includes simulated execution and optional mock AI enrichment. Those modes are labeled. AWS, Kubernetes and model-provider acceptance require evidence from configured live integrations.
+
+## Roadmap
+
+Planned work includes verified billing attribution beyond EC2, scheduled drift scans and notifications, multi-pod and temporal diagnostics, richer evidence-based incident/cost investigation, consolidated audit search, and broader production recovery/load testing.
+
+Before deploying, complete the release checklist, publish reviewed image digests, configure target secrets and IAM, and obtain separate approvals for bootstrap and each live resource lifecycle. Cloud deployment and cleanup are outside local development sign-off.
