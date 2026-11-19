@@ -21,7 +21,9 @@ and audit history. Faults are preauthorized only for those disposable fixtures.
 Do not point the fixture SQL or commands at an application database.
 
 ```sh
-# Requires cached postgres:16-alpine, Docker, Go and Python 3; no cluster tools.
+# Requires the reviewed pinned recovery image, Docker, Go, Python 3, AIOps .venv,
+# cached cloudforge-ai-aiops-service and prom/alertmanager:v0.28.1 images.
+# Build/review instructions: deploy/RECOVERY_IMAGE_SECURITY.md
 python3 scripts/test-recovery-chaos.py --output-dir /tmp/cloudforge-recovery-UNIQUE
 pytest -q tests/test_recovery_chaos.py
 ```
@@ -38,7 +40,7 @@ image ID. Verify image provenance/scanning separately before reuse.
 For production use established PostgreSQL tooling (managed database PITR or a
 reviewed pgBackRest/Barman deployment), encrypted offsite storage, separate backup
 credentials, retention/immutability and alerting on backup age/WAL archive lag.
-This batch does not configure production archiving or create a backup service.
+This procedure does not configure production archiving or create a backup service.
 Protect account hashes, sessions, incident logs and audit evidence as sensitive.
 
 Capture all application schemas, migration receipts, extensions and roles/grants;
@@ -56,8 +58,14 @@ public table rows plus a post-restore identity-sequence insert. It then uses
 `pg_basebackup -X stream`, actual archived WAL, a named restore point and a third
 fresh instance with `recovery_target_action=pause`. Inclusion/exclusion of writes
 and a full table fingerprint prove the target was reached. It never promotes a
-recovery target or performs cutover. AIOps startup-managed schema, production role
-grants, backup encryption/retention, large databases and offsite loss are unverified.
+recovery target or performs cutover. AIOps startup DDL runs twice against the real
+fixture before backup; authenticated firing/resolved webhook history is included
+in both logical and PITR fingerprints. A real disposable Alertmanager also sends
+an injected firing/resolved alert over authenticated HTTP to the current AIOps
+code; its persisted incident/event history is included before backup. A private Unix socket under the 0700
+output directory and a per-run database ownership proof isolate this fixture.
+Production role grants, backup encryption/retention, large databases and offsite
+loss remain unverified.
 
 **RTO:** drill elapsed times include local Docker/SQL probes; logical restore
 includes dump creation and target initialization. PITR RTO starts at copying the
@@ -103,7 +111,8 @@ keys and test revocation. Never put recovered secret values into Git, command
 history or evidence logs. Offsite secret/state restoration and lock recovery
 require separately approved live acceptance.
 
-The current local image vulnerability gate is blocked; see
-[measured evidence and security findings](RECOVERY_EVIDENCE.md). A successful
-restore is not an image-security sign-off. Refresh/review the cached image and
-rerun the security gate before using this procedure for release acceptance.
+The original cached image is rejected. The reviewed PostgreSQL 16.16 derivative
+is pinned by its local image config digest; see [the image review](RECOVERY_IMAGE_SECURITY.md)
+and [measured evidence](RECOVERY_EVIDENCE.md). Its registry publication and
+production acceptance are separate gates. Refresh the vulnerability database and
+repeat security/restore checks before release use; no production image was changed.

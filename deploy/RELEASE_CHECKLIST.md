@@ -73,6 +73,8 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 ## Batches 25–26 recovery and chaos gates
 
 - [ ] Review [disaster recovery](DISASTER_RECOVERY.md) and [bounded chaos drills](CHAOS_ENGINEERING.md). Record independently approved RTO/RPO objectives and recovery authorization; no existing-target restore is automated.
-- [ ] Retain real isolated logical/WAL restore and fault evidence, checksums, integrity comparisons and cleanup results. Verify AIOps schemas, role/grant recovery, encrypted/offsite retention and production-sized recovery separately.
+- [ ] Retain real isolated logical/WAL restore and fault evidence, checksums, integrity comparisons and cleanup results. AIOps startup schema and incident histories are covered locally; verify production role/grant recovery, encrypted/offsite retention and production-sized recovery separately.
 - [ ] Revoke restored sessions/keys as needed and invalidate restored execution approval before reopening mutations. Reconcile uncertain execution and obtain fresh bound plans.
-- [ ] Obtain separate acceptance for Kubernetes/GitOps/PVC reconstruction, state/secrets recovery, live alerts/SLO response and node/OOM faults. Local Docker timings are not production RTO/RPO claims.
+- [ ] Obtain separate acceptance for Kubernetes/GitOps/PVC reconstruction, state/secrets recovery, live Prometheus/SLO response and node faults; retain the bounded local kernel-OOM and alert-transport evidence separately. Local Docker timings are not production RTO/RPO claims.
+
+- [ ] Use the [reviewed PostgreSQL 16.16 recovery image](RECOVERY_IMAGE_SECURITY.md), verify its actual digest and scan results. Local config digest pinning is not a published registry image; publish/provenance and production Compose/cluster image selection require separate release approval. Do not replace existing databases during a drill.

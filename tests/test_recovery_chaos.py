@@ -53,11 +53,12 @@ def test_no_external_target_or_cloud_mutation_arguments():
     assert "recovery_target_action=pause" in source
 
 
-def test_interruption_records_failure_and_runs_cleanup(tmp_path, monkeypatch):
+@pytest.mark.parametrize("exception", [KeyboardInterrupt, TypeError, KeyError])
+def test_interruption_and_setup_failure_record_failure_and_run_cleanup(tmp_path, monkeypatch, exception):
     output = tmp_path / 'interrupted'
     cleaned = []
     def interrupted(self):
-        raise KeyboardInterrupt
+        raise exception
     monkeypatch.setattr(module.Drill, 'run', interrupted)
     monkeypatch.setattr(module.Drill, 'cleanup', lambda self: cleaned.append(True) or [])
     monkeypatch.setattr(module.signal, 'signal', lambda *args: None)
@@ -78,3 +79,43 @@ def test_cleanup_removes_only_label_verified_containers_and_their_anonymous_volu
     monkeypatch.setattr(drill, 'docker', docker)
     assert drill.cleanup() == []
     assert calls[-1] == ('rm', '-f', '-v', name)
+
+
+def test_unpinned_image_rejected_before_docker_or_build(tmp_path, monkeypatch):
+    root = tmp_path / 'repo'
+    config = root / 'deploy/recovery'
+    config.mkdir(parents=True)
+    (config / 'postgres-image.json').write_text(json.dumps({'image_id': 'postgres:latest'}))
+    monkeypatch.setattr(module, 'ROOT', root)
+    drill = module.Drill(tmp_path)
+    def forbidden(*args, **kwargs):
+        pytest.fail('Unpinned image must fail before any Docker command')
+    monkeypatch.setattr(drill, 'docker', forbidden)
+    with pytest.raises(RuntimeError, match='immutable'):
+        drill.run()
+
+
+def test_recovery_image_preserves_patched_runtime_and_memory_fault_is_bounded():
+    pin = json.loads((ROOT / 'deploy/recovery/postgres-image.json').read_text())
+    assert pin['image_id'].startswith('sha256:') and len(pin['image_id']) == 71
+    dockerfile = (ROOT / 'deploy/recovery/Postgres.Dockerfile').read_text()
+    assert pin['upstream'] in dockerfile
+    assert 'su-exec=0.3-r0' in dockerfile and 'FROM scratch' in dockerfile
+    assert 'STOPSIGNAL SIGINT' in dockerfile and 'USER 70:70' in dockerfile
+    assert 'ENTRYPOINT ["docker-entrypoint.sh"]' in dockerfile
+    source = (ROOT / 'scripts/test-recovery-chaos.py').read_text()
+    assert "'--memory-swap', '256m'" in source
+    assert 'memory.events' in source and "result.returncode != 137" in source
+    assert '--publish' not in source
+
+
+def test_unexpected_failure_never_emits_pass(tmp_path, monkeypatch):
+    output = tmp_path / 'unexpected'
+    def crash(self):
+        raise AssertionError('unexpected fixture failure')
+    monkeypatch.setattr(module.Drill, 'run', crash)
+    monkeypatch.setattr(module.signal, 'signal', lambda *args: None)
+    monkeypatch.setattr(sys, 'argv', ['drill', '--output-dir', str(output)])
+    with pytest.raises(AssertionError):
+        module.main()
+    assert json.loads((output / 'evidence.json').read_text())['status'] == 'FAIL'
