@@ -26,7 +26,7 @@ resource "aws_iam_policy" "scoped_provisioning" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = [for statement in [
       {
         Sid    = "RegionalInventory"
         Effect = "Allow"
@@ -123,7 +123,7 @@ resource "aws_iam_policy" "scoped_provisioning" {
           "s3:GetEncryptionConfiguration", "s3:PutEncryptionConfiguration",
           "s3:GetBucketTagging", "s3:PutBucketTagging"
         ]
-        Resource = "arn:${local.partition}:s3:::cloudforge-*"
+        Resource = [for bucket in var.application_bucket_names : "arn:${local.partition}:s3:::${bucket}"]
       },
       {
         Sid       = "CreateTaggedDatabases"
@@ -161,7 +161,7 @@ resource "aws_iam_policy" "scoped_provisioning" {
         Action   = ["rds:CreateDBSnapshot", "rds:AddTagsToResource"]
         Resource = "${local.rds_arn}:snapshot:cloudforge-final-*"
       }
-    ]
+    ] : statement if statement.Sid != "ManageApplicationBuckets" || length(var.application_bucket_names) > 0]
   })
 }
 

@@ -64,3 +64,49 @@ run "resource_policies_have_scoped_lifecycle_and_state_access" {
     error_message = "The runtime may delete the lockfile but cannot delete state objects."
   }
 }
+
+run "s3_is_disabled_without_an_explicit_bucket_allowlist" {
+  command = plan
+  variables {
+    runtime_principal_arn = "arn:aws:iam::123456789012:role/workload"
+  }
+  assert {
+    condition     = length([for s in jsondecode(aws_iam_policy.scoped_provisioning.policy).Statement : s if s.Sid == "ManageApplicationBuckets"]) == 0
+    error_message = "S3 provisioning must not receive a wildcard bucket namespace by default."
+  }
+}
+
+run "secret_sync_is_exact_and_separate_from_the_application" {
+  command = plan
+  variables {
+    runtime_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE"
+    application_bucket_names  = ["cloudforge-test-application"]
+    secret_sync_secret_arns   = ["arn:aws:secretsmanager:eu-west-1:123456789012:secret:fixture-Abcdef"]
+    secret_sync_kms_key_arns  = ["arn:aws:kms:eu-west-1:123456789012:key/00000000-0000-0000-0000-000000000001"]
+  }
+  assert {
+    condition     = one([for s in jsondecode(aws_iam_policy.scoped_provisioning.policy).Statement : s if s.Sid == "ManageApplicationBuckets"]).Resource == ["arn:aws:s3:::cloudforge-test-application"]
+    error_message = "Only reviewed application bucket names may receive lifecycle permissions."
+  }
+  assert {
+    condition     = one(jsondecode(aws_iam_role.secret_sync[0].assume_role_policy).Statement).Condition.StringEquals["oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE:sub"] == "system:serviceaccount:cloudforge:cloudforge-secret-sync"
+    error_message = "The secret-sync role must not trust application service accounts."
+  }
+  assert {
+    condition     = toset(jsondecode(aws_iam_role_policy.secret_sync[0].policy).Statement[0].Resource) == var.secret_sync_secret_arns
+    error_message = "Secrets access must match exact approved ARNs."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.secret_sync[0].policy).Statement[1].Condition.StringEquals["kms:ViaService"] == "secretsmanager.eu-west-1.amazonaws.com"
+    error_message = "Decrypt must be usable only through regional Secrets Manager."
+  }
+}
+
+run "wildcard_secret_arns_are_rejected" {
+  command = plan
+  variables {
+    runtime_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE"
+    secret_sync_secret_arns   = ["arn:aws:secretsmanager:eu-west-1:123456789012:secret:*"]
+  }
+  expect_failures = [var.secret_sync_secret_arns]
+}

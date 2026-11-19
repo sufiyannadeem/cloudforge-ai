@@ -51,3 +51,33 @@ variable "runtime_oidc_provider_arn" {
     error_message = "Provide the EKS IAM OIDC provider ARN in the bootstrap account."
   }
 }
+
+variable "application_bucket_names" {
+  description = "Explicit reviewed application buckets; empty disables S3 provisioning. Never include the state bucket."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for name in var.application_bucket_names : can(regex("^cloudforge-[a-z0-9][a-z0-9.-]+[a-z0-9]$", name)) && length(name) <= 63 && name != var.state_bucket_name])
+    error_message = "Application buckets must be exact cloudforge-* names distinct from the state bucket."
+  }
+}
+
+variable "secret_sync_secret_arns" {
+  description = "Exact existing Secrets Manager ARNs for the namespace-scoped sync identity; empty disables the role."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.secret_sync_secret_arns : can(regex("^arn:aws:secretsmanager:${var.aws_region}:${var.account_id}:secret:[A-Za-z0-9/_+=.@-]+$", arn))]) && (length(var.secret_sync_secret_arns) == 0 || var.runtime_oidc_provider_arn != "")
+    error_message = "Secret sync requires EKS OIDC and exact same-account/region secret ARNs without wildcards."
+  }
+}
+
+variable "secret_sync_kms_key_arns" {
+  description = "Exact customer KMS keys encrypting the approved secrets; omit for AWS-managed keys."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.secret_sync_kms_key_arns : can(regex("^arn:aws:kms:${var.aws_region}:${var.account_id}:key/[a-f0-9-]+$", arn))]) && (length(var.secret_sync_kms_key_arns) == 0 || length(var.secret_sync_secret_arns) > 0)
+    error_message = "Use exact same-account/region KMS key ARNs only with configured secrets."
+  }
+}

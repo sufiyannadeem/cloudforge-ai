@@ -41,3 +41,14 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 - [ ] Generate and independently approve a fresh destroy plan, obtain explicit teardown authorization, then verify termination and retained disks/snapshots. Record final costs and remaining billable resources.
 - [ ] Validate VPC/S3/RDS/EKS inputs and dependencies before their separate approved lifecycle tests. Verify EKS namespace RBAC, real deployment health, bounded/redacted logs, rollback and Kubernetes diagnostics.
 - [ ] Obtain deployment sign-off only after target-environment IAM, state locking, recovery, monitoring and live acceptance evidence are recorded. Keep local validation and target-environment acceptance evidence explicit.
+
+## Batch 22 deployment foundation gates
+
+- [ ] Review [all 16 dependency PR decisions](PR_REVIEW.md); resolve failed checks before any merge. Rebase onto the release baseline without overwriting rc1 security changes.
+- [ ] Render using [the non-secret deployment inputs](kubernetes/deployment-inputs.example.json) and [runbook](kubernetes/README.md#render-the-deployment-foundation-batch-22). Record all six published image digests and provenance. The renderer is offline and does not establish registry or AWS existence.
+- [ ] Approve exact application bucket names and secret/KMS ARN allowlists in bootstrap; verify the distinct secret-sync OIDC subject and FinOps read-only role. No wildcard bucket lifecycle namespace is granted by default.
+- [ ] Install/review namespace-scoped External Secrets Operator access and v1 CRDs, synchronize exact properties, require Ready status and validate payloads privately. Verify rotation/restart, encryption at rest and database TLS/CA. Never apply the example placeholder Secrets.
+- [ ] Supply and validate an encrypted/backed-up RWX storage class/CSI implementation. Exercise two-replica workspace access, ownership, restart and saved-plan persistence; no storage class or AWS filesystem is created by the renderer.
+- [ ] Validate CNI enforcement, selected TLS ingress, cluster DNS, database/API/provider endpoint CIDRs and monitoring selectors. Deny unrelated namespace access. Default-deny policies require actual endpoint/network acceptance; they do not configure ingress certificates or database TLS.
+- [ ] Review Services and startup/readiness/liveness probes against published images. Start a single project-service migrator first; check all migration receipts before scaling and starting dependent APIs in the documented order.
+- [ ] Keep Terraform read-only until separate bootstrap/locking approval. Perform live IAM, EKS RBAC, monitoring, cost-attribution, recovery and rollback acceptance only under separately approved operations.

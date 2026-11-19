@@ -67,3 +67,91 @@ Two path-and-check-specific exceptions in `trivy-rbac-exceptions.yaml` apply onl
 - `KSV-0056` allows Service creation/patching for the generated project workloads.
 
 Kubernetes RBAC cannot constrain create operations to a dynamic resource-name prefix. These permissions can modify workload/network specifications within the bound namespace and can indirectly expose that namespace's service accounts or secrets. Use dedicated project namespaces with appropriate admission and workload-isolation controls. The Role grants no direct Secret API, pod exec, deletion, namespace management, node access or RBAC administration permissions. The CI action passes this YAML ignore file explicitly. Other manifests and check IDs remain enforced. No global scanner suppression is added.
+
+## Render the deployment foundation (Batch 22)
+
+Do not apply `cloudforge-secrets-example.yml` directly. It intentionally contains
+placeholder Secrets/identities/images. `scripts/render-kubernetes.py` reuses its
+workloads, removes every example Secret, and emits ClusterIP Services, probes,
+ExternalSecrets, the Terraform ConfigMap, RWX PVC, and default-deny NetworkPolicies.
+It performs no API calls. Install PyYAML using the existing Python environment.
+
+```sh
+cp deploy/kubernetes/deployment-inputs.example.json /tmp/cloudforge-deployment-inputs.json
+# Edit this non-secret JSON with reviewed, real references; every null must be resolved.
+services/aiops-service/.venv/bin/python scripts/render-kubernetes.py \
+  --config /tmp/cloudforge-deployment-inputs.json > /tmp/cloudforge-rendered.yml
+```
+
+Only redirect successful output into a release artifact. Missing/invalid inputs
+produce no manifest. Do not place secret values in the inputs. Image references
+must be published `registry/repository@sha256:<64 hex characters>` digests, not tags.
+Record provenance and the previous compatible digests. The renderer checks syntax,
+not registry existence or signatures.
+
+Supply account/region-matching infrastructure runtime, provisioner, FinOps, and
+secret-sync role ARNs. Infra and FinOps use distinct service accounts. Deployment
+uses only its in-cluster API token and existing project-scoped RoleBindings; no AWS
+role is granted. AIOps defaults to AI disabled, not mock success. To enable Bedrock,
+set `ai.provider=bedrock`, an approved `ai.model`, and `roles.aiops-service` with
+scoped model permissions. Other app API tokens are not automatically mounted; IRSA
+uses its own projected identity token. No application receives the sync role.
+
+Install and review External Secrets Operator with `external-secrets.io/v1` CRDs
+before using the rendered namespace-local SecretStore/ExternalSecrets. The store
+uses JWT federation through `cloudforge-secret-sync`, following the
+[official AWS provider configuration](https://external-secrets.io/latest/provider/aws-secrets-manager/).
+The operator needs permission to request that service account's token and manage
+only intended namespace Secrets. Restrict who can edit SecretStores, ExternalSecrets,
+service accounts and workload specs; possession of those permissions can expose
+secrets indirectly. Kubernetes Secret encryption at rest, access audit and controller
+installation remain cluster prerequisites. No static AWS access keys are emitted.
+
+`secrets` maps exactly the referenced Kubernetes Secret names to full existing
+Secrets Manager ARNs and explicit JSON properties. No wildcard search or `dataFrom`
+extraction is used. Reuse each independent caller/receiver signing key through its
+existing shared reference; never reuse keys between distinct audiences. Configure
+FinOps audit and attribution logins separately with existing least-privilege grants.
+Use a verified TLS database URL and the required CA trust; the renderer never reads
+or validates secret payloads. Target Secrets are retained if remote data disappears;
+revocation requires explicit rotation and workload restart. Environment variables do
+not hot-reload after a secret refresh. Verify operator Ready conditions and all
+required Secret keys before starting applications.
+
+Bootstrap now accepts `secret_sync_secret_arns` and optional
+`secret_sync_kms_key_arns` for a dedicated exact-subject OIDC role; pass the existing
+EKS OIDC provider. KMS decryption is constrained to regional Secrets Manager and the
+approved secret encryption contexts. No secrets or KMS keys are created. Supply
+`application_bucket_names` for the exact application buckets approved for S3
+lifecycle operations; the default empty set grants no application-bucket permissions.
+The state bucket remains explicitly denied to the provisioner. Scope the separate
+FinOps role to its required read-only APIs; bootstrap does not provision that role.
+
+The selected storage class must actually support **ReadWriteMany**, encryption,
+backup and cross-node mounts with the configured fsGroup. The renderer neither
+invents a class nor creates an EFS filesystem/CSI driver. Test failover with two
+infra replicas and persisted saved-plan artifacts before enabling Terraform writes.
+Protect that PVC: approved plans and provider data can contain sensitive values.
+
+The CNI must enforce NetworkPolicy. Supply reviewed CIDRs for PostgreSQL (5432),
+the Kubernetes API (443), and required AWS/provider-registry HTTPS endpoints (443).
+No default-route CIDR is accepted. Allow only the selected ingress-controller
+namespace/app to reach frontend; complete TLS termination there. DNS allows the
+standard kube-system kube-dns selector; adapt/review for NodeLocal DNS or other
+cluster DNS. Monitoring uses supplied namespace and app selectors `prometheus`,
+`grafana`, `alertmanager`; those services and their own ingress/egress policies must
+exist. AWS endpoint CIDRs, NAT/DNAT behavior, proxy requirements and registry/provider
+download destinations must be verified with the target CNI. Policies restrict
+network reachability, not IAM/API authorization or TLS identity.
+
+Review the rendered artifact and validate against the actual cluster schemas before
+separately approving deployment. Apply foundation objects first, wait for secrets
+and storage, then start **one project-service replica** to finish migrations. Start
+infrastructure/deployment, then AIOps/FinOps, then frontend; scale project-service
+only after its migration receipt verification. Do not apply all Deployments at once
+on an empty database. Probes establish application listener readiness after startup;
+they do not prove AWS permissions or continuously validate downstream services.
+Frontend probes use TCP so no session/CSRF bypass endpoint is introduced.
+Terraform remains `TERRAFORM_READ_ONLY=true`; changing that requires separate approval
+of backend, role chain, locking and live acceptance prerequisites. No project RBAC
+or Terraform approval requirement is removed by this renderer.

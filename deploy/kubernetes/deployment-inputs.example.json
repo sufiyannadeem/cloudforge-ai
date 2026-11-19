@@ -1,0 +1,102 @@
+{
+  "account_id": null,
+  "region": null,
+  "images": {
+    "project-service": null,
+    "infrastructure-service": null,
+    "deployment-service": null,
+    "aiops-service": null,
+    "finops-service": null,
+    "frontend": null
+  },
+  "roles": {
+    "infrastructure-service": null,
+    "finops-service": null,
+    "secret-sync": null
+  },
+  "provisioner_role_arn": null,
+  "state_bucket": null,
+  "storage": {
+    "class": null,
+    "size": null
+  },
+  "monitoring_namespace": null,
+  "ingress_namespace": null,
+  "ingress_app": null,
+  "egress_cidrs": {
+    "database": [],
+    "kubernetes_api": [],
+    "aws_https": []
+  },
+  "ai": {
+    "provider": "disabled"
+  },
+  "secrets": {
+    "cloudforge-frontend-project": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_PROJECT_KEY": "CLOUDFORGE_FRONTEND_PROJECT_KEY"
+      }
+    },
+    "cloudforge-postgres-credentials": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-frontend-infrastructure": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY": "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY"
+      }
+    },
+    "cloudforge-frontend-deployment": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY": "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY"
+      }
+    },
+    "cloudforge-aiops-deployment": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY": "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY"
+      }
+    },
+    "cloudforge-finops-audit-db": {
+      "arn": null,
+      "properties": {
+        "FINOPS_AUDIT_DATABASE_URL": "FINOPS_AUDIT_DATABASE_URL"
+      }
+    },
+    "cloudforge-finops-project-db": {
+      "arn": null,
+      "properties": {
+        "FINOPS_PROJECT_DATABASE_URL": "FINOPS_PROJECT_DATABASE_URL"
+      }
+    },
+    "cloudforge-frontend-finops": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_FINOPS_KEY": "CLOUDFORGE_FRONTEND_FINOPS_KEY"
+      }
+    },
+    "cloudforge-frontend-aiops": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_AIOPS_KEY": "CLOUDFORGE_FRONTEND_AIOPS_KEY"
+      }
+    },
+    "cloudforge-alertmanager-identity": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_ALERTMANAGER_KEY": "CLOUDFORGE_ALERTMANAGER_KEY"
+      }
+    },
+    "cloudforge-frontend-credentials": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_SESSION_SECRET": "CLOUDFORGE_SESSION_SECRET"
+      }
+    }
+  }
+}

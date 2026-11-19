@@ -156,3 +156,22 @@ aws ec2 describe-instances --region eu-west-1 --instance-ids "${EC2_ID:?Copy the
 Check review history and errors, retain failed records, and generate a fresh approval-bound plan for recovery. For cleanup, generate the UI destroy plan, obtain independent review and explicit destroy authorization, then execute and repeat the read command to verify termination. Check for retained EBS volumes and snapshots. Preserve the state backend and workload roles while other projects use them.
 
 Budget roughly USD 0.02–0.05 for a one-hour, single-instance smoke test including a small root disk, excluding taxes and unusual transfer or CPU-credit charges. Confirm current EC2 and disk prices before approval. Bootstrap S3 storage, requests, and retained state versions add usage charges.
+
+## Release foundation allowlists
+
+Before generating a new bootstrap plan, set `application_bucket_names` to the exact
+reviewed application bucket names. Its default empty set now disables application
+S3 lifecycle permissions; the state bucket must never be included. Preserve names
+of existing managed application buckets when upgrading this policy. Inspect the
+policy diff before approval to avoid inadvertently removing required access.
+
+For External Secrets Operator, set `secret_sync_secret_arns` to the exact existing
+same-account/region Secrets Manager ARNs used by the Kubernetes renderer and set
+`secret_sync_kms_key_arns` only for their customer-managed KMS keys. This requires
+`runtime_oidc_provider_arn`; the optional role trusts only
+`cloudforge/cloudforge-secret-sync` with the STS audience. Use the resulting
+`secret_sync_role_arn` in the renderer's `roles.secret-sync`. This creates neither
+secrets nor a controller. The FinOps read-only role, secret-controller Kubernetes
+permissions, OIDC provider and live endpoint access remain explicit prerequisites.
+An empty secret list creates no sync role. Review a saved bootstrap plan before any
+separately authorized IAM/state changes; no apply is part of local validation.
