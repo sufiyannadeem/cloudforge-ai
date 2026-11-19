@@ -29,6 +29,8 @@ These files are deployment bootstrap/grant instructions, not replacements for
 historical migrations. No passwords are embedded; newly created login roles have
 NULL passwords and cannot authenticate with a password until separately set.
 Existing unsafe role attributes/memberships/runtime ownership cause failure.
+Bootstrap also rejects runtime database/schema CREATE privileges and ownership
+of databases, schemas or routines; table ACL cleanup cannot remove that authority.
 Do not run ownership reassignment, revoke legacy access, rotate credentials or
 restore an existing database automatically. Back up, inventory owners/grants,
 review the handoff and drain services before a production transition. Retire the

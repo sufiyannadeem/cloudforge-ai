@@ -1,5 +1,9 @@
 # Batch 27 production readiness audit
 
+**Batch 29:** [final local gate and acceptance checklist](BATCH29_RELEASE_GATE.md)
+records fresh checks and the retained runtime DDL-authority correction. Production
+remains NO-GO; the capability assessment below is historical evidence.
+
 **Batch 28 update:** the assessment below is the historical baseline.
 [Current local closure and remaining gates](BATCH28_CLOSURE.md) supersede its
 shared-principal, GitOps and scheduler code-status findings. Production remains

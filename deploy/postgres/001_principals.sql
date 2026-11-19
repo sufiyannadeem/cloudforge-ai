@@ -15,6 +15,15 @@ DO $$ DECLARE name text; BEGIN
   IF name <> 'cf_migrator' AND EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles r ON c.relowner=r.oid WHERE r.rolname=name) THEN
    RAISE EXCEPTION 'Runtime role owns schema objects; reviewed ownership handoff required';
   END IF;
+  IF name <> 'cf_migrator' AND (
+   has_database_privilege(name,current_database(),'CREATE') OR
+   EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND has_schema_privilege(name,n.oid,'CREATE')) OR
+   EXISTS (SELECT 1 FROM pg_namespace n JOIN pg_roles r ON n.nspowner=r.oid WHERE r.rolname=name) OR
+   EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles r ON p.proowner=r.oid WHERE r.rolname=name) OR
+   EXISTS (SELECT 1 FROM pg_database d JOIN pg_roles r ON d.datdba=r.oid WHERE r.rolname=name)
+  ) THEN
+   RAISE EXCEPTION 'Runtime role retains DDL authority; reviewed ownership/grant handoff required';
+  END IF;
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I',current_database(),name);
  END LOOP;
 END $$;

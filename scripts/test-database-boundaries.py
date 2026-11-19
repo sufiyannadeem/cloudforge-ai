@@ -38,6 +38,24 @@ def main():
         drill.sql(db,"ALTER SYSTEM SET ssl='on'; ALTER SYSTEM SET ssl_cert_file='/var/lib/postgresql/data/ca.crt'; ALTER SYSTEM SET ssl_key_file='/var/lib/postgresql/data/server.key'")
         drill.exec(db,'sh','-ec','cat > /var/lib/postgresql/data/pg_hba.conf',data=b'local all all trust\nhostnossl all all all reject\nhostssl all all all scram-sha-256\n')
         drill.sql(db,(ROOT/'deploy/postgres/001_principals.sql').read_text())
+        # Existing runtime DDL authority must fail closed, not survive bootstrap.
+        for grant, undo in [
+            ('GRANT CREATE ON SCHEMA public TO cf_deployment', 'REVOKE CREATE ON SCHEMA public FROM cf_deployment'),
+            ('GRANT CREATE ON DATABASE cloudforge TO cf_deployment', 'REVOKE CREATE ON DATABASE cloudforge FROM cf_deployment'),
+            ('CREATE SCHEMA boundary_owner AUTHORIZATION cf_deployment', 'DROP SCHEMA boundary_owner'),
+            ('CREATE FUNCTION public.boundary_owner() RETURNS int LANGUAGE sql AS $$SELECT 1$$; ALTER FUNCTION public.boundary_owner() OWNER TO cf_deployment', 'DROP FUNCTION public.boundary_owner()'),
+            ('ALTER DATABASE cloudforge OWNER TO cf_deployment', 'ALTER DATABASE cloudforge OWNER TO postgres'),
+        ]:
+            drill.sql(db, grant)
+            try:
+                result = drill.exec(db, 'psql', '-X', '-U', 'postgres', '-d', 'cloudforge',
+                    '-v', 'ON_ERROR_STOP=1', '-Atq', check=False,
+                    data=(ROOT/'deploy/postgres/001_principals.sql').read_bytes())
+                rejected = result.returncode != 0 and b'Runtime role retains DDL authority' in result.stderr
+            finally:
+                drill.sql(db, undo)
+            if not rejected:
+                raise RuntimeError('Bootstrap accepted pre-existing runtime DDL authority')
         principals=['migrator','project','infrastructure','deployment','aiops','finops_project','finops_audit','drift']
         passwords={p:secrets.token_hex(32) for p in principals}
         for principal,password in passwords.items():drill.sql(db,f"ALTER ROLE cf_{principal} PASSWORD '{password}'")
@@ -94,7 +112,7 @@ def main():
     finally:
         failures=drill.cleanup()
         report={'status':'PASS' if success and not failures else 'FAIL','fixture':drill.run_id,
-                ('checks' if success else 'planned_checks'):['23 one-shot migrations','AIOps one-shot schema','7 runtime principals','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences'],
+                ('checks' if success else 'planned_checks'):['23 one-shot migrations','AIOps one-shot schema','7 runtime principals','pre-existing runtime DDL authority rejected','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences'],
                 'cleanup_failures':failures}
         (output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
     return int(not success or bool(failures))
