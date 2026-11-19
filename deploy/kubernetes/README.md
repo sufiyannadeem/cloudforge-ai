@@ -52,3 +52,18 @@ For FinOps, grant the audit login `USAGE` on the application schema and only `SE
 Use the [AWS verification and cleanup runbook](../../infrastructure/terraform/bootstrap/README.md#approved-live-verification-and-cleanup) for service costs, provisioned IDs, and teardown. Before requesting apply approval, confirm account, region, bucket controls, provisioner trust, and the runtime identity from the running workload. Validate Cost Explorer under that workload identity. Project cost results require verified attribution and may be delayed by billing ingestion.
 
 After an independently approved sandbox deployment, confirm current Kubernetes health and capture diagnostics, verify the cost audit receipt, and scan an active resource from Infrastructure. Drift findings should distinguish provider changes from desired changes. Compare receipts with the signed actor and resource, then use an unrelated Developer account to confirm isolation. Use fresh, independently approved plans for cleanup. Keep state history and record any retained billable resources.
+
+## Read-only runtime filesystems and deployment RBAC
+
+All six application containers use a read-only root filesystem. The infrastructure service requires an existing `cloudforge-terraform-workspaces` PVC in the `cloudforge` namespace, mounted at `/var/lib/cloudforge/terraform`. With the example's two replicas, provide shared ReadWriteMany storage so either replica can read the exact approved plan after a restart. Size and back up that storage for provider binaries and saved plans. An ephemeral workspace would lose approval-bound artifacts.
+
+Infrastructure and deployment CLI temporary files/caches use the bounded `/tmp` emptyDir with a writable HOME. Terraform update-check writes are disabled. The frontend mounts `/app/.next/cache` and `/tmp` as bounded emptyDirs. Pod fsGroup matches the non-root runtime UID for these mounts. Python images disable bytecode writes; their application directories remain read-only. Validate storage ownership and capacity in the intended cluster before rollout.
+
+The deployer RoleBinding targets only `cf-PROJECT_UUID`. ReplicaSets need list permission for ownership checks; named ReplicaSet get was removed. Pod get/list, pod-log get, warning-event list and pod-metrics get support the verified diagnostics path. Rollout status requires Deployment get/list/watch. `kubectl apply` requires get/create/patch on Deployments and Services.
+
+Two path-and-check-specific exceptions in `trivy-rbac-exceptions.yaml` apply only to the project deployer Role manifest.
+
+- `KSV-0048` allows Deployment creation/patching for the executor's dynamically named workloads.
+- `KSV-0056` allows Service creation/patching for the generated project workloads.
+
+Kubernetes RBAC cannot constrain create operations to a dynamic resource-name prefix. These permissions can modify workload/network specifications within the bound namespace and can indirectly expose that namespace's service accounts or secrets. Use dedicated project namespaces with appropriate admission and workload-isolation controls. The Role grants no direct Secret API, pod exec, deletion, namespace management, node access or RBAC administration permissions. The CI action passes this YAML ignore file explicitly. Other manifests and check IDs remain enforced. No global scanner suppression is added.

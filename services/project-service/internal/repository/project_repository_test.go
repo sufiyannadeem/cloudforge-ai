@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/model"
 	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
@@ -40,6 +41,10 @@ func setupTestRepository(t *testing.T) (*pgxpool.Pool, ProjectRepository) {
 
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("ping test database: %v", err)
+	}
+
+	if err := migration.Run(ctx, pool); err != nil {
+		t.Fatalf("apply repository test migrations: %v", err)
 	}
 
 	repo := NewProjectRepository(pool)
