@@ -24,19 +24,38 @@ permitted self-review or unrestricted branches fails closed. It requires
 protected-branches-only policy (not custom patterns); main protection and disabled
 administrator bypass must still be independently verified. This configuration
 check does not prove signed provenance or replace GitHub's approval enforcement.
-Signing/attestation policy and registry retention must be configured and verified
-before production acceptance. SBOM/metadata are not cryptographic provenance.
+Batch 31 wires pinned Cosign 3.1.4 keyless signing and a custom signed
+scanned-image release predicate. Only the protected publish job has OIDC and
+package-write permission. The predicate binds source SHA, workflow/run/attempt,
+service, scanned config ID, archive SHA256 and SBOM SHA256 to the actual registry
+digest. This is a scanned-build handoff receipt, not hermetic/SLSA-certified
+BuildKit provenance; `provenance: false` on the archive-only Docker build remains
+intentional. [Current security setup and limits](BATCH31_RELEASE_SECURITY.md).
+
+Images initially receive unique candidate tags. After upload, Cosign signs and
+attests each exact digest. All seven signatures and signed claims must verify
+before `images.json` is emitted/uploaded. Failed signing can leave candidate
+images in GHCR; registry publication is not atomic and must not imply promotion.
+No consumer should trust a candidate tag or an unsigned manifest. Verification
+requires the exact workflow/main identity, GitHub issuer, source SHA, event/ref,
+repository and expected run/attempt. No transparency/certificate checks are
+disabled. Trust policy, registry retention, network access and real hosted
+keyless execution still require independent acceptance.
 
 After an approved hosted run, use its immutable manifest with real non-secret
 release inputs:
 
 ```sh
-python3 scripts/release-images.py --config /path/to/deployment-inputs.json --manifest /path/to/images.json --output /tmp/reviewed-release-inputs.json
+python3 scripts/release-images.py --config /path/to/deployment-inputs.json --manifest /path/to/images.json --repository sufiyannadeem/cloudforge-ai --revision "${APPROVED_SHA:?}" --run-id "${APPROVED_RUN_ID:?}" --run-attempt "${APPROVED_RUN_ATTEMPT:?}" --output /tmp/reviewed-release-inputs.json
 python3 scripts/render-kubernetes.py --config /tmp/reviewed-release-inputs.json > /tmp/reviewed-release.yml
 ```
 
 Check renderer CLI help if using a different version; never overwrite an approved
-release artifact. The six workload images are pinned to registry digests; the
+release artifact. Install the reviewed pinned Cosign tool first. Take expected
+SHA/run/attempt from independently reviewed hosted evidence, never from the
+untrusted manifest itself. CLI selection verifies signatures/provenance against
+the registry before writing renderer inputs; old unsigned manifests fail closed.
+The six workload images are pinned to registry digests; the
 PostgreSQL digest is also retained as `database_client_image`. Monitor/controller
 images require their own reviewed digests. Production Compose requires explicit
 image variables rather than `:prod` defaults, distinct verified DB DSNs and CA.
@@ -45,4 +64,6 @@ acceptance must compare the reviewed manifest and registry scan/provenance.
 
 No registry publication, build of all seven images, cloud access, cluster change
 or Terraform execution was performed locally. Tests cover artifact tampering,
-incomplete/tag-only manifests, local publish refusal and workflow approval wiring.
+incomplete/tag-only manifests, local publish refusal, signed-claim binding,
+failed signing and workflow approval wiring. Separate offline crypto fixtures use
+disposable keys; they do not establish Fulcio/Rekor/OIDC or GHCR acceptance.

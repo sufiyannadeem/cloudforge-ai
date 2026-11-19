@@ -1,5 +1,9 @@
 # Batch 30 — GitHub release preparation
 
+**Batch 31 update:** [local signing/protection configuration](BATCH31_RELEASE_SECURITY.md)
+supersedes the signing-code gap below. GitHub protection enforcement and hosted
+keyless acceptance remain unverified; this document retains its historical snapshot.
+
 Read-only GitHub review, November 20, 2026. **NO-GO for publication/deployment.**
 The authenticated account has repository administration visibility; no GitHub
 settings, PRs, refs, workflows or registry artifacts were changed.
