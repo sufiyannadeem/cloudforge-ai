@@ -198,3 +198,21 @@ def test_database_principals_are_not_shared_in_rendered_workloads(config):
         if name in ['project-service','infrastructure-service','deployment-service','aiops-service']:
             db_refs.extend(x['secretRef']['name'] for x in pod['containers'][0]['envFrom'])
     assert set(db_refs) == {'cloudforge-'+s+'-db' for s in ['project','infrastructure','deployment','aiops']}
+
+
+def test_migrations_are_ordered_isolated_hooks_with_no_runtime_credentials(config):
+    docs=renderer.render(config)
+    jobs=[d for d in docs if d['kind']=='Job']
+    assert len(jobs)==5
+    assert [d['metadata']['annotations']['argocd.argoproj.io/sync-wave'] for d in jobs]==['-5','-4','-3','-2','-1']
+    for job in jobs:
+        pod=job['spec']['template']['spec']; c=pod['containers'][0]
+        assert pod['automountServiceAccountToken'] is False
+        assert 'app' not in job['spec']['template']['metadata']['labels']
+        assert c['envFrom']==[{'secretRef':{'name':'cloudforge-migration-db'}}]
+        assert job['spec']['activeDeadlineSeconds']==300
+    for doc in docs:
+        if doc['kind']=='Deployment':
+            assert 'cloudforge-migration-db' not in str(doc)
+        if doc['kind']=='NetworkPolicy':
+            assert doc['metadata']['annotations']['argocd.argoproj.io/sync-wave']=='-10'

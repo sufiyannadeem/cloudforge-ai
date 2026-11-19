@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Render reviewed, non-secret deployment inputs. Never applies resources."""
+import copy
 import argparse
 import ipaddress
 import json
@@ -180,9 +181,10 @@ def render(config):
         container['env'] = [e for e in container.get('env', []) if e['name'] not in additional]
         container['env'] += [{'name': k, 'value': v} for k, v in additional.items()]
     # envFrom must be explicitly mapped, not unrestricted extraction of remote JSON.
-    required = {**{'cloudforge-' + name + '-db': {'DATABASE_URL'} for name in ['project','infrastructure','deployment','aiops']},
+    required = {'cloudforge-migration-db': {'DATABASE_URL'}, **{'cloudforge-' + name + '-db': {'DATABASE_URL'} for name in ['project','infrastructure','deployment','aiops']},
                 'cloudforge-frontend-credentials': {'CLOUDFORGE_SESSION_SECRET'}}
     secret_keys = {name: keys | required.get(name, set()) for name, keys in secret_keys.items()}
+    secret_keys['cloudforge-migration-db'] = {'DATABASE_URL'}
     sa = document('ServiceAccount', 'cloudforge-secret-sync', {})
     sa.pop('spec')
     sa['automountServiceAccountToken'] = False
@@ -206,6 +208,46 @@ def render(config):
             'secretStoreRef': {'name': 'cloudforge', 'kind': 'SecretStore'},
             'target': {'name': name, 'creationPolicy': 'Owner', 'deletionPolicy': 'Retain'},
             'data': data}, 'external-secrets.io/v1'))
+    migration_sa = document('ServiceAccount', 'cloudforge-migrator', {})
+    migration_sa.pop('spec')
+    migration_sa['automountServiceAccountToken'] = False
+    docs.append(migration_sa)
+    grants = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'cloudforge-database-grants', 'namespace': 'cloudforge'},
+              'data': {'runtime.sql': (ROOT / 'deploy/postgres/002_runtime_grants.sql').read_text()}}
+    docs.append(grants)
+    workloads = {d['metadata']['name']: d for d in docs if d['kind'] == 'Deployment'}
+    grant_code = "import os,psycopg\nfrom app.service_identity import production_database\ndsn=os.environ['DATABASE_URL']\nproduction_database(dsn,'cf_migrator')\nwith psycopg.connect(dsn) as c:\n c.execute(open('/database-grants/runtime.sql').read(),prepare=False)\n"
+    for wave, name in enumerate(['project-service','infrastructure-service','deployment-service','aiops-service','database-grants']):
+        source = workloads['aiops-service' if name == 'database-grants' else name]['spec']['template']['spec']
+        original = source['containers'][0]
+        container = {key: copy.deepcopy(original[key]) for key in ['name','image','imagePullPolicy','resources','securityContext']}
+        container['name'] = 'migrate'
+        container['args'] = ['migrate']
+        if name == 'aiops-service':
+            container['command'] = ['python','-m','app.database']; container.pop('args')
+        if name == 'database-grants':
+            container['command'] = ['python','-c',grant_code]; container.pop('args')
+        container['env'] = [{'name':'APP_ENV','value':'production'}, {'name':'PGSSLROOTCERT','value':'/etc/cloudforge/db-ca/ca.crt'},
+                            {'name':'PYTHONDONTWRITEBYTECODE','value':'1'}, {'name':'TERRAFORM_READ_ONLY','value':'true'}]
+        container['envFrom'] = [{'secretRef': {'name':'cloudforge-migration-db'}}]
+        container['volumeMounts'] = [{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True}, {'name':'tmp','mountPath':'/tmp'}]
+        volumes = [{'name':'database-ca','configMap':{'name':database_ca}}, {'name':'tmp','emptyDir':{'sizeLimit':'128Mi'}}]
+        if name == 'database-grants':
+            volumes.append({'name':'grants','configMap':{'name':'cloudforge-database-grants'}})
+            container['volumeMounts'].append({'name':'grants','mountPath':'/database-grants','readOnly':True})
+        pod = {'serviceAccountName':'cloudforge-migrator','automountServiceAccountToken':False,
+               'restartPolicy':'Never','terminationGracePeriodSeconds':30,'securityContext':copy.deepcopy(source['securityContext']),
+               'containers':[container],'volumes':volumes}
+        job = document('Job','cloudforge-'+name+'-migrate',{'backoffLimit':0,'activeDeadlineSeconds':300,
+                        'template':{'metadata':{'labels':{'cloudforge.ai/component':'database-migration'}},'spec':pod}},'batch/v1')
+        job['metadata']['annotations'] = {'argocd.argoproj.io/hook':'Sync','argocd.argoproj.io/sync-wave':str(wave-5),
+            'argocd.argoproj.io/hook-delete-policy':'HookSucceeded,BeforeHookCreation'}
+        docs.append(job)
+    for item in docs:
+        if item['kind'] in {'SecretStore','ExternalSecret','ServiceAccount','ConfigMap','NetworkPolicy'}:
+            item['metadata'].setdefault('annotations',{})['argocd.argoproj.io/sync-wave']='-10'
+        if item['kind']=='Deployment':
+            item['metadata'].setdefault('annotations',{})['argocd.argoproj.io/sync-wave']='0'
     cm = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'cloudforge-terraform', 'namespace': 'cloudforge'},
           'data': {'TERRAFORM_STATE_BUCKET': bucket, 'TERRAFORM_STATE_REGION': region,
                    'TERRAFORM_PROVISIONER_ROLE_ARN': config['provisioner_role_arn']}}
@@ -220,6 +262,7 @@ def render(config):
                 spec['policyTypes'].append(direction)
                 spec[direction.lower()] = rules
         docs.append(document('NetworkPolicy', name, spec, 'networking.k8s.io/v1'))
+    policy('database-migrations-egress', {'matchLabels': {'cloudforge.ai/component':'database-migration'}}, egress=[{'to': networks['database'], 'ports':[tcp(5432)]}])
     policy('default-deny', {}, [], [])
     dns = {'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}},
            'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}
@@ -247,6 +290,9 @@ def render(config):
         if name == 'deployment-service':
             egress += [{'to': networks['kubernetes_api'], 'ports': [tcp(443)]}]
         policy(name + '-egress', {'matchLabels': {'app': name}}, egress=egress)
+    for item in docs:
+        if item['kind'] in {'SecretStore','ExternalSecret','ServiceAccount','ConfigMap','NetworkPolicy'}:
+            item['metadata'].setdefault('annotations',{})['argocd.argoproj.io/sync-wave']='-10'
     return docs
 
 
