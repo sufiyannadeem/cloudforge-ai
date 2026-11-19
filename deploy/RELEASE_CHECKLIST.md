@@ -69,3 +69,10 @@ The local frontend image ID is `sha256:405ca951da593e1f97263288954a92cb0d713e745
 - [ ] Verify private kube-state-metrics scraping and fresh operator dashboard evidence; missing metrics must remain N/A.
 - [ ] Preserve infrastructure execution drain/reconciliation during maintenance; its automatic scale-down/eviction is blocked, but direct deletion and failures remain possible.
 - [ ] Review pinned Cluster Autoscaler chart/image, dedicated IRSA, exact tagged ASGs and upstream RBAC. Resolve Terraform desired-size ownership before activation. Record cost/quota limits and live scaling/drain evidence separately.
+
+## Batches 25–26 recovery and chaos gates
+
+- [ ] Review [disaster recovery](DISASTER_RECOVERY.md) and [bounded chaos drills](CHAOS_ENGINEERING.md). Record independently approved RTO/RPO objectives and recovery authorization; no existing-target restore is automated.
+- [ ] Retain real isolated logical/WAL restore and fault evidence, checksums, integrity comparisons and cleanup results. Verify AIOps schemas, role/grant recovery, encrypted/offsite retention and production-sized recovery separately.
+- [ ] Revoke restored sessions/keys as needed and invalidate restored execution approval before reopening mutations. Reconcile uncertain execution and obtain fresh bound plans.
+- [ ] Obtain separate acceptance for Kubernetes/GitOps/PVC reconstruction, state/secrets recovery, live alerts/SLO response and node/OOM faults. Local Docker timings are not production RTO/RPO claims.
