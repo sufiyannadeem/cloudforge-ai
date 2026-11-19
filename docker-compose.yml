@@ -21,10 +21,13 @@ services:
     build:
       context: ./services/project-service
       dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
     image: cloudforge-project-service:local
     container_name: cloudforge-project-service
     restart: unless-stopped
     environment:
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_PROJECT_KEY:?Set CLOUDFORGE_FRONTEND_PROJECT_KEY}
       APP_ENV: production
       SERVER_PORT: "8080"
       DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
@@ -49,6 +52,8 @@ services:
     build:
       context: ./services/infrastructure-service
       dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
 
     image: cloudforge-infrastructure-service:local
 
@@ -57,9 +62,9 @@ services:
     restart: unless-stopped
 
     environment:
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY:?Set CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY}
       APP_ENV: production
       SERVER_PORT: "8081"
-      CLOUDFORGE_INTERNAL_API_TOKEN: ${CLOUDFORGE_INTERNAL_API_TOKEN:?Set CLOUDFORGE_INTERNAL_API_TOKEN in .env}
 
       DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
 
@@ -69,10 +74,11 @@ services:
       TERRAFORM_BINARY: /usr/local/bin/terraform
       TERRAFORM_WORKSPACE_ROOT: /var/lib/cloudforge/terraform
 
-      # Intentionally empty for local development.
-      # Developer-created resources must not reuse the
-      # CloudForge platform Terraform state.
-      TERRAFORM_STATE_BUCKET: ""
+      # Local requests and inventory work before AWS bootstrap.
+      TERRAFORM_READ_ONLY: ${TERRAFORM_READ_ONLY:-true}
+      TERRAFORM_STATE_BUCKET: ${TERRAFORM_STATE_BUCKET:-}
+      TERRAFORM_STATE_REGION: ${TERRAFORM_STATE_REGION:-}
+      TERRAFORM_PROVISIONER_ROLE_ARN: ${TERRAFORM_PROVISIONER_ROLE_ARN:-}
 
       TERRAFORM_PLAN_TIMEOUT: "10m"
       TERRAFORM_APPLY_TIMEOUT: "30m"
@@ -81,7 +87,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_REGION: ${AWS_REGION:-eu-west-1}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       AWS_CONFIG_FILE: /home/appuser/.aws/config
@@ -114,17 +120,41 @@ services:
     build:
       context: ./services/deployment-service
       dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
     image: cloudforge-deployment-service:local
     container_name: cloudforge-deployment-service
     restart: unless-stopped
     environment:
-      APP_ENV: production
+      PROMETHEUS_URL: http://prometheus:9090
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY:?Set CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY}
+      CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
+      APP_ENV: ${APP_ENV:-development}
       SERVER_PORT: "8082"
-      CLOUDFORGE_INTERNAL_API_TOKEN: ${CLOUDFORGE_INTERNAL_API_TOKEN:?Set CLOUDFORGE_INTERNAL_API_TOKEN in .env}
       DATABASE_URL: postgres://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge?sslmode=disable
       SHUTDOWN_TIMEOUT_SECONDS: "10"
+
+      # Kubernetes & AWS EKS Execution
+      DEPLOYMENT_EXECUTOR: ${DEPLOYMENT_EXECUTOR:-simulated}
+      EKS_CLUSTER_NAME: ${EKS_CLUSTER_NAME:-}
+      KUBERNETES_NAMESPACE: ${KUBERNETES_NAMESPACE:-default}
+      KUBECONFIG: ${KUBECONFIG:-/var/lib/cloudforge/kube/config}
+      ROLLOUT_TIMEOUT_SECONDS: ${ROLLOUT_TIMEOUT_SECONDS:-120}
+
+      # AWS Credentials and Region configuration
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_PROFILE: ${AWS_PROFILE:-}
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+      AWS_CONFIG_FILE: /home/appuser/.aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /home/appuser/.aws/credentials
     ports:
       - "127.0.0.1:8082:8082"
+    volumes:
+      - ${HOME}/.aws:/home/appuser/.aws:ro
+      - deployment_kube:/var/lib/cloudforge/kube
     depends_on:
       postgres:
         condition: service_healthy
@@ -188,6 +218,8 @@ services:
     environment:
       ALERTMANAGER_SMTP_USER: ${ALERTMANAGER_SMTP_USER:-}
       ALERTMANAGER_SMTP_PASSWORD: ${ALERTMANAGER_SMTP_PASSWORD:-}
+    secrets:
+      - cloudforge_alertmanager_key
     volumes:
       - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml.tmpl:ro
       - alertmanager_data:/alertmanager
@@ -208,7 +240,9 @@ services:
       context: ./services/aiops-service
     container_name: cloudforge-aiops-service
     environment:
-      CLOUDFORGE_INTERNAL_API_TOKEN: ${CLOUDFORGE_INTERNAL_API_TOKEN:?Set CLOUDFORGE_INTERNAL_API_TOKEN in .env}
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_AIOPS_KEY:?Set CLOUDFORGE_FRONTEND_AIOPS_KEY}
+      CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
+      CLOUDFORGE_ALERTMANAGER_KEY: ${CLOUDFORGE_ALERTMANAGER_KEY:?Set CLOUDFORGE_ALERTMANAGER_KEY}
       DATABASE_URL: postgresql://cloudforge:${POSTGRES_PASSWORD}@postgres:5432/cloudforge
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_TIMEOUT_SECONDS: "5"
@@ -230,7 +264,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_REGION: ${AWS_REGION:-eu-west-1}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       AWS_CONFIG_FILE: /home/appuser/.aws/config
@@ -265,20 +299,22 @@ services:
     container_name: cloudforge-finops-service
     restart: unless-stopped
     environment:
-      CLOUDFORGE_INTERNAL_API_TOKEN: ${CLOUDFORGE_INTERNAL_API_TOKEN:?Set CLOUDFORGE_INTERNAL_API_TOKEN in .env}
+      FINOPS_AUDIT_DATABASE_URL: ${FINOPS_AUDIT_DATABASE_URL:-}
+      FINOPS_PROJECT_DATABASE_URL: ${FINOPS_PROJECT_DATABASE_URL:-}
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_FINOPS_KEY:?Set CLOUDFORGE_FRONTEND_FINOPS_KEY}
       PROMETHEUS_URL: http://prometheus:9090
       PROMETHEUS_TIMEOUT_SECONDS: "5"
 
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_PROFILE: ${AWS_PROFILE:-}
       AWS_REGION: ${AWS_REGION:-eu-west-1}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       AWS_CONFIG_FILE: /home/appuser/.aws/config
       AWS_SHARED_CREDENTIALS_FILE: /home/appuser/.aws/credentials
 
-      FINOPS_ALLOWED_ROLES: "platform-engineer,devops,sre,admin"
+      FINOPS_ALLOWED_ROLES: "platform-engineer,sre"
     volumes:
       - ${HOME}/.aws:/home/appuser/.aws:ro
     ports:
@@ -309,14 +345,15 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     environment:
+      CLOUDFORGE_FRONTEND_PROJECT_KEY: ${CLOUDFORGE_FRONTEND_PROJECT_KEY:?Set CLOUDFORGE_FRONTEND_PROJECT_KEY}
+      CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY: ${CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY:?Set CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY}
+      CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY: ${CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY:?Set CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY}
+      CLOUDFORGE_FRONTEND_AIOPS_KEY: ${CLOUDFORGE_FRONTEND_AIOPS_KEY:?Set CLOUDFORGE_FRONTEND_AIOPS_KEY}
+      CLOUDFORGE_FRONTEND_FINOPS_KEY: ${CLOUDFORGE_FRONTEND_FINOPS_KEY:?Set CLOUDFORGE_FRONTEND_FINOPS_KEY}
       NEXT_PUBLIC_APP_NAME: "CloudForge AI"
       NEXT_PUBLIC_APP_ENV: "production"
-      CLOUDFORGE_AUTH_USERNAME: ${CLOUDFORGE_AUTH_USERNAME:?Set CLOUDFORGE_AUTH_USERNAME in .env}
-      CLOUDFORGE_AUTH_PASSWORD: ${CLOUDFORGE_AUTH_PASSWORD:?Set CLOUDFORGE_AUTH_PASSWORD in .env}
       CLOUDFORGE_SESSION_SECRET: ${CLOUDFORGE_SESSION_SECRET:?Set CLOUDFORGE_SESSION_SECRET in .env}
-      CLOUDFORGE_AUTH_ROLE: ${CLOUDFORGE_AUTH_ROLE:-viewer}
       CLOUDFORGE_AUTH_COOKIE_SECURE: ${CLOUDFORGE_AUTH_COOKIE_SECURE:-false}
-      CLOUDFORGE_INTERNAL_API_TOKEN: ${CLOUDFORGE_INTERNAL_API_TOKEN:?Set CLOUDFORGE_INTERNAL_API_TOKEN in .env}
       PROJECT_SERVICE_URL: "http://project-service:8080"
       INFRASTRUCTURE_SERVICE_URL: "http://infrastructure-service:8081"
       DEPLOYMENT_SERVICE_URL: "http://deployment-service:8082"
@@ -337,3 +374,8 @@ volumes:
   grafana_data:
   alertmanager_data:
   terraform_workspaces:
+  deployment_kube:
+
+secrets:
+  cloudforge_alertmanager_key:
+    environment: CLOUDFORGE_ALERTMANAGER_KEY

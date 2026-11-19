@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
-"""Configure local CloudForge operator auth without printing generated secrets."""
+"""Configure local CloudForge authentication without printing generated secrets."""
 from __future__ import annotations
 
-import getpass
 import os
-import re
 import secrets
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT / ".env"
-USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._@-]{1,128}$")
-PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24,}$")
-VALID_ROLES = {"viewer", "devops", "sre", "platform-engineer", "admin"}
 
 
 def read_env(path: Path) -> list[str]:
@@ -50,54 +45,28 @@ def set_value(lines: list[str], key: str, value: str) -> None:
         lines.append(replacement)
 
 
-def prompt_username(current: str) -> str:
-    value = current
-    while not USERNAME_PATTERN.fullmatch(value):
-        value = input("CloudForge login username [operator]: ").strip() or "operator"
-        if not USERNAME_PATTERN.fullmatch(value):
-            print("Use 1–128 characters: letters, numbers, dot, underscore, @, or hyphen.")
-    return value
-
-
-def prompt_password(current: str) -> str:
-    if PASSWORD_PATTERN.fullmatch(current) and "replace-with" not in current.lower():
-        return current
-    while True:
-        value = getpass.getpass("CloudForge login password (24+ letters/numbers/_/-): ")
-        if PASSWORD_PATTERN.fullmatch(value) and "replace-with" not in value.lower():
-            confirmation = getpass.getpass("Confirm password: ")
-            if secrets.compare_digest(value, confirmation):
-                return value
-            print("Passwords do not match.")
-        else:
-            print("Use at least 24 characters containing only letters, numbers, underscore, or hyphen.")
-
-
 def main() -> None:
     lines = read_env(ENV_FILE)
 
-    token = get_value(lines, "CLOUDFORGE_INTERNAL_API_TOKEN")
-    if len(token) < 32 or "replace-with" in token.lower():
-        token = secrets.token_hex(32)
-    set_value(lines, "CLOUDFORGE_INTERNAL_API_TOKEN", token)
+    keys = (
+        "CLOUDFORGE_FRONTEND_PROJECT_KEY", "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY",
+        "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY", "CLOUDFORGE_FRONTEND_AIOPS_KEY",
+        "CLOUDFORGE_FRONTEND_FINOPS_KEY", "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY",
+        "CLOUDFORGE_ALERTMANAGER_KEY", "CLOUDFORGE_SESSION_SECRET",
+    )
+    used = set()
+    for key in keys:
+        value = get_value(lines, key)
+        if len(value.encode()) < 32 or "replace-with" in value.lower() or value in used:
+            value = secrets.token_hex(32)
+        used.add(value)
+        set_value(lines, key, value)
 
-    session_secret = get_value(lines, "CLOUDFORGE_SESSION_SECRET")
-    if len(session_secret) < 32 or "replace-with" in session_secret.lower() or secrets.compare_digest(session_secret, token):
-        session_secret = secrets.token_hex(32)
-    set_value(lines, "CLOUDFORGE_SESSION_SECRET", session_secret)
-
-    username = prompt_username(get_value(lines, "CLOUDFORGE_AUTH_USERNAME"))
-    password = prompt_password(get_value(lines, "CLOUDFORGE_AUTH_PASSWORD"))
-    set_value(lines, "CLOUDFORGE_AUTH_USERNAME", username)
-    set_value(lines, "CLOUDFORGE_AUTH_PASSWORD", password)
-
-    current_role = get_value(lines, "CLOUDFORGE_AUTH_ROLE").lower()
-    if current_role not in VALID_ROLES:
-        current_role = "viewer"
-    role = input(f"CloudForge role {sorted(VALID_ROLES)} [{current_role}]: ").strip().lower() or current_role
-    if role not in VALID_ROLES:
-        raise SystemExit("Invalid role. Choose viewer, devops, sre, platform-engineer, or admin.")
-    set_value(lines, "CLOUDFORGE_AUTH_ROLE", role)
+    legacy_keys = {
+        "CLOUDFORGE_AUTH_USERNAME", "CLOUDFORGE_AUTH_PASSWORD", "CLOUDFORGE_AUTH_ROLE",
+        "CLOUDFORGE_INTERNAL_API_TOKEN", "CLOUDFORGE_REMEDIATION_IDENTITY_KEY",
+    }
+    lines = [line for line in lines if line.partition("=")[0] not in legacy_keys]
 
     if not get_value(lines, "CLOUDFORGE_AUTH_COOKIE_SECURE"):
         set_value(lines, "CLOUDFORGE_AUTH_COOKIE_SECURE", "false")
@@ -116,7 +85,7 @@ def main() -> None:
             os.unlink(temporary_name)
 
     print("Local CloudForge authentication configured in .env (secrets were not printed).")
-    print(f"Configured role: {role}")
+    print("Use the project-service account bootstrap command to create the first administrator.")
     print("For local HTTP, keep CLOUDFORGE_AUTH_COOKIE_SECURE=false. Use true behind HTTPS.")
 
 

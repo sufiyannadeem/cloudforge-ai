@@ -139,12 +139,12 @@ cloudforge-ai/
 │   └── src/lib/                   # API clients and authentication helpers
 ├── infrastructure/
 │   └── terraform/
-│       ├── bootstrap/             # S3 remote state bucket and DynamoDB lock table
+│       ├── bootstrap/             # S3 remote state bucket with native S3 locking
 │       └── environments/dev/      # VPC, ECR, and core module declarations
 ├── monitoring/
 │   └── prometheus/                # Prometheus configuration and SLO burn-rate rules
 ├── scripts/
-│   └── bootstrap-local-auth.py    # Local operator credential generator
+│   └── bootstrap-local-auth.py    # Local authentication key generator
 ├── services/
 │   ├── project-service/           # Workspace & project registry (Go)
 │   ├── infrastructure-service/    # Terraform IaC generator and sandboxed runner (Go)
@@ -195,19 +195,38 @@ CLOUDFORGE_FINOPS_ROLE=platform-engineer
 > - **Local Development:** CloudForge can also read credentials automatically from `~/.aws/credentials` or short-lived session tokens (`AWS_SESSION_TOKEN`).
 > - **Production Deployments:** Never use long-lived access keys in production. Instead, utilize IAM-based workload identity via **EKS Pod Identity** or **IAM Roles for Service Accounts (IRSA)**, or the standard AWS SDK default credential chain.
 
-### 3. Bootstrap Operator Authentication
-Run the interactive authentication bootstrap helper. It generates independent session and internal service tokens without printing secrets:
+### 3. Configure Authentication
+Generate independent CSRF and per-service identity keys in `.env`:
+
 ```bash
 python3 scripts/bootstrap-local-auth.py
 ```
-- Select role `platform-engineer` for infrastructure provisioning and approval authority, or `viewer` for read-only access.
-- For local development over plain HTTP, `CLOUDFORGE_AUTH_COOKIE_SECURE=false` is set automatically. (Set to `true` behind HTTPS in production).
 
-### 4. Start the Platform
-Launch the complete microservice stack:
+### 4. Start the Platform and Bootstrap the Administrator
+
 ```bash
 docker compose up -d --build
+read -rp 'Administrator username: ' cloudforge_bootstrap_user
+read -rsp 'New password (at least 15 bytes): ' cloudforge_bootstrap_password
+printf '\n'
+printf '%s\n' "$cloudforge_bootstrap_password" |
+  docker compose exec -T project-service /app/project-service account bootstrap "$cloudforge_bootstrap_user"
+unset cloudforge_bootstrap_password cloudforge_bootstrap_user
 ```
+
+Bootstrap requires an empty account store. Use the same project-service CLI with
+`account create USER ROLE`, `account set-role USER ROLE`, `account deactivate USER`,
+`account activate USER`, or `account revoke USER`. Provisioning commands read a fresh
+password from standard input. Roles are `platform-engineer`, `sre`, and `developer`.
+Old operator credentials and cookies are retired. Explicit
+`account import-legacy USER OLD_ROLE` provisions a fresh account, retaining SRE or
+mapping other legacy roles to developer. Use HTTPS outside local loopback development.
+
+New projects belong to their signed creator. Owners manage viewer and maintainer
+access through `/projects/{id}/members`. A Platform Engineer must explicitly
+assign an owner to an unowned legacy project using `PUT /projects/{id}/owner`.
+Developer deployments use `cf-<project UUID>` namespaces. Provision those
+namespaces with project workload isolation policies before running deployments.
 
 Verify that all containers are healthy:
 ```bash

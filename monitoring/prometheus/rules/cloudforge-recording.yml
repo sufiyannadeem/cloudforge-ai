@@ -219,6 +219,7 @@ groups:
               sum by (job, service, environment) (
                 rate(http_requests_total{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   status=~"5.."
                 }[5m])
               )
@@ -226,19 +227,20 @@ groups:
               (
                 sum by (job, service, environment) (
                   rate(http_requests_total{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[5m])
                 ) * 0
               )
             )
             /
-            clamp_min(
+            (
               sum by (job, service, environment) (
                 rate(http_requests_total{
-                  job="deployment-service"
+                  job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*"
                 }[5m])
-              ),
-              0.001
+              ) > 0
             )
           )
 
@@ -258,6 +260,18 @@ groups:
               up{job="deployment-service"}[7d]
             )
           )
+          and on (job, service, environment)
+          (
+            min by (job, service, environment) (
+              count_over_time(up{job="deployment-service"}[7d])
+            ) >= 36288
+          )
+          and on (job, service, environment)
+          (
+            max by (job, service, environment) (
+              time() - timestamp(up{job="deployment-service"})
+            ) <= 45
+          )
 
       - record: cloudforge:slo_request_success:7d
         expr: |
@@ -267,6 +281,7 @@ groups:
               sum by (job, service, environment) (
                 increase(http_requests_total{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   status=~"5.."
                 }[7d])
               )
@@ -274,21 +289,31 @@ groups:
               (
                 sum by (job, service, environment) (
                   increase(http_requests_total{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[7d])
                 ) * 0
               )
             )
             /
-            clamp_min(
+            (
               sum by (job, service, environment) (
                 increase(http_requests_total{
-                  job="deployment-service"
+                  job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*"
                 }[7d])
-              ),
-              1
+              ) > 0
             )
           )
+          and on (job, service, environment)
+          (min by (job, service, environment) (count_over_time(up{job="deployment-service"}[7d])) >= 36288)
+          and on (job, service, environment)
+          (max by (job, service, environment) (time() - timestamp(up{job="deployment-service"})) <= 45)
+          and on (job, service, environment)
+          (max by (job, service, environment) (count_over_time(http_requests_total{job="deployment-service",route=~"[A-Z]+ /api/v1/.*"}[7d])) >= 36288)
+          and on (job, service, environment)
+          (max by (job, service, environment) (time() - timestamp(http_requests_total{job="deployment-service",route=~"[A-Z]+ /api/v1/.*"})) <= 45)
+
 
       - record: cloudforge:slo_latency_compliance:7d
         expr: |
@@ -296,19 +321,29 @@ groups:
             sum by (job, service, environment) (
               increase(http_request_duration_seconds_bucket{
                 job="deployment-service",
+                route=~"[A-Z]+ /api/v1/.*",
                 le="0.5"
               }[7d])
             )
           )
           /
-          clamp_min(
+          (
             sum by (job, service, environment) (
               increase(http_request_duration_seconds_count{
-                job="deployment-service"
+                job="deployment-service",
+                route=~"[A-Z]+ /api/v1/.*"
               }[7d])
-            ),
-            1
+            ) > 0
           )
+          and on (job, service, environment)
+          (min by (job, service, environment) (count_over_time(up{job="deployment-service"}[7d])) >= 36288)
+          and on (job, service, environment)
+          (max by (job, service, environment) (time() - timestamp(up{job="deployment-service"})) <= 45)
+          and on (job, service, environment)
+          (max by (job, service, environment) (count_over_time(http_request_duration_seconds_count{job="deployment-service",route=~"[A-Z]+ /api/v1/.*"}[7d])) >= 36288)
+          and on (job, service, environment)
+          (max by (job, service, environment) (time() - timestamp(http_request_duration_seconds_count{job="deployment-service",route=~"[A-Z]+ /api/v1/.*"})) <= 45)
+
 
   # ============================================================
   # SRE ERROR-BUDGET BURN-RATE RECORDING RULES
@@ -327,7 +362,6 @@ groups:
       # ----------------------------------------------------------
       # AVAILABILITY BURN
       # ----------------------------------------------------------
-
       - record: cloudforge:slo_availability_burn:5m
         expr: |
           (
@@ -339,6 +373,18 @@ groups:
             )
           )
           / 0.001
+          and on (job, service, environment)
+          (
+            min by (job, service, environment) (
+              count_over_time(up{job="deployment-service"}[5m])
+            ) >= 18
+          )
+          and on (job, service, environment)
+          (
+            max by (job, service, environment) (
+              time() - timestamp(up{job="deployment-service"})
+            ) <= 45
+          )
 
       - record: cloudforge:slo_availability_burn:30m
         expr: |
@@ -351,6 +397,18 @@ groups:
             )
           )
           / 0.001
+          and on (job, service, environment)
+          (
+            min by (job, service, environment) (
+              count_over_time(up{job="deployment-service"}[30m])
+            ) >= 108
+          )
+          and on (job, service, environment)
+          (
+            max by (job, service, environment) (
+              time() - timestamp(up{job="deployment-service"})
+            ) <= 45
+          )
 
       - record: cloudforge:slo_availability_burn:1h
         expr: |
@@ -363,6 +421,18 @@ groups:
             )
           )
           / 0.001
+          and on (job, service, environment)
+          (
+            min by (job, service, environment) (
+              count_over_time(up{job="deployment-service"}[1h])
+            ) >= 216
+          )
+          and on (job, service, environment)
+          (
+            max by (job, service, environment) (
+              time() - timestamp(up{job="deployment-service"})
+            ) <= 45
+          )
 
       - record: cloudforge:slo_availability_burn:6h
         expr: |
@@ -375,6 +445,18 @@ groups:
             )
           )
           / 0.001
+          and on (job, service, environment)
+          (
+            min by (job, service, environment) (
+              count_over_time(up{job="deployment-service"}[6h])
+            ) >= 1296
+          )
+          and on (job, service, environment)
+          (
+            max by (job, service, environment) (
+              time() - timestamp(up{job="deployment-service"})
+            ) <= 45
+          )
 
       # ----------------------------------------------------------
       # REQUEST SUCCESS BURN
@@ -399,6 +481,7 @@ groups:
                 sum by (job, service, environment) (
                   rate(http_requests_total{
                     job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*",
                     status=~"5.."
                   }[30m])
                 )
@@ -406,19 +489,20 @@ groups:
                 (
                   sum by (job, service, environment) (
                     rate(http_requests_total{
-                      job="deployment-service"
+                      job="deployment-service",
+                      route=~"[A-Z]+ /api/v1/.*"
                     }[30m])
                   ) * 0
                 )
               )
                 /
-                clamp_min(
+                (
                   sum by (job, service, environment) (
                     rate(http_requests_total{
-                      job="deployment-service"
+                      job="deployment-service",
+                      route=~"[A-Z]+ /api/v1/.*"
                     }[30m])
-                  ),
-                  0.001
+                  ) > 0
                 )
               )
             )
@@ -433,6 +517,7 @@ groups:
                 sum by (job, service, environment) (
                   rate(http_requests_total{
                     job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*",
                     status=~"5.."
                   }[1h])
                 )
@@ -440,19 +525,20 @@ groups:
                 (
                   sum by (job, service, environment) (
                     rate(http_requests_total{
-                      job="deployment-service"
+                      job="deployment-service",
+                      route=~"[A-Z]+ /api/v1/.*"
                     }[1h])
                   ) * 0
                 )
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_requests_total{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[1h])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
@@ -466,6 +552,7 @@ groups:
                 sum by (job, service, environment) (
                   rate(http_requests_total{
                     job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*",
                     status=~"5.."
                   }[6h])
                 )
@@ -473,19 +560,20 @@ groups:
                 (
                   sum by (job, service, environment) (
                     rate(http_requests_total{
-                      job="deployment-service"
+                      job="deployment-service",
+                      route=~"[A-Z]+ /api/v1/.*"
                     }[6h])
                   ) * 0
                 )
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_requests_total{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[6h])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
@@ -503,17 +591,18 @@ groups:
               sum by (job, service, environment) (
                 rate(http_request_duration_seconds_bucket{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   le="0.5"
                 }[5m])
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_request_duration_seconds_count{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[5m])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
@@ -527,17 +616,18 @@ groups:
               sum by (job, service, environment) (
                 rate(http_request_duration_seconds_bucket{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   le="0.5"
                 }[30m])
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_request_duration_seconds_count{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[30m])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
@@ -551,17 +641,18 @@ groups:
               sum by (job, service, environment) (
                 rate(http_request_duration_seconds_bucket{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   le="0.5"
                 }[1h])
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_request_duration_seconds_count{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[1h])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
@@ -575,17 +666,18 @@ groups:
               sum by (job, service, environment) (
                 rate(http_request_duration_seconds_bucket{
                   job="deployment-service",
+                  route=~"[A-Z]+ /api/v1/.*",
                   le="0.5"
                 }[6h])
               )
               /
-              clamp_min(
+              (
                 sum by (job, service, environment) (
                   rate(http_request_duration_seconds_count{
-                    job="deployment-service"
+                    job="deployment-service",
+                    route=~"[A-Z]+ /api/v1/.*"
                   }[6h])
-                ),
-                0.001
+                ) > 0
               )
             )
           )
