@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 import yaml
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -176,11 +177,16 @@ def test_ci_gate_uses_always_and_evaluates_results():
     gate_job = data["jobs"]["ci-gate"]
     assert gate_job.get("if") == "always()", "ci-gate must specify if: always()"
 
-    # Ensure python evaluation step exists
-    step_runs = [step.get("run", "") for step in gate_job.get("steps", [])]
-    assert any("python3 -c" in run and "required_jobs" in run for run in step_runs), (
-        "ci-gate must contain an explicit result evaluation step"
-    )
+    step = next(step for step in gate_job["steps"] if step.get("name") == "Gate evaluation")
+    assert "python3" in step["run"] and "required_jobs" in step["run"]
+    assert step["env"]["RESULTS"] == "${{ toJson(needs) }}"
+    assert step["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert step["env"]["COMMIT_MSG"] == "${{ github.event.head_commit.message }}"
+    assert set(gate_job["needs"]) == {
+        "security-gate-ci", "terraform-ci", "project-service-ci",
+        "infrastructure-service-ci", "deployment-service-ci",
+        "aiops-service-ci", "finops-service-ci", "frontend-ci",
+    }
 
 
 def test_ci_jobs_event_aware_guardrails():
@@ -203,21 +209,14 @@ def test_ci_jobs_event_aware_guardrails():
 
 
 def _run_gate_script(event_name: str, commit_msg: str, results: dict) -> subprocess.CompletedProcess:
-    """Helper to run the ci-gate evaluation script extracted from ci.yml with simulated inputs."""
+    """Execute the actual workflow shell step with simulated GitHub job results."""
     import json
-    import textwrap
 
-    ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-    with open(ci_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # Extract the python script from the ci-gate step textwrap block
-    marker_start = "exec(textwrap.dedent('''"
-    idx_start = content.find(marker_start)
-    assert idx_start != -1, "Python evaluation script marker not found in ci.yml"
-    idx_script = idx_start + len(marker_start)
-    idx_end = content.find("'''))\"", idx_script)
-    script = textwrap.dedent(content[idx_script:idx_end])
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    steps = [step for step in workflow["jobs"]["ci-gate"]["steps"]
+             if step.get("name") == "Gate evaluation"]
+    assert len(steps) == 1
+    script = steps[0]["run"]
 
     env = os.environ.copy()
     env["EVENT_NAME"] = event_name
@@ -225,7 +224,7 @@ def _run_gate_script(event_name: str, commit_msg: str, results: dict) -> subproc
     env["RESULTS"] = json.dumps(results)
 
     return subprocess.run(
-        ["python3", "-c", script],
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
         env=env,
         capture_output=True,
         text=True,
@@ -248,7 +247,7 @@ def test_ci_gate_all_passed():
 
     res = _run_gate_script("pull_request", "Merge feature", results)
     assert res.returncode == 0, f"Expected success, got {res.returncode}:\n{res.stderr}"
-    assert "All CloudForge AI security gates, Terraform IaC" in res.stdout
+    assert "All CloudForge AI CI checks passed!" in res.stdout
 
 
 def test_ci_gate_job_failure_detected():
@@ -269,7 +268,7 @@ def test_ci_gate_job_failure_detected():
     res = _run_gate_script("pull_request", "Test PR", results)
     assert res.returncode != 0, "Gate must fail when dependency fails"
     assert "terraform-ci (status: failure)" in res.stdout
-    assert "All CloudForge AI security gates" not in res.stdout
+    assert "All CloudForge AI CI checks passed!" not in res.stdout
 
 
 def test_ci_gate_job_cancelled_detected():
@@ -331,4 +330,23 @@ def test_ci_gate_intentional_skip_handled_cleanly():
     res = _run_gate_script("push", "docs: update notes [skip ci]", results)
     assert res.returncode == 0, "Gate should exit 0 on intentional skip"
     assert "intentionally skipped" in res.stdout
-    assert "All CloudForge AI security gates" not in res.stdout
+    assert "All CloudForge AI CI checks passed!" not in res.stdout
+
+
+@pytest.mark.parametrize("event,message,status,omit", [
+    ("pull_request", "PR [skip ci]", "skipped", False),
+    ("pull_request", "PR [ci skip]", "skipped", False),
+    ("push", "Commit [skip ci]", "failure", False),
+    ("pull_request", "Missing job result", "success", True),
+])
+def test_ci_gate_skip_markers_cannot_hide_required_checks(event, message, status, omit):
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    results = {job: {"result": "success"} for job in workflow["jobs"]["ci-gate"]["needs"]}
+    if omit:
+        del results["security-gate-ci"]
+    else:
+        results["security-gate-ci"]["result"] = status
+    response = _run_gate_script(event, message, results)
+    assert response.returncode != 0
+    assert "security-gate-ci" in response.stdout
+    assert "All CloudForge AI CI checks passed!" not in response.stdout
