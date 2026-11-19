@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  createSessionToken,
-  credentialsMatch,
+  authenticateAccount,
   CSRF_COOKIE,
-  getAuthConfig,
-  internalApiToken,
-  originMatchesRequest,
   safeNextPath,
   SESSION_COOKIE,
-  SESSION_TTL_SECONDS,
 } from "@/lib/auth";
+import { originMatchesRequest, secureAuthCookies } from "@/lib/csrf";
+import { dashboardDestination } from "@/lib/role-access";
 
 export const runtime = "nodejs";
 
@@ -18,22 +15,9 @@ const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 10;
 
 export async function POST(request: NextRequest) {
-  if (
-  !originMatchesRequest(
-    request.headers.get("origin"),
-    request.url,
-    request.headers.get("host"),
-  )
-) {
+  const origin = request.headers.get("origin");
+  if (!originMatchesRequest(origin, request.url, request.headers.get("host"))) {
     return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
-  }
-
-  const config = getAuthConfig();
-  if (!config || !internalApiToken()) {
-    return NextResponse.json(
-      { error: "Authentication is not configured. Set the required server-side CloudForge auth settings." },
-      { status: 503 },
-    );
   }
 
   const now = Date.now();
@@ -58,7 +42,20 @@ export async function POST(request: NextRequest) {
     if (Number(request.headers.get("content-length") ?? "0") > 4096) {
       return NextResponse.json({ error: "Request too large" }, { status: 413 });
     }
-    body = await request.json();
+    const reader = request.body?.getReader();
+    const buffer = new Uint8Array(4096);
+    let size = 0;
+    if (reader) {
+      for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+        if (size + chunk.value.length > buffer.length) {
+          await reader.cancel();
+          return NextResponse.json({ error: "Request too large" }, { status: 413 });
+        }
+        buffer.set(chunk.value, size);
+        size += chunk.value.length;
+      }
+    }
+    body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, size)));
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -70,26 +67,34 @@ export async function POST(request: NextRequest) {
   const username = typeof input.username === "string" ? input.username : "";
   const password = typeof input.password === "string" ? input.password : "";
 
-  if (!credentialsMatch(username, password, config)) {
-    return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
+  const result = await authenticateAccount(username, password);
+  if (!result.ok) {
+    const error = {
+      401: "Invalid username or password",
+      429: "Too many login attempts. Try again later.",
+      503: "Authentication service unavailable",
+    }[result.status];
+    return NextResponse.json({ error }, { status: result.status });
   }
 
   attempts.delete(key);
-  const { token, session } = createSessionToken(config.username, config.role, config.secret);
-  const response = NextResponse.json({ ok: true, redirectTo: safeNextPath(typeof input.next === "string" ? input.next : null) });
+  const { token, session } = result;
+  const secure = secureAuthCookies(origin);
+  const maxAge = session.exp - Math.floor(Date.now() / 1000);
+  const response = NextResponse.json({ ok: true, redirectTo: dashboardDestination(session.role, safeNextPath(typeof input.next === "string" ? input.next : null)) });
   response.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: config.cookieSecure,
+    secure,
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge,
   });
   response.cookies.set(CSRF_COOKIE, session.csrf, {
     httpOnly: false,
-    secure: config.cookieSecure,
+    secure,
     sameSite: "strict",
     path: "/",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge,
   });
   response.headers.set("Cache-Control", "no-store");
   return response;

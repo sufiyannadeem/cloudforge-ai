@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { executionModeLabel } from "@/lib/deployment-mode";
+import type { Deployment as DeploymentRecord } from "@/types/deployments";
 import { useCallback, useEffect, useState } from "react";
 
 type ActivityType = "deployment" | "incident";
@@ -10,6 +12,7 @@ interface Deployment {
   environment: string;
   image: string;
   status: string;
+  execution_mode?: DeploymentRecord["execution_mode"];
   created_at: string;
 }
 
@@ -50,6 +53,7 @@ interface ActivityItem {
 
 interface ActivityTimelineProps {
   limit?: number;
+  includeIncidents?: boolean;
 }
 
 function formatDate(value: string): string {
@@ -137,7 +141,7 @@ function createActivityItems(
     deployments.map((deployment) => ({
       id: `deployment-${deployment.id}`,
       type: "deployment",
-      title: `Deployment ${deployment.status}`,
+      title: `${executionModeLabel(deployment.execution_mode)} deployment · ${deployment.status}`,
       description: `${deployment.environment} · ${deployment.image}`,
       status: deployment.status,
       timestamp: deployment.created_at,
@@ -172,6 +176,7 @@ function createActivityItems(
 
 export default function ActivityTimeline({
   limit = 10,
+  includeIncidents = true,
 }: ActivityTimelineProps) {
   const [activities, setActivities] = useState<ActivityItem[]>(
     [],
@@ -189,9 +194,9 @@ export default function ActivityTimeline({
         fetchJson<DeploymentResponse>(
           "/api/proxy/deployment/api/v1/deployments?limit=10&offset=0",
         ),
-        fetchJson<IncidentResponse>(
+        includeIncidents ? fetchJson<IncidentResponse>(
           "/api/proxy/aiops/api/v1/incidents?limit=10&offset=0",
-        ),
+        ) : Promise.resolve<IncidentResponse>({ incidents: [] }),
       ]);
 
     const errors: string[] = [];
@@ -230,7 +235,7 @@ export default function ActivityTimeline({
     );
 
     setLoading(false);
-  }, [limit]);
+  }, [limit, includeIncidents]);
 
   useEffect(() => {
     // Initial activity loading is intentionally triggered on mount.
@@ -251,7 +256,7 @@ export default function ActivityTimeline({
           </h3>
 
           <p className="mt-1 text-sm text-[var(--cf-text-muted)]">
-            Recent deployment and incident activity across CloudForge.
+            {includeIncidents ? "Recent deployment and incident activity." : "Recent deployments in your projects."}
           </p>
         </div>
 

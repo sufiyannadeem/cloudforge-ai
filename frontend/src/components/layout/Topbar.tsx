@@ -1,6 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import ProfileMenu from "./ProfileMenu";
+import { useViewerSession } from "./ViewerSession";
 import ThemeSwitcher from "@/components/theme/ThemeSwitcher";
 
 interface TopbarProps {
@@ -10,21 +11,7 @@ interface TopbarProps {
 export default function Topbar({
   onMenuClick,
 }: TopbarProps) {
-  const router = useRouter();
-
-  async function logout() {
-    const csrfCookie = typeof document === "undefined"
-      ? ""
-      : document.cookie.split(";").map((item) => item.trim())
-          .find((item) => item.startsWith("cf_csrf="))
-          ?.slice("cf_csrf=".length) ?? "";
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      headers: { "X-CSRF-Token": decodeURIComponent(csrfCookie) },
-      cache: "no-store",
-    });
-    router.replace("/login");
-  }
+  const viewer = useViewerSession();
 
   return (
     <header
@@ -67,43 +54,7 @@ export default function Topbar({
 
       <div className="flex items-center gap-2 sm:gap-3">
         <ThemeSwitcher />
-        <button
-          type="button"
-          onClick={logout}
-          className="rounded-lg border border-[var(--cf-border)] px-3 py-2 text-xs text-[var(--cf-text-secondary)] hover:bg-[var(--cf-surface-2)]"
-        >
-          Sign out
-        </button>
-
-        <div
-          className={[
-            "hidden items-center gap-2 rounded-full border px-3 py-2",
-            "border-[var(--cf-border)]",
-            "bg-[var(--cf-surface-2)]",
-            "sm:flex",
-          ].join(" ")}
-        >
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-
-          <span className="text-xs text-[var(--cf-text-secondary)]">
-            Local environment
-          </span>
-        </div>
-
-        <button
-          type="button"
-          aria-label="User profile"
-          className={[
-            "flex h-9 w-9 items-center justify-center rounded-full",
-            "bg-indigo-600 text-sm font-semibold text-white",
-            "transition-transform hover:scale-105",
-            "focus:outline-none focus:ring-2 focus:ring-indigo-500",
-            "focus:ring-offset-2",
-            "focus:ring-offset-[var(--cf-background)]",
-          ].join(" ")}
-        >
-          NS
-        </button>
+        {viewer && <ProfileMenu viewer={viewer} />}
       </div>
     </header>
   );

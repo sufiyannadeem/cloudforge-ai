@@ -2,6 +2,7 @@ import { apiGet, apiPost } from "@/lib/api";
 import type {
   BudgetResponse,
   CostAnomalyResponse,
+  CostAnomalyCapture,
   CostAttributionResponse,
   CostHistoryResponse,
   CostTrendResponse,
@@ -91,3 +92,7 @@ export async function estimateTerraformPlanCost(
     },
   );
 }
+
+export const captureCostAnomalies = () => apiPost<CostAnomalyCapture>(proxy("/aws/anomalies/captures"));
+
+export const listCostAnomalyCaptures = () => apiGet<CostAnomalyCapture[]>(proxy("/aws/anomalies/captures"));

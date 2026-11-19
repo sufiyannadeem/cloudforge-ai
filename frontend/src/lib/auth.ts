@@ -1,146 +1,110 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
+import { serviceAssertion } from "@/lib/service-identity";
+import { serviceConfig } from "@/lib/server-config";
 
 export const SESSION_COOKIE = "cf_session";
 export const CSRF_COOKIE = "cf_csrf";
-export const SESSION_TTL_SECONDS = 8 * 60 * 60;
 
-export type CloudForgeRole =
-  | "viewer"
-  | "devops"
-  | "sre"
-  | "platform-engineer"
-  | "admin";
+export const PLATFORM_ROLES = ["platform-engineer", "sre", "developer"] as const;
+export type CloudForgeRole = (typeof PLATFORM_ROLES)[number];
 
 export interface CloudForgeSession {
   sub: string;
+  email: string | null;
   role: CloudForgeRole;
   csrf: string;
-  iat: number;
   exp: number;
 }
 
-export interface AuthConfig {
+interface AccountIdentity {
   username: string;
-  password: string;
-  secret: string;
+  email?: string | null;
   role: CloudForgeRole;
-  cookieSecure: boolean;
+  expiresAt: number;
 }
 
-const VALID_ROLES = new Set<CloudForgeRole>([
-  "viewer",
-  "devops",
-  "sre",
-  "platform-engineer",
-  "admin",
-]);
-
-export function getAuthConfig(): AuthConfig | null {
-  const username = process.env.CLOUDFORGE_AUTH_USERNAME?.trim() ?? "";
-  const password = process.env.CLOUDFORGE_AUTH_PASSWORD ?? "";
+function csrfSecret(): string | null {
   const secret = process.env.CLOUDFORGE_SESSION_SECRET ?? "";
-  const configuredRole = (process.env.CLOUDFORGE_AUTH_ROLE ?? "viewer")
-    .trim()
-    .toLowerCase() as CloudForgeRole;
+  return Buffer.byteLength(secret) >= 32 && !secret.toLowerCase().includes("replace-with") ? secret : null;
+}
 
-  if (
-    !username ||
-    !password ||
-    Buffer.byteLength(secret, "utf8") < 32 ||
-    secret.toLowerCase().includes("replace-with") ||
-    password.toLowerCase().includes("replace-with") ||
-    !VALID_ROLES.has(configuredRole)
-  ) {
+function sessionFromIdentity(identity: AccountIdentity, csrf: string): CloudForgeSession | null {
+  if (typeof identity.username !== "string" || !identity.username || !PLATFORM_ROLES.includes(identity.role) ||
+      !Number.isSafeInteger(identity.expiresAt) || identity.expiresAt <= Math.floor(Date.now() / 1000)) {
     return null;
   }
-
   return {
-    username,
-    password,
-    secret,
-    role: configuredRole,
-    cookieSecure: process.env.CLOUDFORGE_AUTH_COOKIE_SECURE !== "false",
+    sub: identity.username,
+    email: typeof identity.email === "string" ? identity.email : null,
+    role: identity.role,
+    exp: identity.expiresAt,
+    csrf,
   };
 }
 
-function sign(value: string, secret: string): string {
-  return createHmac("sha256", secret).update(value).digest("base64url");
+function validToken(token: unknown): token is string {
+  return typeof token === "string" && /^[A-Za-z0-9_-]{43}$/.test(token);
 }
 
-function constantTimeEqual(left: string, right: string): boolean {
-  const leftDigest = createHmac("sha256", "cloudforge-compare-v1")
-    .update(left)
-    .digest();
-  const rightDigest = createHmac("sha256", "cloudforge-compare-v1")
-    .update(right)
-    .digest();
-  return timingSafeEqual(leftDigest, rightDigest) && left.length === right.length;
+export function sessionCSRF(token: string | undefined): string | null {
+  const secret = csrfSecret();
+  return validToken(token) && secret
+    ? createHmac("sha256", secret).update("csrf-v2:").update(token).digest("base64url")
+    : null;
 }
 
-export function credentialsMatch(
-  username: string,
-  password: string,
-  config: AuthConfig,
-): boolean {
-  return (
-    constantTimeEqual(username, config.username) &&
-    constantTimeEqual(password, config.password)
-  );
+async function accountRequest(operation: "login" | "session" | "logout", token?: string, body?: string) {
+  const url = new URL(`${serviceConfig.project.replace(/\/$/, "")}/internal/auth/${operation}`);
+  const headers = new Headers({ "X-CloudForge-Identity": serviceAssertion("project", url, "POST") });
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (body) headers.set("Content-Type", "application/json");
+
+  return fetch(url, {
+    method: "POST",
+    headers,
+    body,
+    cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.timeout(5000),
+  });
 }
 
-export function createSessionToken(
-  username: string,
-  role: CloudForgeRole,
-  secret: string,
-): { token: string; session: CloudForgeSession } {
-  const now = Math.floor(Date.now() / 1000);
-  const session: CloudForgeSession = {
-    sub: username,
-    role,
-    csrf: randomBytes(32).toString("base64url"),
-    iat: now,
-    exp: now + SESSION_TTL_SECONDS,
-  };
-  const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
-  return { token: `${payload}.${sign(payload, secret)}`, session };
-}
+type LoginResult =
+  | { ok: true; token: string; session: CloudForgeSession }
+  | { ok: false; status: 401 | 429 | 503 };
 
-export function verifySessionToken(
-  token: string | undefined,
-  secret = process.env.CLOUDFORGE_SESSION_SECRET ?? "",
-): CloudForgeSession | null {
-  if (!token || Buffer.byteLength(secret, "utf8") < 32) return null;
-
-  const separator = token.lastIndexOf(".");
-  if (separator <= 0) return null;
-
-  const payload = token.slice(0, separator);
-  const suppliedSignature = token.slice(separator + 1);
-  const expectedSignature = sign(payload, secret);
-  if (!constantTimeEqual(suppliedSignature, expectedSignature)) return null;
-
+export async function authenticateAccount(username: string, password: string): Promise<LoginResult> {
+  if (!csrfSecret()) return { ok: false, status: 503 };
   try {
-    const session = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as Partial<CloudForgeSession>;
-    const now = Math.floor(Date.now() / 1000);
-    if (
-      typeof session.sub !== "string" ||
-      !session.sub ||
-      typeof session.role !== "string" ||
-      !VALID_ROLES.has(session.role as CloudForgeRole) ||
-      typeof session.csrf !== "string" ||
-      session.csrf.length < 32 ||
-      typeof session.exp !== "number" ||
-      session.exp <= now ||
-      typeof session.iat !== "number" ||
-      session.iat > now + 60
-    ) {
-      return null;
-    }
-    return session as CloudForgeSession;
+    const response = await accountRequest("login", undefined, JSON.stringify({ username, password }));
+    if (response.status === 401 || response.status === 429) return { ok: false, status: response.status };
+    if (!response.ok) return { ok: false, status: 503 };
+    const login = await response.json() as AccountIdentity & { token: string };
+    const csrf = sessionCSRF(login.token);
+    const session = csrf && sessionFromIdentity(login, csrf);
+    return session ? { ok: true, token: login.token, session } : { ok: false, status: 503 };
+  } catch {
+    return { ok: false, status: 503 };
+  }
+}
+
+export async function verifySessionToken(token: string | undefined): Promise<CloudForgeSession | null> {
+  const csrf = sessionCSRF(token);
+  if (!csrf) return null;
+  try {
+    const response = await accountRequest("session", token);
+    return response.ok ? sessionFromIdentity(await response.json() as AccountIdentity, csrf) : null;
   } catch {
     return null;
+  }
+}
+
+export async function revokeSession(token: string | undefined): Promise<boolean> {
+  if (!validToken(token)) return false;
+  try {
+    return (await accountRequest("logout", token)).status === 204;
+  } catch {
+    return false;
   }
 }
 
@@ -149,42 +113,4 @@ export function safeNextPath(value: string | null | undefined): string {
     return "/dashboard";
   }
   return value;
-}
-
-export function originMatchesRequest(
-  origin: string | null,
-  requestUrl: string,
-  hostHeader?: string | null,
-): boolean {
-  if (!origin || !hostHeader) return false;
-
-  try {
-    const suppliedOrigin = new URL(origin);
-    const request = new URL(requestUrl);
-
-    if (
-      suppliedOrigin.username ||
-      suppliedOrigin.password ||
-      suppliedOrigin.pathname !== "/" ||
-      suppliedOrigin.search ||
-      suppliedOrigin.hash
-    ) {
-      return false;
-    }
-
-    const expectedOrigin = new URL(
-      `${request.protocol}//${hostHeader}`,
-    );
-
-    return suppliedOrigin.origin === expectedOrigin.origin;
-  } catch {
-    return false;
-  }
-}
-
-export function internalApiToken(): string | null {
-  const token = process.env.CLOUDFORGE_INTERNAL_API_TOKEN ?? "";
-  return Buffer.byteLength(token, "utf8") >= 32 && !token.toLowerCase().includes("replace-with")
-    ? token
-    : null;
 }

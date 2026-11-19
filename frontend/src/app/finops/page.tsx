@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 
 import Link from "next/link";
 
+import { useViewerSession } from "@/components/layout/ViewerSession";
 import AppShell from "@/components/layout/AppShell";
+import CostCaptureHistory from "@/components/finops/CostCaptureHistory";
 import {
   getBudgets,
   getCostAnomalies,
@@ -55,6 +57,9 @@ const EMPTY_ANOMALIES: CostAnomalyResponse = {
   start_date: "",
   end_date: "",
   threshold: 2.5,
+  sample_count: 0,
+  estimated_sample_count: 0,
+  sufficient_data: false,
   anomalies: [],
 };
 
@@ -76,218 +81,6 @@ const EMPTY_OPTIMIZATION: OptimizationReport = {
   findings: [],
   total_potential_monthly_savings_usd: 0,
   finding_count: 0,
-};
-
-const DEMO_ANOMALIES: CostAnomalyResponse = {
-  start_date: "2026-09-10",
-  end_date: "2026-10-10",
-  threshold: 2.5,
-  anomalies: [
-    {
-      date: "2026-09-22",
-      amount: 28.4,
-      expected_amount: 11.2,
-      deviation: 17.2,
-      score: 4.1,
-    },
-    {
-      date: "2026-10-03",
-      amount: 24.7,
-      expected_amount: 12.1,
-      deviation: 12.6,
-      score: 3.2,
-    },
-    {
-      date: "2026-10-08",
-      amount: 19.9,
-      expected_amount: 11.5,
-      deviation: 8.4,
-      score: 2.7,
-    },
-  ],
-};
-
-const DEMO_HISTORY: CostHistoryResponse = {
-  start_date: "2026-09-10",
-  end_date: "2026-10-10",
-  total_cost: 348.6,
-  average_daily_cost: 11.62,
-  points: [
-    { date: "2026-09-10", amount: 11.2, currency: "USD" },
-    { date: "2026-09-20", amount: 11.6, currency: "USD" },
-    { date: "2026-10-01", amount: 12.1, currency: "USD" },
-    { date: "2026-10-10", amount: 11.5, currency: "USD" },
-  ],
-};
-
-const DEMO_TREND: CostTrendResponse = {
-  start_date: "2026-09-10",
-  end_date: "2026-10-10",
-  comparison_start_date: "2026-08-10",
-  comparison_end_date: "2026-09-10",
-  current_cost: 348.6,
-  previous_cost: 363.88,
-  change_amount: -15.28,
-  change_percent: -4.2,
-  trend: "improving",
-  currency: "USD",
-};
-
-const DEMO_ATTRIBUTION: CostAttributionResponse = {
-  start_date: "2026-09-10",
-  end_date: "2026-10-10",
-  dimension: "service",
-  total_cost: 348.6,
-  entries: [
-    { dimension: "service", value: "Amazon EC2 (Compute)", amount: 150.0, currency: "USD" },
-    { dimension: "service", value: "Amazon EKS (Kubernetes)", amount: 73.0, currency: "USD" },
-    { dimension: "service", value: "Amazon RDS (PostgreSQL)", amount: 55.5, currency: "USD" },
-    { dimension: "service", value: "Elastic Load Balancing (ALB)", amount: 45.0, currency: "USD" },
-    { dimension: "service", value: "Amazon S3 (Storage)", amount: 18.1, currency: "USD" },
-    { dimension: "service", value: "Amazon VPC & Networking", amount: 7.0, currency: "USD" },
-  ],
-};
-
-const DEMO_BUDGETS: BudgetResponse = {
-  account_id: "123456789012",
-  budgets: [
-    {
-      name: "CloudForge-Monthly-Platform-Budget",
-      budget_type: "COST",
-      time_unit: "MONTHLY",
-      limit: 400.0,
-      actual_spend: 348.6,
-      forecasted_spend: 376.8,
-      actual_utilization_percent: 87.15,
-      forecast_utilization_percent: 94.2,
-      currency: "USD",
-      status: "OK",
-      cost_filters: {},
-    },
-  ],
-};
-
-const DEMO_OPTIMIZATION: OptimizationReport = {
-  generated_by: "cloudforge-finops-v2b",
-  findings: [
-    {
-      domain: "ec2",
-      resource_id: "i-0abcdef1234567890 (t3.large)",
-      severity: "warning",
-      metric: "cpu_utilization",
-      observed_value: 8.0,
-      recommended_value: 40.0,
-      potential_monthly_savings_usd: 35.0,
-      reason: "EC2 instance t3.large CPU utilization is consistently low (8.0%).",
-      recommendation: "Downsize instance from t3.large ($75.00/mo) to t3.medium ($40.00/mo). Potential saving: $35.00/month.",
-      action: "HUMAN_APPROVAL_REQUIRED",
-      evidence: {
-        instance_type: "t3.large",
-        cpu_utilization: "8.0%",
-        current_monthly_cost: "$75.00/mo",
-        target_instance: "t3.medium",
-        target_monthly_cost: "$40.00/mo",
-      },
-      savings: {
-        monthly_usd: 35.0,
-        confidence: "high",
-        calculation: "$75.00/month (t3.large) - $40.00/month (t3.medium)",
-        evidence_available: true,
-        assumptions: [
-          "Current instance t3.large cost: $75.00/month.",
-          "Target instance t3.medium cost: $40.00/month.",
-          "Workload memory and peak CPU allow t3.medium footprint.",
-        ],
-      },
-    },
-    {
-      domain: "kubernetes",
-      resource_id: "cloudforge-dev/api-service",
-      severity: "warning",
-      metric: "cpu_request_vs_usage",
-      observed_value: 8.0,
-      recommended_value: 1.25,
-      potential_monthly_savings_usd: 17.5,
-      reason: "CPU request is substantially higher than observed CPU usage (2.0 cores requested vs 0.25 cores used).",
-      recommendation: "Review CPU requests using representative peak/p95 workload data before reducing them. Potential saving: $17.50/month.",
-      action: "HUMAN_APPROVAL_REQUIRED",
-      evidence: {
-        cpu_request_cores: 2.0,
-        cpu_usage_cores: 0.25,
-        replicas: 2,
-      },
-      savings: {
-        monthly_usd: 17.5,
-        confidence: "high",
-        calculation: "(2.0 requested - 0.25 used) x $10.00/core/mo",
-        evidence_available: true,
-        assumptions: ["Recommended CPU request uses 1.25x observed usage."],
-      },
-    },
-    {
-      domain: "rds",
-      resource_id: "db-cloudforge-prod (db.r5.xlarge)",
-      severity: "warning",
-      metric: "cpu_percent",
-      observed_value: 12.4,
-      recommended_value: 30.0,
-      potential_monthly_savings_usd: 0.0,
-      reason: "RDS CPU utilization is consistently low (12.4%) according to observed metrics.",
-      recommendation: "Review instance class db.r5.xlarge and workload peak requirements before considering rightsizing.",
-      action: "HUMAN_APPROVAL_REQUIRED",
-      evidence: {
-        instance_class: "db.r5.xlarge",
-        cpu_percent: 12.4,
-        monthly_cost_usd: 55.5,
-      },
-      savings: {
-        monthly_usd: 0.0,
-        confidence: "unknown",
-        calculation: "Savings not estimated: explicit target class pricing evidence required.",
-        evidence_available: false,
-        assumptions: ["Review required by DevOps/Platform engineer."],
-      },
-    },
-    {
-      domain: "s3",
-      resource_id: "cloudforge-app-bucket",
-      severity: "info",
-      metric: "object_count",
-      observed_value: 142000,
-      recommended_value: 100000,
-      potential_monthly_savings_usd: 0.0,
-      reason: "S3 bucket contains 142,000 objects without active lifecycle transition rules.",
-      recommendation: "Review object age distribution and configure lifecycle transitions to S3 Standard-IA / Glacier.",
-      action: "HUMAN_APPROVAL_REQUIRED",
-      evidence: {
-        object_count: 142000,
-        storage_bytes: 42949672960,
-      },
-      savings: {
-        monthly_usd: 0.0,
-        confidence: "unknown",
-        calculation: "Savings dependent on storage tier transition selection.",
-        evidence_available: false,
-        assumptions: ["S3 Standard to Standard-IA saves up to 40% per GB."],
-      },
-    },
-  ],
-  total_potential_monthly_savings_usd: 52.5,
-  finding_count: 4,
-};
-
-const DEMO_REPORT: FinOpsReport = {
-  region: "eu-west-1",
-  account_id: "123456789012",
-  resources: [
-    { resource_id: "vpc-0a1b2c3d", resource_type: "VPC", service: "VPC", estimated_monthly_cost: 0.0, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "i-0abcdef1234567890", resource_type: "EC2", service: "EC2", estimated_monthly_cost: 75.0, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "i-0987654321fedcba", resource_type: "EC2", service: "EC2", estimated_monthly_cost: 10.4, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "db-cloudforge-prod", resource_type: "RDS", service: "RDS", estimated_monthly_cost: 55.5, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "cloudforge-cluster", resource_type: "EKS", service: "EKS", estimated_monthly_cost: 73.0, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "app-alb", resource_type: "Load Balancer", service: "ELB", estimated_monthly_cost: 22.5, idle: false, tags: {}, region: "eu-west-1" },
-    { resource_id: "cloudforge-app-bucket", resource_type: "S3", service: "S3", estimated_monthly_cost: 18.1, idle: false, tags: {}, region: "eu-west-1" },
-  ],
 };
 
 const PRESET_EC2 = {
@@ -433,6 +226,7 @@ function Card({
 }
 
 export default function FinOpsPage() {
+  const operator = useViewerSession()?.role === "platform-engineer";
   const [report, setReport] = useState<FinOpsReport | null>(null);
   const [history, setHistory] =
     useState<CostHistoryResponse>(EMPTY_HISTORY);
@@ -484,7 +278,7 @@ export default function FinOpsPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [hasAWSData, setHasAWSData] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -517,52 +311,16 @@ export default function FinOpsPage() {
       (historyResult.status === "fulfilled" && historyResult.value.points.length > 0) ||
       (reportResult.status === "fulfilled" && (reportResult.value.resources?.length ?? 0) > 0);
 
-    if (liveAvailable) {
-      if (reportResult.status === "fulfilled") setReport(reportResult.value);
-      if (historyResult.status === "fulfilled") setHistory(historyResult.value);
-      if (trendResult.status === "fulfilled") setTrend(trendResult.value);
-      if (anomalyResult.status === "fulfilled") setAnomalies(anomalyResult.value);
-      if (attributionResult.status === "fulfilled") setAttribution(attributionResult.value);
-      if (budgetsResult.status === "fulfilled") setBudgets(budgetsResult.value);
-      if (optimizationResult.status === "fulfilled") setOptimization(optimizationResult.value);
-      setIsDemoMode(false);
-      setError(null);
-    } else {
-      // Graceful demo mode fallback: Display full platform telemetry across 6 core AWS resources
-      setReport(reportResult.status === "fulfilled" ? reportResult.value : DEMO_REPORT);
-      setHistory(
-        historyResult.status === "fulfilled" && historyResult.value.total_cost > 0
-          ? historyResult.value
-          : DEMO_HISTORY,
-      );
-      setTrend(
-        trendResult.status === "fulfilled" && trendResult.value.current_cost > 0
-          ? trendResult.value
-          : DEMO_TREND,
-      );
-      setAnomalies(
-        anomalyResult.status === "fulfilled" && anomalyResult.value.anomalies.length > 0
-          ? anomalyResult.value
-          : DEMO_ANOMALIES,
-      );
-      setAttribution(
-        attributionResult.status === "fulfilled" && attributionResult.value.entries.length > 0
-          ? attributionResult.value
-          : DEMO_ATTRIBUTION,
-      );
-      setBudgets(
-        budgetsResult.status === "fulfilled" && budgetsResult.value.budgets.length > 0
-          ? budgetsResult.value
-          : DEMO_BUDGETS,
-      );
-      setOptimization(
-        optimizationResult.status === "fulfilled" && optimizationResult.value.findings.length > 0
-          ? optimizationResult.value
-          : DEMO_OPTIMIZATION,
-      );
-      setIsDemoMode(true);
-      setError(null);
-    }
+    setReport(reportResult.status === "fulfilled" ? reportResult.value : null);
+    setHistory(historyResult.status === "fulfilled" ? historyResult.value : EMPTY_HISTORY);
+    setTrend(trendResult.status === "fulfilled" ? trendResult.value : EMPTY_TREND);
+    setAnomalies(anomalyResult.status === "fulfilled" ? anomalyResult.value : EMPTY_ANOMALIES);
+    setAttribution(attributionResult.status === "fulfilled" ? attributionResult.value : EMPTY_ATTRIBUTION);
+    setBudgets(budgetsResult.status === "fulfilled" ? budgetsResult.value : EMPTY_BUDGETS);
+    setOptimization(optimizationResult.status === "fulfilled" ? optimizationResult.value : EMPTY_OPTIMIZATION);
+    setHasAWSData(liveAvailable);
+    setError(!liveAvailable ? "Verified AWS cost data is unavailable." :
+      results.some((result) => result.status === "rejected") ? "Some cost and optimization sources are unavailable." : null);
 
     setLastUpdated(new Date().toLocaleTimeString());
     setLoading(false);
@@ -667,17 +425,17 @@ export default function FinOpsPage() {
           <div className="flex items-center gap-2">
             <span
               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                isDemoMode
+                !hasAWSData
                   ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
                   : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
               }`}
             >
               <span
                 className={`h-2 w-2 rounded-full ${
-                  isDemoMode ? "bg-amber-500" : "bg-emerald-500"
+                  !hasAWSData ? "bg-amber-500" : "bg-emerald-500"
                 }`}
               />
-              {isDemoMode ? "Demo Mode (Simulated AWS)" : `Live AWS · ${report?.account_id ?? "Connected"}`}
+              {hasAWSData ? `AWS data${report?.account_id ? ` · ${report.account_id}` : ""}` : "AWS data unavailable"}
             </span>
 
             <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] px-3 py-2 text-xs text-[var(--cf-text-muted)]">
@@ -688,28 +446,7 @@ export default function FinOpsPage() {
           </div>
         </header>
 
-        {isDemoMode && (
-          <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
-              <div>
-                <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">
-                  Demo Mode Active · AWS Telemetry Preview
-                </p>
-                <p className="mt-0.5 text-xs text-indigo-600 dark:text-indigo-200">
-                  Live AWS credentials are not connected. Showing simulated FinOps telemetry across the 6 core resources (VPC, EC2, RDS, S3, EKS, ALB).
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="self-start sm:self-auto rounded-lg border border-indigo-500/30 bg-indigo-500/20 px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-500/30 dark:text-indigo-200"
-            >
-              Test Live AWS
-            </button>
-          </section>
-        )}
+
 
         <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
@@ -769,13 +506,13 @@ export default function FinOpsPage() {
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Card
             title="Current period cost"
-            value={money(history.total_cost)}
+            value={history.points.length > 0 ? money(history.total_cost, history.points[0].currency) : "Unavailable"}
             description="AWS Cost Explorer total for the selected period."
           />
 
           <Card
             title="Daily average"
-            value={money(history.average_daily_cost)}
+            value={history.points.length > 0 ? money(history.average_daily_cost, history.points[0].currency) : "Unavailable"}
             description="Average AWS cost per day."
           />
 
@@ -787,13 +524,12 @@ export default function FinOpsPage() {
 
           <Card
             title="Potential monthly savings"
-            value={money(
-              optimization.total_potential_monthly_savings_usd,
-            )}
+            value={optimization.findings.length ? money(optimization.total_potential_monthly_savings_usd) : "Unavailable"}
             description="Evidence-based EC2 & Kubernetes optimization estimate."
           />
         </section>
 
+        {hasAWSData && <>
         {/* ── Historical Cost Trend with SVG Sparkline ───────────────── */}
         <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -856,17 +592,17 @@ export default function FinOpsPage() {
           <div className="mt-4 grid grid-cols-3 gap-3">
             <Card
               title="Current period"
-              value={money(trend.current_cost)}
+              value={trend.start_date && trend.trend !== "insufficient-data" ? money(trend.current_cost) : "Unavailable"}
               description="Selected window"
             />
             <Card
               title="Previous period"
-              value={money(trend.previous_cost)}
+              value={trend.start_date && trend.trend !== "insufficient-data" ? money(trend.previous_cost) : "Unavailable"}
               description="Prior equivalent window"
             />
             <Card
               title="Change"
-              value={`${trend.change_amount >= 0 ? "+" : ""}${money(trend.change_amount)}`}
+              value={trend.start_date && trend.trend !== "insufficient-data" ? `${trend.change_amount >= 0 ? "+" : ""}${money(trend.change_amount)}` : "Unavailable"}
               description={`${percent(trend.change_percent)} period-over-period`}
             />
           </div>
@@ -876,25 +612,29 @@ export default function FinOpsPage() {
         <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold">Cost anomaly detection</h2>
+              <h2 className="text-xl font-semibold">Cloud Cost Detective</h2>
               <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
-                Statistical deviations beyond {anomalies.threshold}σ from expected daily spend.
+                Cost Explorer daily samples: {anomalies.sample_count ?? 0} · Estimated samples: {anomalies.estimated_sample_count ?? 0}.
               </p>
             </div>
             <span
               className={`rounded-full px-3 py-1 text-xs font-bold ${
-                (anomalies.anomalies ?? []).length === 0
+                !anomalies.sufficient_data
+                  ? "bg-amber-500/10 text-amber-700"
+                  : (anomalies.anomalies ?? []).length === 0
                   ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                   : "bg-rose-500/10 text-rose-700 dark:text-rose-300"
               }`}
             >
-              {(anomalies.anomalies ?? []).length === 0
+              {!anomalies.sufficient_data ? "Insufficient data" : (anomalies.anomalies ?? []).length === 0
                 ? "No anomalies"
                 : `${(anomalies.anomalies ?? []).length} anomalies detected`}
             </span>
           </div>
 
-          {(anomalies.anomalies ?? []).length === 0 ? (
+          {!anomalies.sufficient_data ? (
+            <p className="mt-4 text-sm text-[var(--cf-text-muted)]">Anomaly detection needs at least eight valid daily samples in one currency.</p>
+          ) : (anomalies.anomalies ?? []).length === 0 ? (
             <div className="mt-5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
               ✓ No cost anomalies detected in the selected period. Spend is within expected statistical bounds.
             </div>
@@ -902,13 +642,13 @@ export default function FinOpsPage() {
             <div className="mt-4 space-y-3">
               {(anomalies.anomalies ?? []).map((anomaly, idx) => {
                 const severity =
-                  anomaly.score >= 4
+                  anomaly.severity === "critical"
                     ? { label: "Critical", cls: "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/30" }
-                    : anomaly.score >= 3
+                    : anomaly.severity === "warning"
                     ? { label: "High", cls: "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30" }
                     : { label: "Medium", cls: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30" };
-                const pct = anomaly.expected_amount > 0
-                  ? ((anomaly.amount / anomaly.expected_amount - 1) * 100).toFixed(0)
+                const pct = anomaly.baseline_mean > 0
+                  ? ((anomaly.amount / anomaly.baseline_mean - 1) * 100).toFixed(0)
                   : "—";
                 return (
                   <div
@@ -922,17 +662,17 @@ export default function FinOpsPage() {
                             {severity.label}
                           </span>
                           <span className="text-sm font-semibold">{anomaly.date}</span>
-                          <span className="text-xs opacity-70">Score: {anomaly.score.toFixed(1)}σ</span>
+                          <span className="text-xs opacity-70">{anomaly.z_score === null ? "Flat baseline" : `Score: ${anomaly.z_score.toFixed(1)}σ`}</span>
                         </div>
                         <p className="text-sm">
                           Daily spend{" "}
-                          <strong>{money(anomaly.amount)}</strong> was{" "}
+                          <strong>{money(anomaly.amount, anomaly.currency)}</strong>{anomaly.estimated === true ? " (estimated)" : ""} was{" "}
                           <strong>+{pct}%</strong> above expected{" "}
-                          <strong>{money(anomaly.expected_amount)}</strong>.
+                          <strong>{money(anomaly.baseline_mean, anomaly.currency)}</strong>.
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className="text-base font-bold">+{money(anomaly.deviation)}</p>
+                        <p className="text-base font-bold">+{money(anomaly.amount - anomaly.baseline_mean, anomaly.currency)}</p>
                         <p className="text-xs opacity-70">over expected</p>
                       </div>
                     </div>
@@ -941,6 +681,7 @@ export default function FinOpsPage() {
               })}
             </div>
           )}
+          <CostCaptureHistory />
         </section>
 
 
@@ -957,7 +698,7 @@ export default function FinOpsPage() {
             <div className="mt-5 grid grid-cols-2 gap-4">
               <Card
                 title="Resources"
-                value={String(report?.resources?.length ?? 0)}
+                value={report ? String(report.resources.length) : "Unavailable"}
                 description="Resources returned by the AWS collector."
               />
 
@@ -966,6 +707,20 @@ export default function FinOpsPage() {
                 value={report?.region ?? "N/A"}
                 description="AWS region represented by the report."
               />
+            </div>
+
+            <div className="mt-4 rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-3 text-xs text-[var(--cf-text-secondary)]">
+              <p className="font-semibold text-[var(--cf-text)]">
+                Telemetry & Cost Sources:
+              </p>
+              <ul className="mt-1 list-inside list-disc space-y-0.5">
+                <li>Cost Explorer: Service-level actual costs & tag allocations</li>
+                <li>Tagging API: Resource inventory and environment tags</li>
+                <li>CloudWatch/Prometheus: Real observed utilization telemetry</li>
+              </ul>
+              <p className="mt-2 text-[11px] text-[var(--cf-text-muted)]">
+                Resource-level costs are marked unavailable unless explicit rate cards or Cost Explorer resource-level opt-in is active.
+              </p>
             </div>
           </article>
 
@@ -1019,7 +774,7 @@ export default function FinOpsPage() {
             <div>
               <h2 className="text-xl font-semibold">Cost attribution</h2>
               <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
-                AWS spend breakdown by service · Total: {money(attribution.total_cost)}
+                AWS spend breakdown by service · Total: {attribution.available === false || !attribution.entries?.length ? "Unavailable" : money(attribution.total_cost)}
               </p>
             </div>
             <span className="self-start rounded-full border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-1 text-xs text-[var(--cf-text-muted)]">
@@ -1027,7 +782,11 @@ export default function FinOpsPage() {
             </span>
           </div>
 
-          {(attribution.entries ?? []).length === 0 ? (
+          {attribution.available === false ? (
+            <div className="mt-5 rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-300">
+              {attribution.status_message || "Resource-level cost attribution is unavailable for this AWS account. Cost Explorer Hourly and Resource-Level Data is not enabled."}
+            </div>
+          ) : (attribution.entries ?? []).length === 0 ? (
             <p className="mt-5 text-sm text-[var(--cf-text-muted)]">No attribution data returned.</p>
           ) : (() => {
             const entries = (attribution.entries ?? []).slice(0, 10);
@@ -1158,7 +917,7 @@ export default function FinOpsPage() {
                         <span className="mt-1 inline-block rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-600 dark:text-amber-300">
                           {recommendation.action}
                         </span>
-                        {(() => {
+                        {operator && (() => {
                           // Closed loop: Monitor → Detect → Recommend → Provision/Modify.
                           // This only opens a pre-filled request; AWS is changed solely
                           // by a reviewed, hashed, human-approved Terraform plan.
@@ -1191,6 +950,9 @@ export default function FinOpsPage() {
           </div>
         </section>
 
+        </>}
+
+        {operator && (
         <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5 shadow-sm">
           <div className="flex flex-col justify-between gap-3 md:flex-row md:items-start">
             <div>
@@ -1503,6 +1265,7 @@ export default function FinOpsPage() {
             </div>
           )}
         </section>
+        )}
 
         <div className="flex justify-end">
           <button

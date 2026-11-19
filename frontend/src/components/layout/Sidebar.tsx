@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { navigationGroups } from "./navigation";
+import { navigationFor } from "@/lib/role-access";
+import { useViewerSession } from "./ViewerSession";
 
 interface SidebarProps {
   open: boolean;
@@ -15,6 +16,8 @@ export default function Sidebar({
   onClose,
 }: SidebarProps) {
   const pathname = usePathname();
+  const viewer = useViewerSession();
+  const navigationGroups = viewer ? navigationFor(viewer.role) : [];
 
   return (
     <>
@@ -76,7 +79,7 @@ export default function Sidebar({
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-6">
-          <nav className="space-y-7">
+          <nav aria-label="Role navigation" className="space-y-7">
             {navigationGroups.map((group) => (
               <div key={group.label}>
                 <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-muted)]">

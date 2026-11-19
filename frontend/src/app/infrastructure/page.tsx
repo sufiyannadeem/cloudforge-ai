@@ -7,9 +7,14 @@ import {
   useState,
 } from "react";
 
+import { useViewerSession } from "@/components/layout/ViewerSession";
+import { canExecuteTerraform, canWriteProject } from "@/lib/role-access";
 import AppShell from "@/components/layout/AppShell";
-import ApplyApprovalModal from "@/components/infrastructure/ApplyApprovalModal";
+import ApplyApprovalModal, { type ReviewAction } from "@/components/infrastructure/ApplyApprovalModal";
 import DestroyApprovalModal from "@/components/infrastructure/DestroyApprovalModal";
+import DriftHistory from "@/components/infrastructure/DriftHistory";
+import InfrastructureFields from "@/components/infrastructure/InfrastructureFields";
+import { defaultInfrastructureValues, infrastructureConfiguration } from "@/lib/infrastructure-form";
 import Link from "next/link";
 import type {
   InfrastructureFormData,
@@ -38,81 +43,6 @@ function csrfHeaders(): Record<string, string> {
   return { "X-CSRF-Token": decodeURIComponent(item.slice("cf_csrf=".length)) };
 }
 
-const DEFAULT_CONFIGS: Record<string, string> = {
-  aws_vpc: JSON.stringify(
-    {
-      cidr_block: "10.0.0.0/16",
-      enable_dns_hostnames: true,
-      enable_dns_support: true,
-    },
-    null,
-    2
-  ),
-  aws_ec2: JSON.stringify(
-    {
-      instance_type: "t3.micro",
-      ami_id: "ami-0c55b159cbfafe1f0",
-      associate_public_ip_address: true,
-    },
-    null,
-    2
-  ),
-  aws_s3: JSON.stringify(
-    {
-      bucket: "cloudforge-app-bucket",
-      versioning: true,
-      force_destroy: false,
-    },
-    null,
-    2
-  ),
-  aws_rds: JSON.stringify(
-    {
-      engine: "postgres",
-      engine_version: "16.3",
-      instance_class: "db.t4g.micro",
-      allocated_storage: 20,
-      database_name: "cloudforge",
-      username: "cloudforge_admin",
-      skip_final_snapshot: true,
-    },
-    null,
-    2
-  ),
-  aws_eks: JSON.stringify(
-    {
-      cluster_version: "1.30",
-      subnet_ids: ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"],
-      node_instance_types: ["t3.medium"],
-      desired_capacity: 2,
-      min_capacity: 1,
-      max_capacity: 4,
-    },
-    null,
-    2
-  ),
-  aws_lb: JSON.stringify(
-    {
-      load_balancer_type: "application",
-      internal: false,
-      subnet_ids: ["subnet-0123456789abcdef0", "subnet-0fedcba9876543210"],
-      port: 80,
-      protocol: "HTTP",
-    },
-    null,
-    2
-  ),
-};
-
-const ESTIMATED_MONTHLY_COST: Record<string, string> = {
-  aws_vpc: "$0.00 / mo",
-  aws_ec2: "$10.40 / mo (t3.micro)",
-  aws_s3: "$5.00 / mo (standard tier)",
-  aws_rds: "$18.50 / mo (db.t4g.micro + 20GB)",
-  aws_eks: "$73.00 / mo (cluster) + compute",
-  aws_lb: "$22.50 / mo (ALB base rate)",
-};
-
 const initialForm: InfrastructureFormData = {
   project_id: "",
   name: "",
@@ -120,7 +50,7 @@ const initialForm: InfrastructureFormData = {
   provider: "aws",
   region: "eu-west-1",
   environment: "dev",
-  configuration: DEFAULT_CONFIGS.aws_vpc,
+  configuration: defaultInfrastructureValues("aws_vpc"),
 };
 
 const statusClasses: Record<
@@ -143,6 +73,8 @@ const statusClasses: Record<
     "bg-orange-500/10 text-orange-700 ring-1 ring-orange-500/20 dark:text-orange-300",
   awaiting_destroy_approval:
     "bg-rose-500/10 text-rose-700 ring-1 ring-rose-500/20 dark:text-rose-300",
+  destroy_failed:
+    "bg-red-500/10 text-red-700 ring-1 ring-red-500/20 dark:text-red-300",
   failed:
     "bg-red-500/10 text-red-700 ring-1 ring-red-500/20 dark:text-red-300",
   destroyed:
@@ -260,6 +192,25 @@ export default function InfrastructurePage() {
   const [applyTarget, setApplyTarget] =
     useState<InfrastructureResource | null>(null);
 
+  const identity = useViewerSession();
+  const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
+  const [reviewMessage, setReviewMessage] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const operator = canExecuteTerraform(identity?.role);
+  const developer = identity?.role === "developer";
+  const canRequest = operator || developer;
+
+  const writableProjects = projects.filter(({ access_level }) => canWriteProject(identity?.role, access_level));
+  const canManageRequest = (resource: InfrastructureResource) =>
+    operator || (developer && writableProjects.some(({ id }) => id === resource.project_id));
+
+  useEffect(() => {
+    if (!operator || new URLSearchParams(window.location.search).get("review") !== "pending") return;
+    const timer = window.setTimeout(() => setPendingOnly(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [operator]);
+
   // FinOps rightsizing recommendation that pre-filled the request form.
   const [rightsizing, setRightsizing] =
     useState<RightsizingRequest | null>(null);
@@ -268,13 +219,15 @@ export default function InfrastructurePage() {
   const [showForm, setShowForm] = useState(false);
   const [aiopsInsights, setAiopsInsights] = useState<AnomalySummary | null>(null);
 
-  const loadResources = useCallback(async () => {
+  const loadResources = useCallback(async (quiet = false) => {
     try {
-      setLoading(true);
-      setError("");
+      if (!quiet) {
+        setLoading(true);
+        setError("");
+      }
 
       const response = await fetch(
-        RESOURCES_API,
+        `${RESOURCES_API}?limit=100${pendingOnly ? "&review_status=submitted" : ""}`,
         {
           cache: "no-store",
         },
@@ -293,43 +246,47 @@ export default function InfrastructurePage() {
 
       setResources(getResourceList(payload));
     } catch (requestError) {
-      setError(
+      if (!quiet) setError(
         requestError instanceof Error
           ? requestError.message
           : "Unable to load infrastructure resources",
       );
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
-  }, []);
+  }, [pendingOnly]);
 
   useEffect(() => {
-    // Initial data load on page mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadResources();
+    const initial = window.setTimeout(() => void loadResources(), 0);
+    const timer = window.setInterval(() => void loadResources(true), 15_000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
+  }, [loadResources]);
 
+  useEffect(() => {
+    if (!identity?.role) return;
     // FinOps "Apply Rightsizing" hand-off: pre-fill a new EC2 request with the
     // recommended instance type. Nothing is provisioned until the human
     // generates, reviews and approves the Terraform plan.
-    const request = parseRightsizingParams(window.location.search);
+    const prefill = window.setTimeout(() => {
+      const request = parseRightsizingParams(window.location.search);
 
-    if (request) {
-      const base = JSON.parse(DEFAULT_CONFIGS.aws_ec2) as Record<string, unknown>;
+      if (request) {
+        const base = defaultInfrastructureValues("aws_ec2");
 
-      setRightsizing(request);
-      setForm((prev) => ({
-        ...prev,
-        resource_type: "aws_ec2",
-        name: `rightsized-${request.toInstanceType.replace(".", "-")}-${Date.now().toString(36)}`,
-        configuration: JSON.stringify(
-          { ...base, instance_type: request.toInstanceType },
-          null,
-          2,
-        ),
-      }));
-      setShowForm(true);
-      window.history.replaceState(null, "", window.location.pathname);
-    }
+        setRightsizing(request);
+        setForm((prev) => ({
+          ...prev,
+          resource_type: "aws_ec2",
+          name: `rightsized-${request.toInstanceType.replace(".", "-")}-${Date.now().toString(36)}`,
+          configuration: { ...base, instance_type: request.toInstanceType },
+        }));
+        setShowForm(true);
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }, 0);
 
     fetch("/api/proxy/project/projects?limit=50&offset=0")
       .then((res) => (res.ok ? res.json() : null))
@@ -359,19 +316,20 @@ const refreshAiopsInsights = async () => {
   }
 };
 
-void refreshAiopsInsights();
+if (!developer) void refreshAiopsInsights();
 
 const aiopsRefreshInterval = window.setInterval(() => {
-  void refreshAiopsInsights();
+  if (!developer) void refreshAiopsInsights();
 }, 60_000);
 
 return () => {
+  window.clearTimeout(prefill);
   window.clearInterval(aiopsRefreshInterval);
 };
-  }, [loadResources]);
+  }, [identity?.role, developer]);
 
   const updateField = (
-    field: keyof InfrastructureFormData,
+    field: Exclude<keyof InfrastructureFormData, "configuration">,
     value: string,
   ) => {
     setForm((current) => {
@@ -379,8 +337,8 @@ return () => {
         ...current,
         [field]: value,
       };
-      if (field === "resource_type" && DEFAULT_CONFIGS[value]) {
-        updated.configuration = DEFAULT_CONFIGS[value];
+      if (field === "resource_type" && current.resource_type !== value) {
+        updated.configuration = defaultInfrastructureValues(value);
       }
       return updated;
     });
@@ -395,21 +353,9 @@ return () => {
       setSaving(true);
       setError("");
 
-      let configuration: Record<
-        string,
-        unknown
-      >;
+      if (!writableProjects.some(({ id }) => id === form.project_id)) throw new Error("Select a project you can manage.");
 
-      try {
-        configuration = JSON.parse(
-          form.configuration,
-        );
-      } catch {
-        throw new Error(
-          "Configuration must contain valid JSON",
-        );
-      }
-
+      const configuration = infrastructureConfiguration(form.resource_type, form.configuration);
       const response = await fetch(
         RESOURCES_API,
         {
@@ -445,11 +391,12 @@ return () => {
         );
       }
 
+      const created = (await response.json()) as InfrastructureResource;
       setForm(initialForm);
       setRightsizing(null);
       setShowForm(false);
 
-      await loadResources();
+      await planResource(created, true);
     } catch (requestError) {
       setError(
         requestError instanceof Error
@@ -463,6 +410,7 @@ return () => {
 
   const planResource = async (
     resource: InfrastructureResource,
+    justCreated = false,
   ) => {
     try {
       setPlanningId(resource.id);
@@ -491,52 +439,52 @@ return () => {
       const planned =
         (await response.json()) as InfrastructureResource;
 
-      setApplyTarget(planned);
-      await loadResources();
+      await openPlan(planned);
     } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Terraform plan failed",
-      );
+      const message = requestError instanceof Error ? requestError.message : "Terraform plan failed";
+      setError(justCreated ? `Request saved. ${message} Use Generate plan to retry.` : message);
     } finally {
+      await loadResources(true);
       setPlanningId(null);
     }
   };
 
-  const openApplyModal = async (
-    resource: InfrastructureResource,
-  ) => {
-    setApplyTarget(resource);
-    if (!resource.plan_summary) {
-      try {
-        const response = await fetch(
-          `${RESOURCES_API}/${resource.id}/plan`,
-          {
-            headers: {
-              Accept: "application/json",
-              ...csrfHeaders(),
-            },
-          },
-        );
-        if (response.ok) {
-          const details =
-            (await response.json()) as PlanDetails;
-          if (details.plan_summary) {
-            setApplyTarget((prev) =>
-              prev && prev.id === resource.id
-                ? {
-                    ...prev,
-                    plan_summary:
-                      details.plan_summary,
-                  }
-                : prev,
-            );
-          }
-        }
-      } catch {
-        // Fall back gracefully to configuration display
-      }
+  const fetchPlan = async (id: string) => {
+    const response = await fetch(`${RESOURCES_API}/${id}/plan`, { cache: "no-store" });
+    if (!response.ok) throw new Error(await readError(response, "Saved plan unavailable"));
+    setPlanDetails((await response.json()) as PlanDetails);
+  };
+
+  const openPlan = async (resource: InfrastructureResource, destroy = false) => {
+    setApplyTarget(destroy ? null : resource);
+    setDestroyTarget(destroy ? resource : null);
+    setPlanDetails(null);
+    setReviewMessage("");
+    try {
+      await fetchPlan(resource.id);
+    } catch (err) {
+      setReviewMessage(err instanceof Error ? err.message : "Saved plan unavailable");
+    }
+  };
+
+  const decidePlan = async (action: ReviewAction) => {
+    if (!planDetails) return;
+    const { resource_id, operation, plan_hash, revision } = planDetails;
+    setReviewBusy(true);
+    setReviewMessage("");
+    try {
+      const response = await fetch(`${RESOURCES_API}/${resource_id}/review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ action, operation, plan_hash, revision }),
+      });
+      if (!response.ok) throw new Error(await readError(response, "Plan review failed"));
+      setReviewMessage({ submit: "Plan submitted for approval.", approve: "Plan approved.", reject: "Plan rejected." }[action]);
+      await Promise.all([loadResources(true), fetchPlan(resource_id)]);
+    } catch (err) {
+      setReviewMessage(err instanceof Error ? err.message : "Plan review failed");
+    } finally {
+      setReviewBusy(false);
     }
   };
 
@@ -634,7 +582,7 @@ return () => {
       const planned =
         (await response.json()) as InfrastructureResource;
 
-      setDestroyTarget(planned);
+      await openPlan(planned, true);
 
       await loadResources();
     } catch (requestError) {
@@ -691,8 +639,7 @@ return () => {
 
       setDestroyTarget(null);
     } catch (requestError) {
-      // Close the modal so the error banner is visible; the backend returns the
-      // resource to active, so a fresh destroy plan can be generated.
+      // Close the modal so the error banner remains visible.
       setDestroyTarget(null);
       setError(
         requestError instanceof Error
@@ -766,14 +713,14 @@ return () => {
             </div>
 
             <div className="flex items-center gap-3">
-              <Link
-                href="/finops"
+              {identity && <Link
+                href={developer ? "/project-costs" : "/finops"}
                 className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] px-4 py-2.5 text-sm font-semibold text-[var(--cf-text)] shadow-sm transition hover:bg-[var(--cf-surface-2)]"
               >
-                FinOps Intelligence →
-              </Link>
+                {developer ? "Project FinOps" : "FinOps Intelligence"}
+              </Link>}
 
-              <button
+              {canRequest && <button
                 type="button"
                 onClick={() =>
                   setShowForm(
@@ -784,8 +731,8 @@ return () => {
               >
                 {showForm
                   ? "Cancel"
-                  : "Create Resource"}
-              </button>
+                  : "Create Request"}
+              </button>}
             </div>
           </div>
 
@@ -835,7 +782,7 @@ return () => {
                     </p>
                   </div>
 
-                  {isCritical && (
+                  {operator && isCritical && (
                     <button
                       type="button"
                       onClick={() => {
@@ -843,7 +790,7 @@ return () => {
                           ...prev,
                           resource_type: "aws_ec2",
                           name: `scaling-${aiopsInsights.service}-${Date.now().toString(36)}`,
-                          configuration: DEFAULT_CONFIGS.aws_ec2 ?? prev.configuration,
+                          configuration: defaultInfrastructureValues("aws_ec2"),
                         }));
                         setShowForm(true);
                         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -896,7 +843,7 @@ return () => {
             );
           })()}
 
-          {showForm && (
+          {canRequest && showForm && (
             <form
               onSubmit={createResource}
               className="mb-8 rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm"
@@ -907,9 +854,7 @@ return () => {
                 </h2>
 
                 <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
-                  This creates a CloudForge resource definition.
-                  Terraform provisioning starts only when you
-                  explicitly generate a plan.
+                  Save the request and generate its plan. AWS changes require a Platform Engineer to approve and execute the saved plan.
                 </p>
               </div>
 
@@ -932,8 +877,9 @@ return () => {
               )}
 
               <div className="grid gap-4 md:grid-cols-2">
-                {projects.length > 0 ? (
+                {writableProjects.length > 0 ? (
                   <select
+                    required
                     value={form.project_id}
                     onChange={(event) =>
                       updateField("project_id", event.target.value)
@@ -941,24 +887,14 @@ return () => {
                     className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] p-3 text-[var(--cf-text)] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="">Select Project</option>
-                    {projects.map((p) => (
+                    {writableProjects.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
                       </option>
                     ))}
                   </select>
                 ) : (
-                  <input
-                    placeholder="Project ID"
-                    value={form.project_id}
-                    onChange={(event) =>
-                      updateField(
-                        "project_id",
-                        event.target.value,
-                      )
-                    }
-                    className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] p-3 text-[var(--cf-text)] placeholder:text-[var(--cf-text-muted)] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                  />
+                  <p className="p-3 text-sm">No authorized project available.</p>
                 )}
 
                 <input
@@ -1029,20 +965,9 @@ return () => {
 
                 <input
                   required
-                  placeholder="Provider"
-                  value={form.provider}
-                  onChange={(event) =>
-                    updateField(
-                      "provider",
-                      event.target.value,
-                    )
-                  }
-                  className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] p-3 text-[var(--cf-text)] placeholder:text-[var(--cf-text-muted)] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                />
-
-                <input
-                  required
-                  placeholder="Region"
+                  placeholder="AWS region"
+                  aria-label="AWS region"
+                  pattern="[a-z]{2}(?:-[a-z]+)+-[0-9]+"
                   value={form.region}
                   onChange={(event) =>
                     updateField(
@@ -1054,36 +979,11 @@ return () => {
                 />
               </div>
 
-              <div className="mt-4 flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-[var(--cf-text-secondary)]">
-                    FinOps Plan Cost Preview:
-                  </span>
-                  <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                    {ESTIMATED_MONTHLY_COST[form.resource_type] ?? "$0.00 / mo"}
-                  </span>
-                </div>
-                <Link
-                  href="/finops"
-                  className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-                >
-                  Verify in FinOps →
-                </Link>
-              </div>
 
-              <textarea
-                required
-                rows={8}
-                value={form.configuration}
-                onChange={(event) =>
-                  updateField(
-                    "configuration",
-                    event.target.value,
-                  )
-                }
-                className="mt-4 w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] p-3 font-mono text-sm text-[var(--cf-text)] placeholder:text-[var(--cf-text-muted)] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
-                placeholder='{"cidr_block":"10.50.0.0/16"}'
-              />
+              <InfrastructureFields type={form.resource_type} values={form.configuration}
+                onChange={(key, value) => setForm((current) => ({
+                  ...current, configuration: { ...current.configuration, [key]: value },
+                }))} />
 
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <button
@@ -1092,8 +992,8 @@ return () => {
                   className="rounded-lg bg-indigo-600 px-5 py-2.5 font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {saving
-                    ? "Creating..."
-                    : "Create Resource"}
+                    ? "Saving and planning…"
+                    : "Save request and generate plan"}
                 </button>
 
                 <button
@@ -1119,7 +1019,7 @@ return () => {
                 </p>
 
                 <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
-                  Create → Plan → Review → Approve & Apply → Teardown (Destroy Plan → Approve)
+                  Request → Plan → Submit → Review → Apply
                 </p>
               </div>
 
@@ -1129,6 +1029,10 @@ return () => {
             </div>
           </div>
 
+          {operator && <label className="mb-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={pendingOnly} onChange={(event) => setPendingOnly(event.target.checked)} />
+            Pending reviews only
+          </label>}
           <div className="overflow-hidden rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] shadow-sm">
             {loading ? (
               <p className="p-6 text-[var(--cf-text-secondary)]">
@@ -1137,7 +1041,7 @@ return () => {
             ) : resources.length === 0 ? (
               <div className="p-8 text-center">
                 <p className="font-medium text-[var(--cf-text)]">
-                  No infrastructure resources found.
+                  {pendingOnly ? "No pending reviews." : "No infrastructure resources found."}
                 </p>
 
                 <p className="mt-1 text-sm text-[var(--cf-text-secondary)]">
@@ -1221,11 +1125,16 @@ return () => {
                               >
                                 {resource.status}
                               </span>
+                              <DriftHistory
+                                resourceId={resource.id}
+                                scanAllowed={resource.status === "active" && (operator || identity?.role === "sre")}
+                                onPlan={operator && resource.status === "active" && planningId !== resource.id ? () => void planResource(resource) : undefined}
+                              />
                             </td>
 
                             <td className="min-w-[330px] p-4">
                               <div className="flex flex-wrap gap-2">
-                                {(resource.status ===
+                                {canManageRequest(resource) && (resource.status ===
                                   "pending" ||
                                   resource.status ===
                                     "failed") && (
@@ -1255,11 +1164,10 @@ return () => {
                                     type="button"
                                     disabled={
                                       applyingId ===
-                                      resource.id ||
-                                      approvalExpired
+                                      resource.id
                                     }
                                     onClick={() =>
-                                      void openApplyModal(
+                                      void openPlan(
                                         resource,
                                       )
                                     }
@@ -1269,13 +1177,12 @@ return () => {
                                     resource.id
                                       ? "Applying..."
                                       : approvalExpired
-                                        ? "Plan Expired"
-                                        : "Approve & Apply"}
+                                        ? "View expired plan"
+                                        : "Review plan"}
                                   </button>
                                 )}
 
-                                {resource.status ===
-                                  "active" && (
+                                {operator && (resource.status === "active" || resource.status === "destroy_failed" || resource.status === "failed") && (
                                   <button
                                     type="button"
                                     disabled={
@@ -1292,7 +1199,7 @@ return () => {
                                     {destroyPlanningId ===
                                     resource.id
                                       ? "Planning destroy..."
-                                      : "Teardown / Destroy"}
+                                      : resource.status !== "active" ? "Reconcile and plan destroy" : "Teardown / Destroy"}
                                   </button>
                                 )}
 
@@ -1301,9 +1208,7 @@ return () => {
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      setDestroyTarget(
-                                        resource,
-                                      )
+                                      void openPlan(resource, true)
                                     }
                                     className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-500/20 dark:text-rose-300"
                                   >
@@ -1311,12 +1216,19 @@ return () => {
                                   </button>
                                 )}
 
-                                {resource.status !==
+                                {resource.review_status && resource.status !== "awaiting_approval" &&
+                                  resource.status !== "awaiting_destroy_approval" && (
+                                  <button type="button" onClick={() => void openPlan(resource, resource.status === "destroy_failed")}
+                                    className="rounded-lg border border-[var(--cf-border)] px-3 py-2 text-sm">
+                                    Review history
+                                  </button>
+                                )}
+                                {operator && resource.status !==
                                   "active" &&
                                   resource.status !==
                                     "awaiting_destroy_approval" &&
                                   resource.status !==
-                                    "destroying" && (
+                                    "destroying" && resource.status !== "destroy_failed" && (
                                 <button
                                   type="button"
                                   disabled={
@@ -1342,7 +1254,7 @@ return () => {
                                 "awaiting_approval" && (
                                 <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
                                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                                    Human approval required
+                                    {resource.review_status === "approved" ? "Approved · ready to execute" : resource.review_status === "submitted" ? "Awaiting review" : "Draft · needs submission"}
                                   </p>
 
                                   <dl className="mt-2 space-y-1 text-xs text-[var(--cf-text-secondary)]">
@@ -1378,22 +1290,7 @@ return () => {
                                       </dd>
                                     </div>
 
-                                    <div className="pt-1 border-t border-amber-500/20 flex items-center justify-between">
-                                      <div>
-                                        <dt className="inline font-medium text-emerald-600 dark:text-emerald-400">
-                                          Estimated Cost:
-                                        </dt>{" "}
-                                        <dd className="inline font-semibold text-emerald-700 dark:text-emerald-300">
-                                          {ESTIMATED_MONTHLY_COST[resource.resource_type] ?? "~$15.00 / mo"}
-                                        </dd>
-                                      </div>
-                                      <Link
-                                        href="/finops"
-                                        className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
-                                      >
-                                        Inspect in FinOps →
-                                      </Link>
-                                    </div>
+
                                   </dl>
                                 </div>
                               )}
@@ -1418,8 +1315,27 @@ return () => {
                                 "active" && (
                                 <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                   <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                                  Provisioned & active on AWS
+                                  Terraform workflow complete. Live AWS status unverified.
                                 </div>
+                              )}
+
+                              {resource.terraform_resource_id && (
+                                <p className="mt-2 break-all text-xs text-[var(--cf-text-muted)]">
+                                  Last Terraform state ID {resource.terraform_resource_id}
+                                </p>
+                              )}
+                              {resource.aws_last_verified_at && (
+                                <p className="mt-1 text-xs text-[var(--cf-text-muted)]">
+                                  Last AWS provider verification {formatDate(resource.aws_last_verified_at)}
+                                </p>
+                              )}
+                              {resource.last_execution_error && (
+                                <p className="mt-2 text-xs text-red-600">{resource.last_execution_error}</p>
+                              )}
+                              {resource.status === "destroy_failed" && (
+                                <p className="mt-2 text-xs text-red-600">
+                                  Destroy failed. Reconcile with a fresh Terraform plan and approval before retrying.
+                                </p>
                               )}
 
                               {resource.status ===
@@ -1469,25 +1385,21 @@ return () => {
       </div>
 
       {applyTarget && (
-        <ApplyApprovalModal
-          resource={applyTarget}
-          confirming={applyingId === applyTarget.id}
-          replanning={planningId === applyTarget.id}
-          onConfirm={() => void applyResource(applyTarget)}
-          onReplan={() => void planResource(applyTarget)}
-          onClose={() => setApplyTarget(null)}
-        />
+        <ApplyApprovalModal resource={applyTarget} plan={planDetails?.resource_id === applyTarget.id ? planDetails : null}
+          operator={operator} developer={developer && canManageRequest(applyTarget)} username={identity?.username ?? ""}
+          busy={reviewBusy || applyingId === applyTarget.id || planningId === applyTarget.id}
+          message={reviewMessage} onDecision={(action) => void decidePlan(action)}
+          onConfirm={() => { if (planDetails?.resource_id === applyTarget.id) void applyResource({ ...applyTarget, plan_hash: planDetails.plan_hash, approval_expires_at: planDetails.approval_expires_at }); }} onReplan={() => void planResource(applyTarget)}
+          onClose={() => setApplyTarget(null)} />
       )}
 
       {destroyTarget && (
-        <DestroyApprovalModal
-          resource={destroyTarget}
-          confirming={destroyingId === destroyTarget.id}
-          replanning={destroyPlanningId === destroyTarget.id}
-          onConfirm={() => void applyDestroy(destroyTarget)}
-          onReplan={() => void planDestroy(destroyTarget)}
-          onClose={() => setDestroyTarget(null)}
-        />
+        <DestroyApprovalModal resource={destroyTarget} plan={planDetails?.resource_id === destroyTarget.id ? planDetails : null}
+          operator={operator} developer={false} username={identity?.username ?? ""}
+          busy={reviewBusy || destroyingId === destroyTarget.id || destroyPlanningId === destroyTarget.id}
+          message={reviewMessage} onDecision={(action) => void decidePlan(action)}
+          onConfirm={() => { if (planDetails?.resource_id === destroyTarget.id) void applyDestroy({ ...destroyTarget, destroy_plan_hash: planDetails.plan_hash, approval_expires_at: planDetails.approval_expires_at }); }} onReplan={() => void planDestroy(destroyTarget)}
+          onClose={() => setDestroyTarget(null)} />
       )}
     </AppShell>
   );

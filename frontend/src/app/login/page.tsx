@@ -38,7 +38,7 @@ export default function LoginPage() {
       <section className="w-full max-w-md rounded-2xl border border-white/10 bg-black/20 p-8 shadow-2xl">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-400">CloudForge AI</p>
         <h1 className="mt-3 text-2xl font-semibold">Sign in to your platform</h1>
-        <p className="mt-2 text-sm opacity-70">Use the operator credentials configured by your platform administrator.</p>
+        <p className="mt-2 text-sm opacity-70">Sign in with your CloudForge account.</p>
         <form className="mt-7 space-y-4" onSubmit={submit}>
           <label className="block text-sm">Username
             <input className="mt-1 block w-full rounded-lg border border-white/15 bg-transparent px-3 py-2" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />

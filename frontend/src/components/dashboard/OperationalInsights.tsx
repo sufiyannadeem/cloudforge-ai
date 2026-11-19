@@ -1,11 +1,14 @@
 "use client";
 
+import { executionModeLabel } from "@/lib/deployment-mode";
+import type { Deployment as DeploymentRecord } from "@/types/deployments";
+
 import { useEffect, useState } from "react";
 import type { DashboardObservability } from "@/types/dashboard";
 
 interface OperationalInsightsProps {
   observability: DashboardObservability;
-  incidentCount: number;
+  incidentCount: number | null;
 }
 
 interface IncidentStats {
@@ -24,6 +27,7 @@ interface Deployment {
   git_commit_sha: string;
   namespace: string;
   status: string;
+  execution_mode?: DeploymentRecord["execution_mode"];
   created_at: string;
   updated_at: string;
 }
@@ -331,7 +335,7 @@ export default function OperationalInsights({
 
                 <p className="mt-2 text-2xl font-semibold text-[var(--cf-text)]">
                   {incidentStats?.total_incidents ??
-                    incidentCount}
+                    incidentCount ?? "Unavailable"}
                 </p>
               </div>
 
@@ -433,7 +437,7 @@ export default function OperationalInsights({
                         deployment.status,
                       )}`}
                     >
-                      {deployment.status}
+                      {deployment.status} · {executionModeLabel(deployment.execution_mode)}
                     </td>
 
                     <td className="whitespace-nowrap px-3 py-4 text-[var(--cf-text-muted)]">

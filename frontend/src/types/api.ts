@@ -12,6 +12,8 @@ export interface Pagination {
 
 export interface Project {
   id: string;
+  created_by?: string;
+  access_level?: "owner" | "maintainer" | "viewer";
   name: string;
   description?: string | null;
   repository_url: string;
@@ -54,6 +56,7 @@ export type InfrastructureStatus =
   | "inactive"
   | "provisioning"
   | "destroying"
+  | "destroy_failed"
   | "failed";
 
 export interface InfrastructureResource {
@@ -64,6 +67,8 @@ export interface InfrastructureResource {
   region: string;
   environment: string;
   status: InfrastructureStatus;
+  status_source?: "terraform_workflow";
+  aws_live_status?: "unverified";
   terraform_directory: string;
   created_at: string;
   updated_at: string;
@@ -116,6 +121,7 @@ export interface Deployment {
   git_commit_sha: string;
   namespace: string;
   status: DeploymentStatus;
+  execution_mode?: "simulated" | "kubernetes" | "unknown";
   created_at: string;
   updated_at: string;
 }
@@ -125,6 +131,7 @@ export interface DeploymentAttempt {
   deployment_id: string;
   attempt_number: number;
   status: DeploymentAttemptStatus;
+  execution_mode?: "simulated" | "kubernetes" | "unknown";
   error_message?: string | null;
   started_at: string;
   completed_at?: string | null;

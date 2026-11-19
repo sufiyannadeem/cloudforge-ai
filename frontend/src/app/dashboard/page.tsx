@@ -1,4 +1,7 @@
 
+import Link from "next/link";
+import { requireSession } from "@/lib/server-session";
+import { dashboardCapabilities, dashboardProfiles } from "@/lib/role-access";
 import AppShell from "@/components/layout/AppShell";
 import MetricCard from "@/components/dashboard/MetricCard";
 import ServiceHealthGrid from "@/components/dashboard/ServiceHealthGrid";
@@ -109,7 +112,19 @@ function getErrorRateDescription(
 }
 
 export default async function DashboardPage() {
-  const dashboard = await getDashboardData();
+  const session = await requireSession();
+  const dashboard = await getDashboardData(session);
+  const profile = dashboardProfiles[session.role];
+  const capabilities = dashboardCapabilities(session.role);
+  const developer = session.role === "developer";
+  const grafana = process.env.NEXT_PUBLIC_GRAFANA_URL;
+  const grafanaLink = grafana && /^https?:\/\//i.test(grafana) ? grafana : null;
+  const amount = dashboard.accountCost;
+  const costValue = amount && /^[A-Z]{3}$/.test(amount.currency)
+    ? new Intl.NumberFormat("en", { style: "currency", currency: amount.currency }).format(amount.amount)
+    : "Unavailable";
+
+  const count = (value: number | null) => value === null ? "Unavailable" : value >= 100 ? "100+" : String(value);
 
   const {
     metrics,
@@ -120,34 +135,11 @@ export default async function DashboardPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-[1600px] space-y-8 p-4 sm:p-6 lg:p-8">
-        <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <p className="mb-2 text-sm font-medium text-indigo-600 dark:text-indigo-400">
-              Platform overview
-            </p>
-
-            <h2 className="text-3xl font-bold tracking-tight text-[var(--cf-text)] sm:text-4xl">
-              Welcome to CloudForge
-            </h2>
-
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--cf-text-secondary)]">
-              Monitor your projects, infrastructure, deployments,
-              and AI-powered incident intelligence.
-            </p>
-          </div>
-
-          <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] shadow-sm px-4 py-3">
-            <p className="text-xs text-[var(--cf-text-muted)]">
-              Environment
-            </p>
-
-            <p className="mt-1 text-sm font-semibold text-[var(--cf-text)]">
-              Development
-            </p>
-          </div>
+        <section className="space-y-3">
+          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{profile.title}</h1>
+          <p className="max-w-2xl text-sm text-[var(--cf-text-secondary)]">{profile.description}</p>
+          {developer && <Link href="/projects?create=1" className="inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Create Project</Link>}
         </section>
-
-        <PlatformCommandCenter />
 
         {errors.length > 0 && (
           <section className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
@@ -164,39 +156,36 @@ export default async function DashboardPage() {
         )}
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            label="Projects"
-            value={String(metrics.projects)}
-            description="Projects returned by Project Service"
-            icon="◈"
-            accent="indigo"
-          />
-
-          <MetricCard
-            label="Infrastructure Resources"
-            value={String(metrics.infrastructure)}
-            description="Resources returned by Infrastructure Service"
-            icon="⌘"
-            accent="emerald"
-          />
-
-          <MetricCard
-            label="Deployments"
-            value={String(metrics.deployments)}
-            description="Deployments returned by Deployment Service"
-            icon="⇧"
-            accent="amber"
-          />
-
-          <MetricCard
-            label="Incidents"
-            value={String(metrics.incidents)}
-            description="Incidents returned by AI-Ops Service"
-            icon="⚡"
-            accent="rose"
-          />
+          {session.role !== "sre" && <MetricCard label={developer ? "My Projects" : "Projects"}
+            value={count(metrics.projects)} description={developer ? "Projects shared with your account" : "Projects in the platform"} icon="◈" accent="indigo" />}
+          <MetricCard label={developer ? "My Infrastructure" : "Infrastructure"}
+            value={count(metrics.infrastructure)} description={developer ? "Resources and requests in your projects" : "Infrastructure resources"} icon="⌘" accent="emerald" />
+          <MetricCard label={developer ? "My Deployments" : "Deployments"}
+            value={count(metrics.deployments)} description={developer ? "Deployments in your projects" : "Platform deployments"} icon="⇧" accent="amber" />
+          {capabilities.platformTelemetry && <MetricCard label="Incidents"
+            value={count(metrics.incidents)} description="Incidents reported by AIOps" icon="⚡" accent="rose" />}
+          {capabilities.approvalQueue && <MetricCard label="Pending Terraform approvals"
+            value={count(dashboard.pendingApprovals)} description="Submitted, unexpired plans" icon="✓" accent="amber" />}
+          {capabilities.accountCosts && <MetricCard label="AWS monthly cost"
+            value={costValue} description="Actual cost reported by FinOps" icon="$" accent="emerald" />}
         </section>
 
+        {developer && <section className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-5">
+          <h2 className="text-lg font-semibold">Project monitoring</h2>
+          {metrics.projects === null ? <p className="mt-2 text-sm text-[var(--cf-text-muted)]">Projects could not be loaded.</p> :
+            dashboard.projects.length === 0 ? <p className="mt-2 text-sm text-[var(--cf-text-muted)]">No projects available. Create one or ask a project owner for access.</p> :
+            <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {dashboard.projects.slice(0, 6).map((project) => <li key={project.id}>
+                <Link href={`/observability?project=${encodeURIComponent(project.id)}`} className="block rounded-lg border border-[var(--cf-border)] p-3 text-sm font-medium hover:border-indigo-500">
+                  {project.name}<span className="ml-2 text-xs text-[var(--cf-text-muted)]">{project.access_level}</span>
+                </Link>
+              </li>)}
+            </ul>}
+        </section>}
+
+        <PlatformCommandCenter role={session.role} />
+
+        {capabilities.platformTelemetry && <>
         <section>
           <div className="mb-4">
             <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
@@ -286,6 +275,9 @@ export default async function DashboardPage() {
           </div>
         </section>
 
+        {grafanaLink && <Link href={grafanaLink}
+          className="inline-flex rounded-lg border border-[var(--cf-border)] px-4 py-2 text-sm font-semibold">Open Grafana</Link>}
+
         <ServiceHealthGrid
           initialServices={initialServices}
         />
@@ -295,7 +287,9 @@ export default async function DashboardPage() {
           incidentCount={metrics.incidents}
         />
 
-        <ActivityTimeline limit={10} />
+        </>}
+
+        <ActivityTimeline limit={10} includeIncidents={capabilities.platformTelemetry} />
       </div>
     </AppShell>
   );

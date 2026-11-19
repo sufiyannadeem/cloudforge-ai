@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { serviceAssertion } from "@/lib/service-identity";
 import { serviceConfig } from "@/lib/server-config";
 import {
+  type CloudForgeRole,
   CSRF_COOKIE,
-  internalApiToken,
-  originMatchesRequest,
   SESSION_COOKIE,
   verifySessionToken,
 } from "@/lib/auth";
+import { matchesCSRF, originMatchesRequest } from "@/lib/csrf";
 
 type SupportedService =
   | "project"
@@ -47,35 +48,28 @@ const isSupportedService = (
 const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 function isAuthorizedForRoute(
-  role: string,
+  role: CloudForgeRole,
   service: SupportedService,
-  path: string[],
   method: string,
+  path: string[],
 ): boolean {
-  if (role === "admin") return true;
   if (!MUTATING_METHODS.has(method)) return true;
-  if (role === "viewer") return false;
-
-  if (service === "finops") {
-    return ["platform-engineer", "devops", "sre"].includes(role);
-  }
 
   if (service === "infrastructure") {
-    const joinedPath = path.join("/");
-    const highRiskMutation =
-      method === "DELETE" ||
-      joinedPath.endsWith("/apply") ||
-      joinedPath.endsWith("/destroy/apply");
-    if (highRiskMutation) return role === "platform-engineer";
-    return ["platform-engineer", "devops", "sre"].includes(role);
+    if (method === "POST" && path.length === 5 && path[2] === "resources" && path[4] === "drift") {
+      return role === "platform-engineer" || role === "sre";
+    }
+    return role === "platform-engineer" || (role === "developer" && method === "POST" &&
+      (path.join("/") === "api/v1/resources" ||
+        (path.length === 5 && path[2] === "resources" && (path[4] === "plan" || path[4] === "review"))));
   }
+  if (service === "project") return path[0] !== "admin" || role === "platform-engineer";
 
   if (service === "deployment") {
-    if (method === "DELETE") return role === "platform-engineer";
-    return ["platform-engineer", "devops", "sre"].includes(role);
+    return method !== "DELETE" || role === "platform-engineer";
   }
 
-  return ["platform-engineer", "devops", "sre"].includes(role);
+  return role !== "developer";
 }
 
 const createErrorResponse = (
@@ -112,40 +106,19 @@ async function proxyRequest(
     );
   }
 
-  const session = verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
+  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
   if (!session) {
     return createErrorResponse("Authentication required", 401);
   }
 
-  const serviceToken = internalApiToken();
-  if (!serviceToken) {
-    return createErrorResponse("Backend authentication is not configured", 503);
-  }
-
-  if (!isAuthorizedForRoute(session.role, service, path, request.method)) {
+  if (!isAuthorizedForRoute(session.role, service, request.method, path)) {
     return createErrorResponse("Insufficient permissions for this operation", 403);
   }
 
   if (MUTATING_METHODS.has(request.method)) {
-    const csrfCookie = request.cookies.get(CSRF_COOKIE)?.value;
-    const csrfHeader = request.headers.get("x-csrf-token");
-    const csrfChecks = {
-      originMatches: originMatchesRequest(
-        request.headers.get("origin"),
-        request.url,
-        request.headers.get("host"),
-      ),
-      sessionHasCsrf: Boolean(session.csrf),
-      cookieMatchesSession: Boolean(csrfCookie && csrfCookie === session.csrf),
-      headerMatchesSession: Boolean(csrfHeader && csrfHeader === session.csrf),
-    };
-
-    if (Object.values(csrfChecks).some((passed) => !passed)) {
-      console.warn("[CloudForge CSRF] Validation failed", {
-        method: request.method,
-        service,
-        checks: csrfChecks,
-      });
+    const originMatches = originMatchesRequest(request.headers.get("origin"), request.url, request.headers.get("host"));
+    const csrfMatches = matchesCSRF(session.csrf, request.cookies.get(CSRF_COOKIE)?.value, request.headers.get("x-csrf-token"));
+    if (!originMatches || !csrfMatches) {
       return createErrorResponse("CSRF validation failed", 403);
     }
   }
@@ -160,15 +133,15 @@ async function proxyRequest(
     `${serviceUrl.replace(/\/$/, "")}/${targetPath}`,
   );
 
+  if (service === "project" && !/^\/projects(?:\/|$)/.test(targetUrl.pathname) && targetUrl.pathname !== "/admin/accounts") {
+    return createErrorResponse("Unsupported project service route", 404);
+  }
+
   request.nextUrl.searchParams.forEach((value, key) => {
     targetUrl.searchParams.append(key, value);
   });
 
   const headers = new Headers();
-  headers.set("X-CloudForge-Internal-Token", serviceToken);
-  headers.set("X-CloudForge-Actor", session.sub);
-  headers.set("X-CloudForge-Role", session.role);
-
   const contentType = request.headers.get("content-type");
 
   if (contentType) {
@@ -189,10 +162,23 @@ async function proxyRequest(
     body = await request.arrayBuffer();
   }
 
+  const approvalBody = request.method === "POST" && ((service === "infrastructure" && /\/(apply|review)$/.test(targetUrl.pathname)) || (service === "project" && targetUrl.pathname === "/admin/accounts"))
+    ? body ?? new ArrayBuffer(0)
+    : undefined;
+  try {
+    headers.set("X-CloudForge-Identity", serviceAssertion(service, targetUrl, request.method, session, approvalBody));
+  } catch {
+    return createErrorResponse("Backend identity is not configured", 503);
+  }
+
   const isProvisioningOperation =
     service === "infrastructure" &&
-    path.some((segment) => segment === "plan" || segment === "apply");
-  const requestTimeoutMs = isProvisioningOperation ? 600_000 : 10_000;
+    path.some((segment) => segment === "plan" || segment === "apply" || (request.method === "POST" && segment === "drift"));
+  const isDeploymentTelemetry = service === "deployment" && request.method === "GET" &&
+    path[2] === "deployments" && path.length === 5 && ["logs", "observability"].includes(path[4]);
+  const isDiagnosticCapture = service === "deployment" && request.method === "POST" &&
+    path[2] === "deployments" && path.length === 5 && path[4] === "diagnostics";
+  const requestTimeoutMs = isProvisioningOperation ? 600_000 : isDiagnosticCapture ? 23_000 : isDeploymentTelemetry ? 15_000 : 10_000;
 
   try {
     const response = await fetch(targetUrl, {
@@ -200,10 +186,11 @@ async function proxyRequest(
       headers,
       body,
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(requestTimeoutMs),
     });
 
-    const responseHeaders = new Headers();
+    const responseHeaders = new Headers({ "Cache-Control": "private, no-store" });
 
     const responseContentType =
       response.headers.get("content-type");
@@ -215,7 +202,7 @@ async function proxyRequest(
       );
     }
 
-    const responseBody = await response.arrayBuffer();
+    const responseBody = [204, 205, 304].includes(response.status) ? null : await response.arrayBuffer();
 
     return new NextResponse(responseBody, {
       status: response.status,

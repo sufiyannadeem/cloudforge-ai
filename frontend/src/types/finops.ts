@@ -27,16 +27,21 @@ export interface CostTrendResponse {
 
 export interface CostAnomaly {
   date: string;
+  currency: string;
   amount: number;
-  expected_amount: number;
-  deviation: number;
-  score: number;
+  baseline_mean: number;
+  z_score: number | null;
+  severity: "warning" | "critical";
+  estimated?: boolean | null;
 }
 
 export interface CostAnomalyResponse {
   start_date: string;
   end_date: string;
   threshold: number;
+  sample_count: number;
+  estimated_sample_count: number;
+  sufficient_data: boolean;
   anomalies: CostAnomaly[];
 }
 
@@ -54,6 +59,8 @@ export interface CostAttributionResponse {
   tag_key?: string;
   total_cost: number;
   entries: CostAttributionEntry[];
+  available?: boolean;
+  status_message?: string | null;
 }
 
 export interface BudgetSummary {
@@ -79,10 +86,21 @@ export interface FinOpsResource {
   resource_id: string;
   resource_type: string;
   service: string;
-  estimated_monthly_cost: number;
-  idle: boolean;
+  estimated_monthly_cost: number | null;
+  actual_monthly_cost?: number | null;
+  cost_status?: "actual" | "estimated" | "unavailable";
+  idle: boolean | null;
+  utilization_status?: "observed" | "unavailable";
   tags: Record<string, string>;
   region: string;
+}
+
+export interface AWSServiceCost {
+  service: string;
+  amount: number;
+  currency: string;
+  start_date: string;
+  end_date: string;
 }
 
 export interface FinOpsReport {
@@ -90,6 +108,21 @@ export interface FinOpsReport {
   account_id?: string | null;
   resources: FinOpsResource[];
   cost_data_source?: string;
+  resource_data_source?: string;
+  service_costs?: AWSServiceCost[];
+  summary?: {
+    currency?: string;
+    total_estimated_monthly_cost?: number;
+    total_actual_monthly_cost?: number | null;
+    idle_monthly_cost?: number;
+    untagged_resource_count?: number;
+    findings_count?: number;
+    critical_findings?: number;
+    warning_findings?: number;
+    info_findings?: number;
+    unavailable_cost_count?: number;
+    unavailable_utilization_count?: number;
+  };
 }
 
 export interface SavingsEvidence {
@@ -161,4 +194,11 @@ export interface TerraformPricingEvidenceRequest {
   evidence_available?: boolean;
   confidence?: string;
   assumptions?: string[];
+}
+
+export interface CostAnomalyCapture {
+  id: string;
+  actor: string;
+  captured_at: string;
+  evidence: CostAnomalyResponse;
 }

@@ -1,3 +1,5 @@
+import type { TerraformDriftScan } from "@/types/infrastructure";
+import type { DiagnosticCapture } from "@/types/deployments";
 import type {
   CreateInfrastructureInput,
   CreateProjectInput,
@@ -17,7 +19,7 @@ const readCookie = (name: string): string | undefined => {
   return entry ? decodeURIComponent(entry.slice(prefix.length)) : undefined;
 };
 
-const frontendApiRequest = async <T>(
+export const frontendApiRequest = async <T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> => {
@@ -57,6 +59,10 @@ const frontendApiRequest = async <T>(
 
 export const frontendApi = {
   projects: {
+    observability: (id: string) =>
+      frontendApiRequest<{ project_id: string; deployments_by_status: Record<string, number> }>(
+        `/api/proxy/project/projects/${encodeURIComponent(id)}/observability`,
+      ),
     list: () =>
       frontendApiRequest<ProjectListResponse>(
         "/api/proxy/project/projects",
@@ -73,6 +79,13 @@ export const frontendApi = {
   },
 
   infrastructure: {
+    driftHistory: (id: string) => frontendApiRequest<TerraformDriftScan[]>(
+      `/api/proxy/infrastructure/api/v1/resources/${encodeURIComponent(id)}/drift`,
+    ),
+    scanDrift: (id: string) => frontendApiRequest<TerraformDriftScan>(
+      `/api/proxy/infrastructure/api/v1/resources/${encodeURIComponent(id)}/drift`, { method: "POST" },
+    ),
+
     list: () =>
       frontendApiRequest<InfrastructureListResponse>(
         "/api/proxy/infrastructure/api/v1/resources",
@@ -89,6 +102,12 @@ export const frontendApi = {
   },
 
   deployments: {
+    diagnostics: (id: string, signal?: AbortSignal) => frontendApiRequest<DiagnosticCapture[]>(
+      `/api/proxy/deployment/api/v1/deployments/${encodeURIComponent(id)}/diagnostics`, { signal },
+    ),
+    captureDiagnostic: (id: string) => frontendApiRequest<DiagnosticCapture>(
+      `/api/proxy/deployment/api/v1/deployments/${encodeURIComponent(id)}/diagnostics`, { method: "POST" },
+    ),
     list: () =>
       frontendApiRequest<DeploymentListResponse>(
         "/api/proxy/deployment/api/v1/deployments",

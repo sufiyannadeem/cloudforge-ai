@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 
 const PROMETHEUS_URL =
   process.env.PROMETHEUS_URL ?? "http://localhost:9090";
@@ -6,6 +7,12 @@ const PROMETHEUS_URL =
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export async function GET(request: NextRequest) {
+  const session = await verifySessionToken(request.cookies.get(SESSION_COOKIE)?.value);
+  if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  if (session.role === "developer") {
+    return NextResponse.json({ error: "Global telemetry requires an operator role" }, { status: 403 });
+  }
+
   const query = request.nextUrl.searchParams.get("query");
 
   if (!query?.trim()) {

@@ -2,7 +2,11 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { executionModeLabel } from "@/lib/deployment-mode";
+import { useViewerSession } from "@/components/layout/ViewerSession";
+import { canWriteProject } from "@/lib/role-access";
 import AppShell from "@/components/layout/AppShell";
+import ProjectTelemetry from "@/components/deployments/ProjectTelemetry";
 import RollbackModal from "@/components/deployments/RollbackModal";
 import {
   Deployment,
@@ -43,12 +47,21 @@ function csrfHeaders(): Record<string, string> {
 }
 
 export default function DeploymentsPage() {
+  const role = useViewerSession()?.role;
+  const operator = role === "platform-engineer";
+  const platformTelemetry = operator || role === "sre";
+  const canCreate = operator || role === "developer";
   const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const writableProjects = projects.filter(({ access_level }) => canWriteProject(role, access_level));
+  const mayOperate = (deployment: Deployment) => operator ||
+    (deployment.namespace === `cf-${deployment.project_id}` &&
+      writableProjects.some(({ id }) => id === deployment.project_id));
   const [attempts, setAttempts] = useState<
     Record<string, DeploymentAttempt[]>
   >({});
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
+  const [telemetryDeploymentId, setTelemetryDeploymentId] = useState<string | null>(null);
   const [form, setForm] = useState<DeploymentForm>(initialForm);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -103,6 +116,7 @@ export default function DeploymentsPage() {
   }, []);
 
   const loadTelemetry = useCallback(async () => {
+    if (!platformTelemetry) return;
     try {
       const summary = await getAnomalySummary("deployment-service");
       setAiopsSummary(summary);
@@ -119,7 +133,7 @@ export default function DeploymentsPage() {
     } catch {
       // Graceful fallback if Prometheus is idle
     }
-  }, []);
+  }, [platformTelemetry]);
 
   const loadAttempts = useCallback(async (id: string) => {
     try {
@@ -138,7 +152,7 @@ export default function DeploymentsPage() {
 
       setAttempts((current) => ({
         ...current,
-        [id]: result.data ?? result ?? [],
+        [id]: result.attempts ?? result.data ?? (Array.isArray(result) ? result : []),
       }));
       setSelectedDeploymentId(id);
     } catch (err) {
@@ -271,7 +285,7 @@ export default function DeploymentsPage() {
       if (!response.ok) {
         if (response.status === 409) {
           throw new Error(
-            `Cannot roll back: no previous successful release found for this project in ${deployment.environment}.`,
+            `Cannot roll back: no earlier eligible release for this workload in ${deployment.environment}. Kubernetes rollbacks require an image digest.`,
           );
         }
         const message = await response.text();
@@ -344,16 +358,17 @@ export default function DeploymentsPage() {
               </p>
             </div>
 
-            <button
+            {canCreate && <button
               type="button"
               onClick={() => setShowForm((current) => !current)}
               className="rounded-lg bg-indigo-600 px-4 py-2.5 font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
             >
               {showForm ? "Cancel" : "Deploy Application"}
-            </button>
+            </button>}
           </div>
 
           {/* Operational Telemetry & AIOps Correlation Bar */}
+          {platformTelemetry && (
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-4 shadow-sm">
               <span className="text-xs font-medium uppercase tracking-wider text-[var(--cf-text-muted)]">
@@ -416,12 +431,13 @@ export default function DeploymentsPage() {
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    All Deployment Signals Normal
+                    {aiopsSummary ? "No deployment anomalies reported" : "Incident correlation unavailable"}
                   </span>
                 )}
               </div>
             </div>
           </div>
+          )}
 
           {error && (
             <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-700 dark:text-red-300">
@@ -429,7 +445,7 @@ export default function DeploymentsPage() {
             </div>
           )}
 
-          {showForm && (
+          {canCreate && showForm && (
             <form
               onSubmit={createDeployment}
               className="mb-8 rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm"
@@ -443,7 +459,7 @@ export default function DeploymentsPage() {
                   <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Application / Project
                   </label>
-                  {projects.length > 0 ? (
+                  {writableProjects.length > 0 ? (
                     <select
                       required
                       value={form.project_id}
@@ -461,7 +477,7 @@ export default function DeploymentsPage() {
                       className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface)] p-3 text-[var(--cf-text)] outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
                     >
                       <option value="">-- Choose a registered project --</option>
-                      {projects.map((p) => (
+                      {writableProjects.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.name} ({p.repository_url || "Git"})
                         </option>
@@ -534,7 +550,8 @@ export default function DeploymentsPage() {
                   <input
                     required
                     placeholder="e.g. cloudforge-dev"
-                    value={form.namespace}
+                    value={operator ? form.namespace : (form.project_id ? `cf-${form.project_id}` : "")}
+                    readOnly={!operator}
                     onChange={(event) =>
                       updateField("namespace", event.target.value)
                     }
@@ -582,10 +599,10 @@ export default function DeploymentsPage() {
                         Version / Image
                       </th>
                       <th className="p-4 text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">
-                        Replicas
+                        Workload health
                       </th>
                       <th className="p-4 text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">
-                        Rollout Health
+                        Execution mode
                       </th>
                       <th className="p-4 text-xs font-semibold uppercase tracking-wide text-[var(--cf-text-secondary)]">
                         Status
@@ -630,41 +647,13 @@ export default function DeploymentsPage() {
                         </td>
 
                         <td className="p-4">
-                          <span className="text-xs font-medium text-[var(--cf-text)]">
-                            {deployment.status === "succeeded"
-                              ? "2 / 2 Pods"
-                              : deployment.status === "running"
-                              ? "1 / 2 Pods (Rolling)"
-                              : deployment.status === "queued"
-                              ? "0 / 2 Pods (Queued)"
-                              : deployment.status === "failed"
-                              ? "0 / 2 Pods (Failed)"
-                              : "0 / 2 Pods (Pending)"}
+                          <span className="text-xs text-[var(--cf-text-muted)]">
+                            {deployment.execution_mode === "kubernetes" ? "See logs and health" : "N/A"}
                           </span>
                         </td>
 
-                        <td className="p-4">
-                          {deployment.status === "succeeded" ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                              Healthy
-                            </span>
-                          ) : deployment.status === "running" || deployment.status === "queued" ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
-                              <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
-                              Rolling
-                            </span>
-                          ) : deployment.status === "failed" ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400">
-                              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                              Rollout Failed
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--cf-text-muted)]">
-                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-                              Idle
-                            </span>
-                          )}
+                        <td className="p-4 text-xs">
+                          {executionModeLabel(deployment.execution_mode)}
                         </td>
 
                         <td className="p-4">
@@ -694,7 +683,7 @@ export default function DeploymentsPage() {
 
                         <td className="p-4 whitespace-nowrap">
                           <div className="flex items-center gap-3">
-                            {(deployment.status === "pending" ||
+                            {mayOperate(deployment) && (deployment.status === "pending" ||
                               deployment.status === "failed") && (
                               <button
                                 type="button"
@@ -708,7 +697,7 @@ export default function DeploymentsPage() {
                               </button>
                             )}
 
-                            {(deployment.status === "succeeded" ||
+                            {mayOperate(deployment) && (deployment.status === "succeeded" ||
                               deployment.status === "failed") && (
                               <button
                                 type="button"
@@ -725,16 +714,24 @@ export default function DeploymentsPage() {
                               onClick={() => void loadAttempts(deployment.id)}
                               className="rounded-md border border-[var(--cf-border)] px-2.5 py-1 text-xs font-semibold text-[var(--cf-text)] transition hover:bg-[var(--cf-surface-2)]"
                             >
-                              Logs &amp; History
+                              Attempt history
                             </button>
 
                             <button
+                              type="button"
+                              onClick={() => setTelemetryDeploymentId(deployment.id)}
+                              className="rounded-md border border-[var(--cf-border)] px-2.5 py-1 text-xs font-semibold"
+                            >
+                              Logs and health
+                            </button>
+
+                            {operator && (deployment.execution_mode === "simulated" || deployment.status === "pending" || deployment.status === "queued") && <button
                               type="button"
                               onClick={() => void deleteDeployment(deployment.id)}
                               className="text-xs font-medium text-red-600 transition hover:text-red-500 dark:text-red-400"
                             >
                               Delete
-                            </button>
+                            </button>}
                           </div>
                         </td>
                       </tr>
@@ -744,6 +741,9 @@ export default function DeploymentsPage() {
               </div>
             )}
           </div>
+
+          {telemetryDeploymentId && deployments.some(({ id }) => id === telemetryDeploymentId) &&
+            <ProjectTelemetry key={telemetryDeploymentId} id={telemetryDeploymentId} close={() => setTelemetryDeploymentId(null)} />}
 
           {selectedDeploymentId && attempts[selectedDeploymentId] && (
             <div className="mt-8 rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-sm">
@@ -790,7 +790,7 @@ export default function DeploymentsPage() {
                                 : "bg-blue-500/20 text-blue-300"
                             }`}
                           >
-                            {attempt.status}
+                            {attempt.status} · {executionModeLabel(attempt.execution_mode)}
                           </span>
                         </div>
                         <span className="text-slate-400 text-[11px]">
@@ -802,33 +802,10 @@ export default function DeploymentsPage() {
                       </div>
 
                       <div className="space-y-1 text-slate-300">
-                        <p className="text-slate-500">
-                          [{new Date(attempt.started_at).toISOString()}] [INFO] Starting Kubernetes deployment runner for worker node
-                        </p>
-                        <p className="text-slate-400">
-                          [{new Date(attempt.started_at).toISOString()}] [INFO] Synchronizing cluster pods to desired target state
-                        </p>
-                        {attempt.status === "succeeded" ? (
-                          <p className="text-emerald-400 font-semibold">
-                            [{attempt.completed_at ? new Date(attempt.completed_at).toISOString() : new Date().toISOString()}] [SUCCESS] Deployment completed successfully: all pods ready and serving traffic.
-                          </p>
-                        ) : attempt.status === "failed" ? (
-                          <>
-                            <p className="text-red-400 font-semibold">
-                              [{attempt.completed_at ? new Date(attempt.completed_at).toISOString() : new Date().toISOString()}] [ERROR] {attempt.error_message || "Deployment failed"}
-                            </p>
-                            <div className="mt-2 rounded-lg border border-red-500/30 bg-red-950/40 p-2.5 text-[11px] text-red-300 font-sans">
-                              <span className="font-bold">⚠️ Actionable Guidance:</span>
-                              <p className="mt-0.5">
-                                Workload rollout encountered an error. Review the container image tag and Kubernetes cluster pod logs, or initiate a safe rollback to the previous successful release.
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          <p className="text-blue-400">
-                            [PROGRESS] Deployment runner executing...
-                          </p>
-                        )}
+                        {attempt.completed_at && <p>Completed at {new Date(attempt.completed_at).toLocaleString()}</p>}
+                        {attempt.status === "failed" && <p className="text-red-400">
+                          {role === "developer" ? "Attempt failed. Detailed error output is unavailable." : attempt.error_message ?? "Attempt failed. Error details unavailable."}
+                        </p>}
                       </div>
                     </div>
                   ))}
@@ -839,7 +816,7 @@ export default function DeploymentsPage() {
         </div>
       </div>
 
-      {rollbackTarget && (
+      {rollbackTarget && mayOperate(rollbackTarget) && (
         <RollbackModal
           deployment={rollbackTarget}
           projectName={getProjectName(rollbackTarget.project_id)}

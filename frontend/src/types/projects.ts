@@ -5,6 +5,8 @@ export type ProjectStatus =
 
 export interface Project {
   id: string;
+  created_by?: string;
+  access_level?: "owner" | "maintainer" | "viewer";
   name: string;
   description?: string | null;
   repository_url: string;
