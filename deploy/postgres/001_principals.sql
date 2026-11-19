@@ -1,7 +1,7 @@
 -- Explicit DBA bootstrap, NOT an application migration. No passwords are embedded.
 -- Only a fresh/approved database: existing ownership/grants require a reviewed handoff.
 DO $$ DECLARE name text; BEGIN
- FOREACH name IN ARRAY ARRAY['cf_migrator','cf_project','cf_infrastructure','cf_deployment','cf_aiops','cf_finops_project','cf_finops_audit'] LOOP
+ FOREACH name IN ARRAY ARRAY['cf_migrator','cf_project','cf_infrastructure','cf_deployment','cf_aiops','cf_finops_project','cf_finops_audit','cf_drift'] LOOP
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname=name) THEN
    EXECUTE format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT PASSWORD NULL',name);
   ELSE
@@ -21,7 +21,7 @@ END $$;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO cf_migrator;
-GRANT USAGE ON SCHEMA public TO cf_project,cf_infrastructure,cf_deployment,cf_aiops,cf_finops_project,cf_finops_audit;
+GRANT USAGE ON SCHEMA public TO cf_project,cf_infrastructure,cf_deployment,cf_aiops,cf_finops_project,cf_finops_audit,cf_drift;
 -- Migration owner creates no automatic blanket/default runtime grants.
 ALTER DEFAULT PRIVILEGES FOR ROLE cf_migrator IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE cf_migrator IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;

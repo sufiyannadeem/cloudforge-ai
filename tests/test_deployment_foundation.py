@@ -216,3 +216,17 @@ def test_migrations_are_ordered_isolated_hooks_with_no_runtime_credentials(confi
             assert 'cloudforge-migration-db' not in str(doc)
         if doc['kind']=='NetworkPolicy':
             assert doc['metadata']['annotations']['argocd.argoproj.io/sync-wave']=='-10'
+
+
+def test_scheduled_drift_has_no_provisioner_or_human_signing_key(config):
+    config['drift']={'enabled':True};config['roles']['drift']='arn:aws:iam::123456789012:role/fixture-drift-reader'
+    config['secrets']['cloudforge-drift-db']={'arn':'arn:aws:secretsmanager:eu-west-1:123456789012:secret:fixture-drift-db-Abcdef','properties':{'DATABASE_URL':'DATABASE_URL'}}
+    docs=renderer.render(config)
+    job=next(d for d in docs if d['kind']=='CronJob')
+    assert job['spec']['concurrencyPolicy']=='Forbid'
+    pod=job['spec']['jobTemplate']['spec']['template']['spec'];c=pod['containers'][0]
+    assert pod['serviceAccountName']=='cloudforge-drift' and pod['automountServiceAccountToken'] is False
+    assert c['args']==['drift-scan']
+    assert not any(e['name'] in ['TERRAFORM_PROVISIONER_ROLE_ARN','CLOUDFORGE_FRONTEND_KEY'] for e in c['env'])
+    assert c['envFrom']==[{'secretRef':{'name':'cloudforge-drift-db'}}]
+    assert job['spec']['jobTemplate']['spec']['activeDeadlineSeconds']==120

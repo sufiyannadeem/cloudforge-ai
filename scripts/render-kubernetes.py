@@ -39,6 +39,11 @@ def render(config):
     region = checked(r'[a-z]{2}-[a-z]+-[0-9]', config['region'], 'region')
     role_pattern = rf'arn:aws:iam::{account}:role/[A-Za-z0-9+=,.@_/-]+'
     roles = config['roles']
+    scheduled_drift = config.get('drift', {}).get('enabled', False)
+    if type(scheduled_drift) is not bool:
+        raise ValueError('drift.enabled must be boolean')
+    if scheduled_drift:
+        checked(role_pattern, roles.get('drift'), 'roles.drift')
     for name in ('infrastructure-service', 'finops-service', 'secret-sync'):
         checked(role_pattern, roles[name], 'roles.' + name)
     checked(role_pattern, config['provisioner_role_arn'], 'provisioner_role_arn')
@@ -48,7 +53,7 @@ def render(config):
     if ai['provider'] == 'bedrock':
         checked(role_pattern, roles['aiops-service'], 'roles.aiops-service')
         checked(r'[A-Za-z0-9.:/_-]+', ai['model'], 'ai.model')
-    if set(roles) != {'infrastructure-service', 'finops-service', 'secret-sync'} | ({'aiops-service'} if ai['provider'] == 'bedrock' else set()):
+    if set(roles) != {'infrastructure-service', 'finops-service', 'secret-sync'} | ({'aiops-service'} if ai['provider'] == 'bedrock' else set()) | ({'drift'} if scheduled_drift else set()):
         raise ValueError('Unexpected workload role')
     if len(set(roles.values()) | {config['provisioner_role_arn']}) != len(roles) + 1:
         raise ValueError('Workload, sync and provisioner roles must be distinct')
@@ -185,6 +190,7 @@ def render(config):
                 'cloudforge-frontend-credentials': {'CLOUDFORGE_SESSION_SECRET'}}
     secret_keys = {name: keys | required.get(name, set()) for name, keys in secret_keys.items()}
     secret_keys['cloudforge-migration-db'] = {'DATABASE_URL'}
+    if scheduled_drift: secret_keys['cloudforge-drift-db'] = {'DATABASE_URL'}
     sa = document('ServiceAccount', 'cloudforge-secret-sync', {})
     sa.pop('spec')
     sa['automountServiceAccountToken'] = False
@@ -290,6 +296,30 @@ def render(config):
         if name == 'deployment-service':
             egress += [{'to': networks['kubernetes_api'], 'ports': [tcp(443)]}]
         policy(name + '-egress', {'matchLabels': {'app': name}}, egress=egress)
+    if scheduled_drift:
+        sa = document('ServiceAccount','cloudforge-drift',{})
+        sa.pop('spec');sa['automountServiceAccountToken']=False
+        sa['metadata']['annotations']={'eks.amazonaws.com/role-arn':roles['drift']}
+        docs.append(sa)
+        original=workloads['infrastructure-service']['spec']['template']['spec']
+        source=original['containers'][0]
+        container={key:copy.deepcopy(source[key]) for key in ['name','image','imagePullPolicy','resources','securityContext']}
+        container['name']='drift';container['args']=['drift-scan']
+        container['envFrom']=[{'secretRef':{'name':'cloudforge-drift-db'}}]
+        container['env']=[{'name':key,'value':value} for key,value in {
+            'APP_ENV':'production','TERRAFORM_READ_ONLY':'true','AWS_REGION':region,'AWS_DEFAULT_REGION':region,
+            'AWS_STS_REGIONAL_ENDPOINTS':'regional','AWS_EC2_METADATA_DISABLED':'true','CLOUDFORGE_DRIFT_ROLE_ARN':roles['drift'],'TERRAFORM_STATE_BUCKET':bucket,'TERRAFORM_STATE_REGION':region,
+            'PGSSLROOTCERT':'/etc/cloudforge/db-ca/ca.crt','TERRAFORM_WORKSPACE_ROOT':'/tmp/terraform'}.items()]
+        container['volumeMounts']=[{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True},{'name':'tmp','mountPath':'/tmp'}]
+        pod={'serviceAccountName':'cloudforge-drift','automountServiceAccountToken':False,'restartPolicy':'Never',
+             'terminationGracePeriodSeconds':15,'securityContext':copy.deepcopy(original['securityContext']),
+             'containers':[container],'volumes':[{'name':'database-ca','configMap':{'name':database_ca}}, {'name':'tmp','emptyDir':{'sizeLimit':'2Gi'}}]}
+        docs.append(document('CronJob','cloudforge-drift',{'schedule':'0 * * * *','concurrencyPolicy':'Forbid',
+            'startingDeadlineSeconds':300,'successfulJobsHistoryLimit':1,'failedJobsHistoryLimit':1,
+            'jobTemplate':{'spec':{'backoffLimit':0,'activeDeadlineSeconds':120,'ttlSecondsAfterFinished':7200,
+                'template':{'metadata':{'labels':{'cloudforge.ai/component':'scheduled-drift'}},'spec':pod}}}},'batch/v1'))
+        policy('drift-reader-egress',{'matchLabels':{'cloudforge.ai/component':'scheduled-drift'}},egress=[
+            {'to':networks['database'],'ports':[tcp(5432)]},{'to':networks['aws_https'],'ports':[tcp(443)]}])
     for item in docs:
         if item['kind'] in {'SecretStore','ExternalSecret','ServiceAccount','ConfigMap','NetworkPolicy'}:
             item['metadata'].setdefault('annotations',{})['argocd.argoproj.io/sync-wave']='-10'

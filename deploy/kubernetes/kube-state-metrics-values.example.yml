@@ -3,9 +3,15 @@
 namespaces:
   - cloudforge
 collectors:
+  - jobs
+  - cronjobs
   - deployments
   - horizontalpodautoscalers
 metricAllowlist:
+  - kube_cronjob_created
+  - kube_job_status_failed
+  - kube_cronjob_status_last_successful_time
+  - kube_cronjob_spec_suspend
   - kube_deployment_spec_replicas
   - kube_deployment_status_replicas_available
   - kube_deployment_status_observed_generation

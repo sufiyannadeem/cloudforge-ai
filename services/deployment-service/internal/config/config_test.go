@@ -165,3 +165,14 @@ func TestConfigValidateDevelopmentAllowsSimulated(t *testing.T) {
 		t.Fatalf("expected valid development config with simulated executor, got: %v", err)
 	}
 }
+
+func TestMigrationDoesNotRelaxRuntimeKubernetesRequirement(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	cfg := Config{AppEnv: "production", ServerPort: 8082, DatabaseURL: "postgres://cf_migrator@database/cloudforge?sslmode=verify-full", ShutdownTimeoutSeconds: 10}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("runtime accepted missing Kubernetes ownership/configuration")
+	}
+}

@@ -132,5 +132,8 @@
     "max_replicas": 4,
     "cpu_utilization": 70
   },
-  "database_ca_configmap": null
+  "database_ca_configmap": null,
+  "drift": {
+    "enabled": false
+  }
 }

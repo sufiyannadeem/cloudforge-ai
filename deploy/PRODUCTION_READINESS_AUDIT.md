@@ -1,5 +1,10 @@
 # Batch 27 production readiness audit
 
+**Batch 28 update:** the assessment below is the historical baseline.
+[Current local closure and remaining gates](BATCH28_CLOSURE.md) supersede its
+shared-principal, GitOps and scheduler code-status findings. Production remains
+NO-GO pending approved cutover and hosted/cluster/AWS acceptance.
+
 **Verdict: NO-GO for production.** Baseline `1eda657` on
 `feat/aws-terraform-foundation`, plus the narrow CI fixes recorded below.
 This is a code/configuration audit, not a live AWS, cluster or penetration test.

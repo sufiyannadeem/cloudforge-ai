@@ -86,3 +86,12 @@ The historical local frontend image ID is `sha256:405ca951da593e1f97263288954a92
 - [ ] Resolve the P0 shared database principal/TLS/image gaps in the [production audit](PRODUCTION_READINESS_AUDIT.md). Per-service IAM and signed HTTP identities do not replace per-service database grants.
 - [ ] Run the repaired hosted image-security workflow: shared identity build contexts, pinned scanner, exact RBAC exceptions and unfixed vulnerability enforcement. Local structure tests are not a successful GitHub image build/scan.
 - [ ] Complete the prioritized acceptance sequence in the audit. No deployment approval is implied by local verification; GitOps reconciliation and centralized audit/search remain missing capabilities.
+
+
+## Batch 28 integration gates
+
+- [ ] Use [the current closure evidence](BATCH28_CLOSURE.md). Complete the approved per-service DB ownership/grant/credential/CA handoff; production rejects shared principals or unverified TLS. Do not run bootstrap SQL against existing data without review.
+- [ ] Require all seven hosted image builds/scans, independent release-environment approval, actual immutable digest output, signing/provenance and retention acceptance. Nothing was published locally.
+- [ ] Review Argo/ESO controller versions/privileges, trusted SSO groups, exact repo/revision, CA/secret readiness and migration/grant hooks before any sync. Plain kubectl apply does not enforce hook ordering.
+- [ ] Keep scheduled drift disabled until its dedicated DB/IRSA credentials, provider/secret read permissions and metric delivery are verified. Read-only observation is not approval for apply/remediation.
+- [ ] Implement and independently verify the central collector/signature/immutable-anchor design before claiming centralized tamper-evident audit. Retain existing per-feature histories and external recovery authorization.

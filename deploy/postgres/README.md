@@ -1,7 +1,8 @@
 # Dedicated database principals (Batch 28)
 
 Production runtime now requires `cf_project`, `cf_infrastructure`, `cf_deployment`,
-`cf_aiops`, `cf_finops_project` and `cf_finops_audit` respectively, and verified
+`cf_aiops`, `cf_finops_project`, `cf_finops_audit` and the scheduled worker
+`cf_drift` respectively, and verified
 TLS (`sslmode=verify-full`, actual DNS hostname and trusted CA). No shared-user or
 plaintext fallback is accepted. Mount the real public CA at
 `/etc/cloudforge/db-ca/ca.crt`; `PGSSLROOTCERT` or a DSN parameter selects it.
@@ -33,7 +34,10 @@ restore an existing database automatically. Back up, inventory owners/grants,
 review the handoff and drain services before a production transition. Retire the
 old shared principal only after independent negative-grant and cutover checks.
 
-Runtime ACLs are explicit, not blanket future grants. Other services cannot read
+Runtime ACLs are explicit, not blanket future grants. Table and column ACLs are
+reset before applying the reviewed allowlist; migration-owned append functions
+use a fixed search path and qualified objects, with no resource UPDATE grant to
+the scheduled reader. Other services cannot read
 account hashes/sessions or mutate users. Deployment can read approver public
 identity and consume only the dispatch column of an AIOps approval; it cannot
 forge approval fields. FinOps has project/resource metadata reads and a separate

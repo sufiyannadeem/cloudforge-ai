@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/database"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/handler"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/migration"
+	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/terraform"
@@ -37,7 +39,11 @@ func main() {
 	frontendKey := os.Getenv("CLOUDFORGE_FRONTEND_KEY")
 
 	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
-	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "infrastructure", migrateOnly); err != nil {
+	databaseService := "infrastructure"
+	if len(os.Args) == 2 && os.Args[1] == "drift-scan" {
+		databaseService = "drift"
+	}
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, databaseService, migrateOnly); err != nil {
 		log.Fatal(err)
 	}
 
@@ -104,6 +110,32 @@ func main() {
 	terraformRunner.TerraformBin = terraformBinary
 	terraformRunner.PlanTimeout = planTimeout
 	terraformRunner.ApplyTimeout = applyTimeout
+
+	if len(os.Args) == 2 && os.Args[1] == "drift-scan" {
+		if !cfg.TerraformReadOnly || terraformGenerator.ProvisionerRoleARN != "" {
+			logger.Fatal("Scheduled drift requires read-only mode and its dedicated workload identity")
+		}
+		if cfg.AppEnv == "production" {
+			if err := config.ValidateDriftIdentity(); err != nil {
+				logger.Fatal(err)
+			}
+		}
+		scanContext, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		err := resourceRepository.ScheduledDrift(scanContext, func(ctx context.Context, resource model.InfrastructureResource) (json.RawMessage, error) {
+			findings, err := terraformRunner.ScanDrift(ctx, resource)
+			if err != nil {
+				return nil, err
+			}
+			raw, err := json.Marshal(findings)
+			return raw, err
+		})
+		if err != nil {
+			logger.Fatal("Scheduled drift batch requires review; inspect persisted scan history and job status")
+		}
+		logger.Println("Scheduled drift batch complete; this is not full-fleet drift compliance")
+		return
+	}
 
 	provisioningService := service.NewProvisioningService(
 		resourceRepository,

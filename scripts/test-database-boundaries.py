@@ -38,7 +38,7 @@ def main():
         drill.sql(db,"ALTER SYSTEM SET ssl='on'; ALTER SYSTEM SET ssl_cert_file='/var/lib/postgresql/data/ca.crt'; ALTER SYSTEM SET ssl_key_file='/var/lib/postgresql/data/server.key'")
         drill.exec(db,'sh','-ec','cat > /var/lib/postgresql/data/pg_hba.conf',data=b'local all all trust\nhostnossl all all all reject\nhostssl all all all scram-sha-256\n')
         drill.sql(db,(ROOT/'deploy/postgres/001_principals.sql').read_text())
-        principals=['migrator','project','infrastructure','deployment','aiops','finops_project','finops_audit']
+        principals=['migrator','project','infrastructure','deployment','aiops','finops_project','finops_audit','drift']
         passwords={p:secrets.token_hex(32) for p in principals}
         for principal,password in passwords.items():drill.sql(db,f"ALTER ROLE cf_{principal} PASSWORD '{password}'")
         drill.fault('stop',db,'--time','10');drill.fault('start',db)
@@ -51,7 +51,15 @@ def main():
                 '-e','APP_ENV=production','-e','DATABASE_URL='+dsn(principal),*extra,image,*args)
             drill.fault('start',c);drill.docker('wait',c)
             exitcode=int(drill.docker('inspect',c,'--format','{{.State.ExitCode}}').stdout)
-            if (expected==0 and exitcode!=0) or (expected!=0 and exitcode==0):raise RuntimeError('Isolated database client failed: '+suffix)
+            if suffix=='scheduled-drift-db' and exitcode==0:
+                if b'--- PASS: TestScheduledDriftDatabaseBoundary' not in drill.docker('logs',c).stdout:
+                    raise RuntimeError('Scheduled database tests did not actually execute')
+            if (expected==0 and exitcode!=0) or (expected!=0 and exitcode==0):
+                result=drill.docker('logs',c,check=False)
+                log=result.stdout+result.stderr
+                for secret in passwords.values():log=log.replace(secret.encode(),b'[REDACTED]')
+                (output/(suffix+'.log')).write_bytes(log)
+                raise RuntimeError('Isolated database client failed: '+suffix)
         for service in ['project','infrastructure','deployment']:
             run('migrate-'+service,drill.image,['migrate'],'migrator',
                 ('--mount',f'type=bind,src={output/service},dst=/migrator,readonly','--entrypoint','/migrator','-e','TERRAFORM_READ_ONLY=true'))
@@ -59,11 +67,20 @@ def main():
         aiops_image=drill.docker('image','inspect','cloudforge-ai-aiops-service:latest','--format','{{.Id}}').stdout.decode().strip()
         run('aiops-migrate',aiops_image,['python','-m','app.database'],'migrator',
             ('--mount',f'type=bind,src={ROOT/"services/aiops-service/app"},dst=/app/app,readonly','--entrypoint',''))
-        drill.sql(db,(ROOT/'deploy/postgres/002_runtime_grants.sql').read_text())
+        # Prove that stale column ACLs cannot survive a reviewed handoff.
+        drill.sql(db,'GRANT SELECT(password_hash) ON auth_users TO cf_deployment; GRANT UPDATE(updated_at) ON infrastructure_resources TO cf_drift')
+        drill.sql(db,'SET ROLE cf_migrator;\n'+(ROOT/'deploy/postgres/002_runtime_grants.sql').read_text())
         for principal in principals[1:]:
             run('check-'+principal,drill.image,[],principal,('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE='+principal))
         for name,url in [('wrong-host',dsn('deployment','wrong-host')),('unverified',dsn('deployment',ssl='require'))]:
             run('deny-'+name,drill.image,[],'deployment',('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE=deployment','-e','DATABASE_URL='+url),expected=1)
+        proof=secrets.token_hex(32)
+        drill.sql(db,"CREATE TABLE database_boundary_fixture(id text PRIMARY KEY,proof text); INSERT INTO database_boundary_fixture VALUES ('"+drill.run_id+"','"+proof+"'); GRANT SELECT ON database_boundary_fixture TO cf_drift")
+        r=subprocess.run(['go','test','-c','-tags','integration','-o',str(output/'drift-tests'),'./internal/repository'],cwd=ROOT/'services/infrastructure-service',env=env,capture_output=True,timeout=120)
+        if r.returncode:raise RuntimeError('Drift integration checker build failed')
+        run('scheduled-drift-db',drill.image,['-test.run=TestScheduledDrift','-test.v'],'drift',
+            ('--mount',f'type=bind,src={output/"drift-tests"},dst=/drift-tests,readonly','--entrypoint','/drift-tests',
+             '-e','TEST_DATABASE_URL='+dsn('migrator'),'-e','CF_DB_FIXTURE_ID='+drill.run_id,'-e','CF_DB_FIXTURE_PROOF='+proof))
         # The real HTTP server starts as a non-owner with no DDL permission.
         server=drill.create('container','runtime','--network',network,'--memory','256m',
             '--mount',f'type=bind,src={output/"ca.crt"},dst=/ca.crt,readonly',
@@ -77,7 +94,7 @@ def main():
     finally:
         failures=drill.cleanup()
         report={'status':'PASS' if success and not failures else 'FAIL','fixture':drill.run_id,
-                'checks':['23 one-shot migrations','AIOps one-shot schema','6 runtime principals','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup'],
+                ('checks' if success else 'planned_checks'):['23 one-shot migrations','AIOps one-shot schema','7 runtime principals','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences'],
                 'cleanup_failures':failures}
         (output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
     return int(not success or bool(failures))

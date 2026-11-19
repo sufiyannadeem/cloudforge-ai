@@ -34,6 +34,7 @@ func check() error {
 		return fmt.Errorf("TLS required")
 	}
 	allowed := map[string][]string{
+		"drift":          {"SELECT id FROM infrastructure_resources LIMIT 1", "SELECT * FROM terraform_drift_scans LIMIT 1", "SELECT * FROM public.cloudforge_record_scheduled_drift('00000000-0000-0000-0000-000000000000',now(),'observed','[]')"},
 		"project":        {"SELECT username FROM auth_users LIMIT 1", "INSERT INTO account_admin_audit(nonce,actor,action,username) VALUES (gen_random_uuid()::text,'fixture','verify','fixture')"},
 		"infrastructure": {"SELECT id FROM infrastructure_resources LIMIT 1", "UPDATE infrastructure_resources SET status=status WHERE false"},
 		"deployment":     {"SELECT username,role,active FROM auth_users LIMIT 1", "UPDATE aiops_remediation_proposals SET dispatch_consumed_at=clock_timestamp() WHERE false", "SELECT * FROM deployment_diagnostics LIMIT 1"},
@@ -53,6 +54,21 @@ func check() error {
 	denied := []string{"CREATE TABLE forbidden_fixture(id int)", "SET ROLE cf_migrator", "UPDATE schema_migrations SET version=version WHERE false"}
 	if service != "project" {
 		denied = append(denied, "SELECT password_hash FROM auth_users LIMIT 1", "UPDATE auth_users SET role='platform-engineer' WHERE false", "SELECT * FROM auth_sessions LIMIT 1")
+	}
+	if service == "drift" {
+		var owner string
+		if err = conn.QueryRow(ctx, "SELECT proowner::regrole::text FROM pg_proc WHERE oid='public.cloudforge_record_scheduled_drift(uuid,timestamptz,text,jsonb)'::regprocedure").Scan(&owner); err != nil || owner != "cf_migrator" {
+			return fmt.Errorf("unsafe append function owner")
+		}
+		for _, sql := range []string{
+			"SELECT * FROM public.cloudforge_record_scheduled_drift('00000000-0000-0000-0000-000000000000',now(),'approved','[]')",
+			`SELECT * FROM public.cloudforge_record_scheduled_drift('00000000-0000-0000-0000-000000000000',now(),'observed','[{"actor":"forged-human"}]')`,
+		} {
+			if _, err = conn.Exec(ctx, sql); err == nil {
+				return fmt.Errorf("unbounded audit payload accepted")
+			}
+		}
+		denied = append(denied, "UPDATE infrastructure_resources SET status='active' WHERE false", "UPDATE infrastructure_resources SET updated_at=updated_at WHERE false", "UPDATE infrastructure_plan_reviews SET status='approved' WHERE false", "DELETE FROM terraform_drift_scans WHERE false")
 	}
 	if service == "deployment" {
 		denied = append(denied, "UPDATE aiops_remediation_proposals SET approved_by='forged' WHERE false")

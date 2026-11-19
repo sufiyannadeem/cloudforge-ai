@@ -13,6 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build-scan:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -93,6 +94,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
   publish:
+    timeout-minutes: 20
     if: inputs.publish && github.ref == 'refs/heads/main'
     needs: build-scan
     environment: release
