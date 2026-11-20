@@ -1,4 +1,5 @@
 {
+  "can_admins_bypass": false,
   "prevent_self_review": false,
   "reviewers": [],
   "deployment_branch_policy": {

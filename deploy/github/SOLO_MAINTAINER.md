@@ -1,6 +1,9 @@
 # Solo-maintainer GitHub release setup
 
-Prepared locally at the owner's request; **GitHub settings are not applied**.
+**Status (Batch 33 read-back):** approved GitHub settings are applied: ruleset
+24049172 requires both aggregate checks, and `release` restricts protected branches
+with no reviewers and `can_admins_bypass: false`. This is recorded evidence, not a
+claim that future settings cannot drift.
 This replaces the independent GitHub reviewer assumptions in Batches 30–31.
 It does not change platform RBAC, project isolation, Terraform saved-plan approval,
 rollout promotion or AIOps remediation authorization. Production acceptance remains
@@ -17,17 +20,18 @@ blocked; no push, PR action, publication or deployment is authorized by this fil
   reviewers, no self-review restriction and protected-branches-only access.
   The workflow requires main separately. There is no environment approval wait
   or claim of independent review; publication is an explicit manual opt-in.
-- In Settings → Environments → release, disable **Allow administrators to bypass
-  configured protection rules** if supported/exposed. If GitHub hides this control
-  with no reviewer/timer protection, record that limitation; do not invent a REST
-  field or claim an approval gate exists. The runtime API check verifies branch
-  restrictions, not the UI bypass setting. Owners can still edit repository
-  settings later; this configuration is not protection against a compromised owner.
+- The environment PUT payload explicitly sets `can_admins_bypass: false`.
+  The publish preflight requires the GET response to contain literal JSON false;
+  true, missing, null, numbers, strings and containers fail closed before registry
+  login. This is a top-level environment field, not a reviewer/protection-rule
+  entry. If unavailable, publication remains blocked; there is no fallback.
+  Owners can still edit settings; this does not protect against a compromised owner.
 
 The release helper accepts a branch-restricted environment with no required
 reviewers (including an explicitly empty reviewer rule), and rejects missing/wrong
 environment, open/custom-pattern branch policy or actual/malformed reviewer
-requirements. It never falls back to bypassing a gate.
+requirements or administrator bypass not explicitly disabled. It never falls back
+to bypassing a gate.
 
 ## Workflow and local evidence
 
@@ -52,38 +56,31 @@ even with commit skip markers; only all-success passes.
 
 Focused release/CI/security tests cover the solo policy, both check names, gate
 dependencies, permissions, action pins, scan failure behavior, default-disabled
-publication and existing signing rejection paths. Hosted workflow runs, actual
-keyless certificates/transparency and registry behavior are still unverified for
-these local commits; prior offline crypto evidence is not a hosted release test.
+publication and existing signing rejection paths. Batch 32 hosted CI and the
+six-image Security Gate passed at `0c3d7abd`.
+The manual seven-image release workflow (including PostgreSQL), actual keyless
+certificates/transparency and registry publication remain unverified; CI success
+is not a hosted release test.
 
-Local result: **54 passed**, three unrelated Terraform/history wrappers deselected.
+Historical solo-setup local result: **54 passed**, three unrelated Terraform/history wrappers deselected.
 Both gate shell steps ran with synthetic dependency results; no hosted workflow
 was dispatched. No full build or image publication was performed.
 Python/JSON/YAML syntax, staged Gitleaks and `git diff --check` passed.
 
 ## Approval boundary and next exact actions
 
-Read-only GitHub inspection on November 20, 2026: ruleset **24049172** already has
-zero reviews/no last-push requirement/no bypass actors, but requires only Security
-Gate. There are **no environments**. Actions is enabled, default token permissions
-are read, bot PR approval is disabled, and global SHA enforcement is false.
+The Batch 33 read-back confirmed active ruleset **24049172**: PR required,
+zero reviews, both exact aggregate checks with strict updates, no bypass actors,
+and deletion/force-push blocked. The `release` environment has protected-branch
+restrictions, no reviewer requirement and administrator bypass disabled.
+No independent human GitHub approval is claimed. Platform approvals are unchanged.
 
-**Stop for explicit approval before any of the following writes.** Proposed first
-phase changes only settings: add the missing exact CI check while preserving the
-solo rules above; create release with the prepared payload; disable administrator
-bypass in the UI where available, and read back evidence. No push, PR action,
-workflow dispatch, registry publication or deployment is included in that approval.
+The committed environment payload now reproduces the observed bypass restriction.
+Any future settings mutation requires separate explicit approval; do not reapply
+payloads without backing up and comparing live settings. No settings mutation,
+push, PR action, workflow dispatch or publication is authorized by this document.
 
-Prepared commands, **not executed** (run from the repository root):
-
-```sh
-gh api repos/sufiyannadeem/cloudforge-ai/rulesets/24049172
-# Stop and review if live rules differ from the inspected baseline.
-gh api --method PUT repos/sufiyannadeem/cloudforge-ai/rulesets/24049172 --input deploy/github/main-ruleset.json
-gh api --method PUT repos/sufiyannadeem/cloudforge-ai/environments/release --input deploy/github/release-environment.example.json
-```
-
-After the approved changes, verify with read-only commands:
+Verify current enforcement with read-only commands:
 
 ```sh
 gh api repos/sufiyannadeem/cloudforge-ai/rulesets/24049172
@@ -93,8 +90,8 @@ gh api repos/sufiyannadeem/cloudforge-ai/environments/release
 
 Expected: active PR rule, zero reviews, last-push/code-owner approval false, both
 strict exact check contexts/app IDs, empty bypass actors, deletion/force-push blocks,
-release protected-branches-only and no required-reviewer rule. Retain actual UI
-evidence or the unsupported-control limitation for administrator bypass.
+release protected-branches-only, no required-reviewer rule, and top-level
+`can_admins_bypass: false`. Missing/unsupported bypass evidence blocks publication.
 
 Next obtain separate approval for a normal push of `feat/aws-terraform-foundation`,
 then creating the integration PR. Require fresh exact-head CI/Security success

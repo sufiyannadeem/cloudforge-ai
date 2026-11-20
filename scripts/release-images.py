@@ -83,6 +83,8 @@ def verify_manifest(manifest, repository, revision, run_id, run_attempt):
 
 def verify_release_environment(environment):
     """Require branch protection without claiming a solo release has peer approval."""
+    if environment.get('can_admins_bypass') is not False:
+        raise ValueError('Release environment must explicitly disable administrator bypass')
     policy = environment.get('deployment_branch_policy') or {}
     reviews = [rule for rule in environment.get('protection_rules', [])
                if rule.get('type') == 'required_reviewers']

@@ -1,75 +1,23 @@
-# Batch 31 — release security configuration (not applied)
+# Batch 31 — release security configuration
 
-**Solo-maintainer update:** [current GitHub setup](github/SOLO_MAINTAINER.md)
-supersedes this historical requirement for independent GitHub reviewers. PRs,
-both CI checks and signing remain required; platform Terraform/remediation
-approval rules are unchanged. No hosted settings have been applied.
+**Current policy:** [solo-maintainer GitHub setup](github/SOLO_MAINTAINER.md)
+supersedes the original independent-review design. The approved settings were
+read back in Batch 33: ruleset 24049172 requires PRs, zero reviews, strict
+`All CI Checks Passed` and `Security Gate` checks, no bypass actors and no
+force-push/deletion. `release` restricts protected branches, requires no reviewers
+and has `can_admins_bypass: false`. No independent approval is claimed.
 
-**PARTIAL; publication/deployment remain NO-GO.** Local baseline `868d813`.
-Read-only GitHub checks on November 20, 2026 still show ruleset 24049172 with zero
-approving reviews and only `Security Gate` required, and zero environments. No
-settings, refs, PRs, registry artifacts, cloud resources or deployments changed.
+Batch 33.1 pins the top-level environment API field in
+`github/release-environment.example.json` and requires literal false in the
+publish preflight. Missing, true or malformed values block registry login.
+The branch and reviewer checks remain in force. Owners can change settings;
+this is not protection against a compromised owner. See the current setup for
+read-only verification commands; future mutations require explicit approval.
 
-## Prepared protection settings
-
-`github/main-ruleset.json` preserves the active default-branch scope, no bypass
-actors, deletion/force-push blocking, strict up-to-date checks and resolved threads.
-It requires one approving review, dismissal on updates and last-push approval.
-Both exact contexts `All CI Checks Passed` and `Security Gate` are tied to the
-observed GitHub Actions integration 15368; tests compare names with real jobs.
-There is no review-bypass actor or ruleset bypass entry. Code-owner enforcement
-is not invented without a reviewed ownership policy.
-
-`github/release-environment.example.json` is deliberately incomplete: its empty
-reviewer list must be replaced with independently verified, trusted reviewer IDs.
-It requires prevention of self-review and protected-branches-only access. The
-publish workflow additionally requires manual dispatch on main and reads the
-live environment policy before registry login. This check does not prove a human
-approved this particular job; GitHub's enforced environment gate must do that.
-
-Administrator bypass must be disabled and independently checked in the GitHub
-environment UI. The REST policy check does not claim to prove this UI setting.
-Keep ruleset bypass actors empty and restrict settings administration. A sole
-maintainer cannot self-approve; arrange an independent trusted reviewer.
-
-## Exact setup actions — human approval required; not executed
-
-First re-read and diff the live ruleset; stop if it has acquired additional rules
-that the prepared file would overwrite. After separate settings-change approval:
-
-```sh
-gh api repos/sufiyannadeem/cloudforge-ai/rulesets/24049172 > /tmp/current-cloudforge-ruleset.json
-gh api --method PUT repos/sufiyannadeem/cloudforge-ai/rulesets/24049172 --input deploy/github/main-ruleset.json
-```
-
-Choose a real independent reviewer (not the workflow initiator). Resolve their
-GitHub ID, verify trust/access, and prepare the environment payload locally:
-
-```sh
-: "${RELEASE_REVIEWER_LOGIN:?set the approved independent reviewer login}"
-gh api "users/$RELEASE_REVIEWER_LOGIN" --jq .id > /tmp/cloudforge-release-reviewer-id
-python3 - <<'PY'
-import json
-from pathlib import Path
-reviewer=int(Path('/tmp/cloudforge-release-reviewer-id').read_text())
-assert reviewer > 0
-policy=json.loads(Path('deploy/github/release-environment.example.json').read_text())
-policy['reviewers']=[{'type':'User','id':reviewer}]
-with Path('/tmp/cloudforge-release-environment.json').open('x') as out:
-    json.dump(policy,out,indent=2)
-PY
-```
-
-Review that non-secret file, then only with explicit settings-change approval:
-
-```sh
-gh api --method PUT repos/sufiyannadeem/cloudforge-ai/environments/release --input /tmp/cloudforge-release-environment.json
-```
-
-In repository Settings → Environments → release, disable administrator bypass.
-Re-read the ruleset and environment and retain independent UI evidence. Never
-interpret prepared files or successful API writes alone as enforced protections.
-These commands do not push code, create a PR or dispatch a workflow.
+**PARTIAL; publication/deployment remain NO-GO.** Batch 32 hosted CI and the
+six-image Security Gate passed at `0c3d7abd`. The manual seven-image release
+workflow, registry publication and hosted keyless verification remain unverified.
+Platform RBAC and Terraform/remediation approvals are unchanged.
 
 ## Digest signing, provenance and consumer policy
 
@@ -126,11 +74,11 @@ Kubernetes admission verification is **not installed** by the CLI policy.
   All-source/tool compromise and upstream trust are not eliminated by checksums.
 
 After separate push/review approval, obtain exact-head CI/security success and
-apply/verify protections. Test a denied non-main dispatch and publish=false build
+re-read the already applied protections. Test a denied non-main dispatch and publish=false build
 first. Only after explicit **registry-publication approval**, test hosted OIDC,
 Fulcio/Rekor availability, GHCR OCI signature/attestation storage and independent
 consumer verification on all seven real digests. Test wrong identity/source/run,
-absent signature and revoked/broken evidence. Review real reviewer/bypass behavior,
+absent signature and revoked/broken evidence. Review real branch/bypass behavior,
 retention and digest admission before accepting a release. Do not weaken trust
 checks to recover a failed test. [Batch 30](BATCH30_RELEASE_PREPARATION.md) remains
 the historical PR/push plan; its statement that signing is unwired is superseded

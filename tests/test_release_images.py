@@ -61,7 +61,7 @@ def test_workflow_scan_publish_approval_and_exact_image_handoff():
 
 
 def test_solo_release_environment_requires_branch_restriction_without_reviewers():
-    environment={'name':'release','deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False},
+    environment={'name':'release','can_admins_bypass':False,'deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False},
                  'protection_rules':[{'type':'branch_policy'}]}
     m.verify_release_environment(environment)
     empty_rules=copy.deepcopy(environment);empty_rules['protection_rules']=[]
@@ -76,8 +76,24 @@ def test_solo_release_environment_requires_branch_restriction_without_reviewers(
     bad=copy.deepcopy(environment);bad['protection_rules'].append({'type':'required_reviewers','prevent_self_review':True,'reviewers':[{'type':'User','reviewer':{'id':123}}]})
     with pytest.raises(ValueError,match='must not require reviewers'):m.verify_release_environment(bad)
     policy=json.loads((ROOT/'deploy/github/release-environment.example.json').read_text())
+    assert policy['can_admins_bypass'] is False
     assert policy['reviewers']==[] and policy['prevent_self_review'] is False
     assert policy['deployment_branch_policy']==environment['deployment_branch_policy']
+
+
+@pytest.mark.parametrize('value', [True, None, 0, 1, '', 'false', 'true', [], {}])
+def test_release_environment_rejects_malformed_or_enabled_admin_bypass(value):
+    environment={'name':'release','can_admins_bypass':value,
+                 'deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False}}
+    with pytest.raises(ValueError,match='explicitly disable administrator bypass'):
+        m.verify_release_environment(environment)
+
+
+def test_release_environment_rejects_missing_admin_bypass():
+    environment={'name':'release',
+                 'deployment_branch_policy':{'protected_branches':True,'custom_branch_policies':False}}
+    with pytest.raises(ValueError,match='explicitly disable administrator bypass'):
+        m.verify_release_environment(environment)
 
 
 def release_fixture():

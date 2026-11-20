@@ -1,3 +1,8 @@
+> Historical Batch 30 snapshot. For current applied GitHub settings and the
+> solo-maintainer policy, see [current setup](github/SOLO_MAINTAINER.md).
+> Its independent-review, missing-environment and missing-signing observations
+> below are superseded by Batches 31–33.1; they are not current setup instructions.
+
 # Batch 30 — GitHub release preparation
 
 **Current policy:** [solo-maintainer setup](github/SOLO_MAINTAINER.md) replaces the
