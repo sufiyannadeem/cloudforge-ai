@@ -1,4 +1,5 @@
-import type { DeploymentStrategy } from "./deployments";
+import type { Deployment, DeploymentAttemptStatus } from "./deployments";
+export type { Deployment, DeploymentStatus, DeploymentAttemptStatus } from "./deployments";
 
 export interface ApiError {
   message: string;
@@ -99,35 +100,6 @@ export interface InfrastructureListResponse {
   items: InfrastructureResource[];
   limit: number;
   offset: number;
-}
-
-export type DeploymentStatus =
-  | "pending"
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export type DeploymentAttemptStatus =
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export interface Deployment {
-  strategy?: DeploymentStrategy;
-  created_by?: string;
-  id: string;
-  project_id: string;
-  environment: string;
-  image: string;
-  git_commit_sha: string;
-  namespace: string;
-  status: DeploymentStatus;
-  execution_mode?: "simulated" | "kubernetes" | "unknown";
-  created_at: string;
-  updated_at: string;
 }
 
 export interface DeploymentAttempt {

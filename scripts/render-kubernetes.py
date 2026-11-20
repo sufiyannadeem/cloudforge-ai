@@ -53,6 +53,8 @@ def render(config):
     if ai['provider'] == 'bedrock':
         checked(role_pattern, roles['aiops-service'], 'roles.aiops-service')
         checked(r'[A-Za-z0-9.:/_-]+', ai['model'], 'ai.model')
+        checked(r'[a-z0-9]{1,64}', ai.get('guardrail_id'), 'ai.guardrail_id')
+        checked(r'[1-9][0-9]{0,7}', ai.get('guardrail_version'), 'ai.guardrail_version')
     if set(roles) != {'infrastructure-service', 'finops-service', 'secret-sync'} | ({'aiops-service'} if ai['provider'] == 'bedrock' else set()) | ({'drift'} if scheduled_drift else set()):
         raise ValueError('Unexpected workload role')
     if len(set(roles.values()) | {config['provisioner_role_arn']}) != len(roles) + 1:
@@ -181,6 +183,8 @@ def render(config):
             additional['AI_PROVIDER'] = ai['provider']
             if ai['provider'] == 'bedrock':
                 additional['AI_MODEL'] = ai['model']
+                additional['AI_BEDROCK_GUARDRAIL_ID'] = ai['guardrail_id']
+                additional['AI_BEDROCK_GUARDRAIL_VERSION'] = ai['guardrail_version']
         if name == 'frontend':
             additional['GRAFANA_URL'] = f'http://grafana.{monitor_ns}.svc:3000'
         container['env'] = [e for e in container.get('env', []) if e['name'] not in additional]
@@ -234,9 +238,9 @@ def render(config):
         if name == 'database-grants':
             container['command'] = ['python','-c',grant_code]; container.pop('args')
         container['env'] = [{'name':'APP_ENV','value':'production'}, {'name':'PGSSLROOTCERT','value':'/etc/cloudforge/db-ca/ca.crt'},
-                            {'name':'PYTHONDONTWRITEBYTECODE','value':'1'}, {'name':'TERRAFORM_READ_ONLY','value':'true'}]
+                            {'name':'PYTHONDONTWRITEBYTECODE','value':'1'}, {'name':'TMPDIR','value':'/var/run/cloudforge'}, {'name':'TERRAFORM_READ_ONLY','value':'true'}]
         container['envFrom'] = [{'secretRef': {'name':'cloudforge-migration-db'}}]
-        container['volumeMounts'] = [{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True}, {'name':'tmp','mountPath':'/tmp'}]
+        container['volumeMounts'] = [{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True}, {'name':'tmp','mountPath':'/var/run/cloudforge'}]
         volumes = [{'name':'database-ca','configMap':{'name':database_ca}}, {'name':'tmp','emptyDir':{'sizeLimit':'128Mi'}}]
         if name == 'database-grants':
             volumes.append({'name':'grants','configMap':{'name':'cloudforge-database-grants'}})
@@ -309,8 +313,8 @@ def render(config):
         container['env']=[{'name':key,'value':value} for key,value in {
             'APP_ENV':'production','TERRAFORM_READ_ONLY':'true','AWS_REGION':region,'AWS_DEFAULT_REGION':region,
             'AWS_STS_REGIONAL_ENDPOINTS':'regional','AWS_EC2_METADATA_DISABLED':'true','CLOUDFORGE_DRIFT_ROLE_ARN':roles['drift'],'TERRAFORM_STATE_BUCKET':bucket,'TERRAFORM_STATE_REGION':region,
-            'PGSSLROOTCERT':'/etc/cloudforge/db-ca/ca.crt','TERRAFORM_WORKSPACE_ROOT':'/tmp/terraform'}.items()]
-        container['volumeMounts']=[{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True},{'name':'tmp','mountPath':'/tmp'}]
+            'PGSSLROOTCERT':'/etc/cloudforge/db-ca/ca.crt','TERRAFORM_WORKSPACE_ROOT':'/var/lib/cloudforge/terraform','TMPDIR':'/var/lib/cloudforge'}.items()]
+        container['volumeMounts']=[{'name':'database-ca','mountPath':'/etc/cloudforge/db-ca','readOnly':True},{'name':'tmp','mountPath':'/var/lib/cloudforge'}]
         pod={'serviceAccountName':'cloudforge-drift','automountServiceAccountToken':False,'restartPolicy':'Never',
              'terminationGracePeriodSeconds':15,'securityContext':copy.deepcopy(original['securityContext']),
              'containers':[container],'volumes':[{'name':'database-ca','configMap':{'name':database_ca}}, {'name':'tmp','emptyDir':{'sizeLimit':'2Gi'}}]}

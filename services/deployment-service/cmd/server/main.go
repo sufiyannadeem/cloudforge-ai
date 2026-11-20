@@ -221,7 +221,7 @@ func main() {
 	}
 
 	shutdownContext, stop := signal.NotifyContext(
-		context.Background(),
+		ctx,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 	)
@@ -323,7 +323,7 @@ func main() {
 	) * time.Second
 
 	shutdownCtx, cancel := context.WithTimeout(
-		context.Background(),
+		ctx,
 		shutdownTimeout,
 	)
 	defer cancel()

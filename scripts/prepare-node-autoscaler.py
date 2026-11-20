@@ -73,10 +73,18 @@ def prepare(config):
     return values, trust, policy
 
 
+def workspace_path(value):
+    path = Path(value)
+    resolved = path.resolve()
+    if path.is_symlink() or not resolved.is_relative_to(Path.cwd().resolve()) or resolved == Path.cwd().resolve():
+        raise argparse.ArgumentTypeError('Path must stay within the current workspace, without symlinks')
+    return resolved
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, required=True)
-    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--config', type=workspace_path, required=True)
+    parser.add_argument('--output-dir', type=workspace_path, required=True)
     args = parser.parse_args()
     try:
         values, trust, policy = prepare(json.loads(args.config.read_text()))

@@ -23,7 +23,9 @@ _DURATION_UNITS = {"y": 31536000, "w": 604800, "d": 86400, "h": 3600, "m": 60, "
 
 
 def window_seconds(window: str) -> float:
-    parts = re.findall(r"([0-9]+)(ms|[ywdhms])", window)
+    if not isinstance(window, str) or len(window) > 64:
+        raise ValueError("Invalid SLO window")
+    parts = re.findall(r"([0-9]{1,12})(ms|[ywdhms])", window)
     if not parts or "".join(value + unit for value, unit in parts) != window:
         raise ValueError("Invalid SLO window")
     return sum(int(value) * _DURATION_UNITS[unit] for value, unit in parts)

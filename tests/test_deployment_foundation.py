@@ -113,7 +113,7 @@ def test_unconfigured_template_produces_no_partial_manifest():
 
 
 def test_bedrock_requires_explicit_identity_and_model(config):
-    config['ai'] = {'provider': 'bedrock', 'model': 'fixture.model'}
+    config['ai'] = {'provider': 'bedrock', 'model': 'fixture.model', 'guardrail_id':'fixture123', 'guardrail_version':'1'}
     with pytest.raises(KeyError): renderer.render(config)
     config['roles']['aiops-service'] = 'arn:aws:iam::123456789012:role/fixture-aiops'
     docs = renderer.render(config)
@@ -230,3 +230,29 @@ def test_scheduled_drift_has_no_provisioner_or_human_signing_key(config):
     assert not any(e['name'] in ['TERRAFORM_PROVISIONER_ROLE_ARN','CLOUDFORGE_FRONTEND_KEY'] for e in c['env'])
     assert c['envFrom']==[{'secretRef':{'name':'cloudforge-drift-db'}}]
     assert job['spec']['jobTemplate']['spec']['activeDeadlineSeconds']==120
+
+
+def test_migration_and_drift_workspaces_are_private_bounded_volumes(config):
+    config['drift']={'enabled':True}
+    config['roles']['drift']='arn:aws:iam::123456789012:role/fixture-drift'
+    config['secrets']['cloudforge-drift-db'] = dict(config['secrets']['cloudforge-migration-db'])
+    docs=renderer.render(config)
+    pods=[d['spec']['template']['spec'] for d in docs if d['kind']=='Job']
+    pods += [d['spec']['jobTemplate']['spec']['template']['spec'] for d in docs if d['kind']=='CronJob']
+    for pod in pods:
+        container=pod['containers'][0]
+        env={e['name']:e.get('value') for e in container['env']}
+        mount=next(m for m in container['volumeMounts'] if m['name']=='tmp')
+        volume=next(v for v in pod['volumes'] if v['name']=='tmp')
+        assert env['TMPDIR']==mount['mountPath']
+        assert not mount['mountPath'].startswith('/tmp')
+        assert volume['emptyDir']['sizeLimit'] in {'128Mi','2Gi'}
+        assert pod['securityContext']['runAsNonRoot'] is True
+
+
+def test_bedrock_renderer_rejects_missing_or_draft_guardrail(config):
+    config['ai']={'provider':'bedrock','model':'fixture.model'}
+    config['roles']['aiops-service']='arn:aws:iam::123456789012:role/fixture-aiops'
+    with pytest.raises(ValueError):renderer.render(config)
+    config['ai'].update(guardrail_id='fixture123',guardrail_version='DRAFT')
+    with pytest.raises(ValueError):renderer.render(config)

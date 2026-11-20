@@ -100,10 +100,10 @@ def artifacts(root, revision):
     result = []
     for service in sorted(SERVICES):
         folder = root / ('image-' + service)
-        meta = json.loads((folder/'metadata.json').read_text())
         archive = folder/'image.tar'
         sbom = folder/'sbom.json'
         if any(path.is_symlink() for path in [archive,sbom,folder,folder/'metadata.json']): raise ValueError('Symlink artifact forbidden')
+        meta = json.loads((folder/'metadata.json').read_text())
         with archive.open('rb') as stream: checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
         if (meta['service'] != service or meta['revision'] != revision or meta['archive_sha256'] != checksum
                 or meta.get('sbom_sha256') != hashlib.sha256(sbom.read_bytes()).hexdigest()
@@ -124,12 +124,28 @@ def select_images(config, manifest):
     return config
 
 
+def workspace_path(value):
+    """CLI inputs and outputs must stay inside the caller's working directory."""
+    path = Path(value)
+    resolved = path.resolve()
+    if path.is_symlink() or not resolved.is_relative_to(Path.cwd().resolve()) or resolved == Path.cwd().resolve():
+        raise argparse.ArgumentTypeError('Path must stay within the current workspace, without symlinks')
+    return resolved
+
+
+def revision_argument(value):
+    if not re.fullmatch(r'[0-9a-f]{40}', value):
+        raise argparse.ArgumentTypeError('Expected exact Git revision')
+    return value
+
+
 def publish(root, revision, output):
     if (os.getenv('GITHUB_ACTIONS') != 'true' or os.getenv('GITHUB_EVENT_NAME') != 'workflow_dispatch'
             or os.getenv('GITHUB_REF') != 'refs/heads/main' or os.getenv('RELEASE_PUBLISH_APPROVED') != 'true'):
         raise ValueError('Publishing requires the protected manual main release job')
     repository = os.environ['GITHUB_REPOSITORY'].lower()
     if not re.fullmatch(r'[a-z0-9_.-]+/[a-z0-9_.-]+',repository): raise ValueError('Invalid repository')
+    revision = revision_argument(revision)
     checked = artifacts(root,revision)  # Validate ALL artifacts before any push.
     images = {}
     evidence = {}
@@ -156,20 +172,21 @@ def publish(root, revision, output):
     manifest = {'revision':revision,'run_id':run_id,'run_attempt':run_attempt,'images':images,'provenance':evidence}
     verify_manifest(manifest,repository,revision,run_id,run_attempt)
     # No consumable release manifest until every signature and claim verifies.
-    output.write_text(json.dumps(manifest,indent=2)+'\n')
+    with output.open('x') as stream:
+        stream.write(json.dumps(manifest,indent=2)+'\n')
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--artifacts',type=Path)
-    parser.add_argument('--revision')
+    parser.add_argument('--artifacts',type=workspace_path)
+    parser.add_argument('--revision',type=revision_argument)
     parser.add_argument('--repository')
     parser.add_argument('--run-id')
     parser.add_argument('--run-attempt')
     parser.add_argument('--publish',action='store_true')
-    parser.add_argument('--config',type=Path)
-    parser.add_argument('--manifest',type=Path)
-    parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--config',type=workspace_path)
+    parser.add_argument('--manifest',type=workspace_path)
+    parser.add_argument('--output',type=workspace_path,required=True)
     args=parser.parse_args()
     if args.output.exists(): parser.error('Refusing to overwrite an existing output')
     if args.publish: publish(args.artifacts,args.revision,args.output)
@@ -179,4 +196,5 @@ if __name__=='__main__':
         manifest=json.loads(args.manifest.read_text())
         verify_manifest(manifest,args.repository,args.revision,args.run_id,args.run_attempt)
         config=select_images(json.loads(args.config.read_text()),manifest)
-        args.output.write_text(json.dumps(config,indent=2)+'\n')
+        with args.output.open('x') as stream:
+            stream.write(json.dumps(config,indent=2)+'\n')

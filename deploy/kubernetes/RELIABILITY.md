@@ -41,11 +41,16 @@ Use upstream Cluster Autoscaler, not a custom controller. Copy
 `node-autoscaling-inputs.example.json` outside the repository and supply verified
 account, region, cluster version, reviewed chart version, matching image digest,
 exact ASG ARNs and a dedicated IRSA role/OIDC provider. No resources are invented.
+CLI paths must stay in the current private review directory (no symlinks or
+outside paths). From the repository root:
 
 ```sh
-python3 scripts/prepare-node-autoscaler.py --config /path/to/reviewed-inputs.json --output-dir /tmp/cloudforge-node-review
-helm template cloudforge-node-autoscaler /path/to/reviewed-cluster-autoscaler-chart --namespace kube-system --kubeconfig /dev/null --values /tmp/cloudforge-node-review/values.yml > /tmp/cloudforge-node-review/upstream.yml
-kubectl --kubeconfig=/dev/null kustomize /tmp/cloudforge-node-review > /tmp/cloudforge-node-review/rendered.yml
+REPO_ROOT="$PWD"
+cd "${REVIEW_WORKSPACE:?private directory containing reviewed-inputs.json}"
+umask 077
+python3 "$REPO_ROOT/scripts/prepare-node-autoscaler.py" --config reviewed-inputs.json --output-dir cloudforge-node-review
+helm template cloudforge-node-autoscaler /path/to/reviewed-cluster-autoscaler-chart --namespace kube-system --kubeconfig /dev/null --values cloudforge-node-review/values.yml > cloudforge-node-review/upstream.yml
+kubectl --kubeconfig=/dev/null kustomize cloudforge-node-review > cloudforge-node-review/rendered.yml
 ```
 
 These commands render only. Review the generated IAM/trust and final manifests;

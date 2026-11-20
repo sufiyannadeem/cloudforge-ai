@@ -182,3 +182,42 @@ def run_tests() -> None:
 
 if __name__ == "__main__":
     run_tests()
+
+
+def test_bedrock_requires_published_guardrail_before_sdk_access(monkeypatch):
+    import boto3
+    def forbidden(*args, **kwargs):
+        raise AssertionError('SDK called without approved guardrail')
+    monkeypatch.setattr(boto3, 'client', forbidden)
+    provider=AIProvider();provider.provider='bedrock';provider.model='fixture.model'
+    provider.guardrail_id='';provider.guardrail_version=''
+    assert provider.enabled is False
+    assert provider.analyze('system','user').status=='error'
+    provider.guardrail_id='fixture123';provider.guardrail_version='DRAFT'
+    assert provider.analyze('system','user').status=='error'
+
+
+def test_bedrock_binds_guardrail_and_rejects_intervened_output(monkeypatch):
+    import boto3
+    import io
+    import json
+    from unittest.mock import Mock
+    client=Mock()
+    client.invoke_model.return_value={'body':io.BytesIO(json.dumps({
+        'amazon-bedrock-guardrailAction':'INTERVENED',
+        'output':{'message':{'content':[{'text':'blocked content'}]}}
+    }).encode())}
+    monkeypatch.setattr(boto3,'client',lambda *args,**kwargs:client)
+    provider=AIProvider();provider.provider='bedrock';provider.model='fixture.model'
+    provider.guardrail_id='fixture123';provider.guardrail_version='2'
+    assert provider.enabled is True
+    result=provider.analyze('system','user')
+    assert result.status=='error' and result.content is None
+    assert client.invoke_model.call_args.kwargs['guardrailIdentifier']=='fixture123'
+    assert client.invoke_model.call_args.kwargs['guardrailVersion']=='2'
+    client.invoke_model.return_value={'body':io.BytesIO(json.dumps({
+        'amazon-bedrock-guardrailAction':'NONE',
+        'output':{'message':{'content':[{'text':'measured evidence'}]}}
+    }).encode())}
+    result=provider.analyze('system','user')
+    assert result.content=='measured evidence' and result.status=='success'

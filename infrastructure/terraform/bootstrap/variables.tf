@@ -81,3 +81,12 @@ variable "secret_sync_kms_key_arns" {
     error_message = "Use exact same-account/region KMS key ARNs only with configured secrets."
   }
 }
+
+variable "state_access_log_bucket_name" {
+  description = "Approved existing S3 access-log destination in this account and region, with log-delivery permissions. Must differ from the state bucket."
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.state_access_log_bucket_name)) && var.state_access_log_bucket_name != var.state_bucket_name
+    error_message = "Provide an approved access-log bucket distinct from the Terraform state bucket."
+  }
+}

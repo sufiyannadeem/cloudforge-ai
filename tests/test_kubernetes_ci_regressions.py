@@ -71,3 +71,11 @@ def test_rbac_exceptions_are_limited_to_the_reviewed_role_manifest():
              if step.get("uses", "").startswith("aquasecurity/trivy-action@")]
     assert all(scan["version"] == "v0.76.2" for scan in scans)
     assert next(scan for scan in scans if scan["scan-type"] == "fs")["trivyignores"] == "deploy/kubernetes/trivy-rbac-exceptions.yaml"
+
+
+def test_raw_workloads_have_bounded_storage_and_minimal_api_tokens():
+    for name, pod in deployments().items():
+        assert pod['automountServiceAccountToken'] is (name=='deployment-service')
+        for container in pod['containers']:
+            assert container['resources']['requests']['ephemeral-storage']=='128Mi'
+            assert container['resources']['limits']['ephemeral-storage']=='4Gi'

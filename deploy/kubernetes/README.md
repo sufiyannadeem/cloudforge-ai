@@ -93,8 +93,11 @@ Supply account/region-matching infrastructure runtime, provisioner, FinOps, and
 secret-sync role ARNs. Infra and FinOps use distinct service accounts. Deployment
 uses only its in-cluster API token and existing project-scoped RoleBindings; no AWS
 role is granted. AIOps defaults to AI disabled, not mock success. To enable Bedrock,
-set `ai.provider=bedrock`, an approved `ai.model`, and `roles.aiops-service` with
-scoped model permissions. Other app API tokens are not automatically mounted; IRSA
+set `ai.provider=bedrock`, an approved `ai.model`, `ai.guardrail_id`, a published
+numeric `ai.guardrail_version`, and `roles.aiops-service` with scoped model and
+guardrail permissions. Missing/DRAFT guardrails fail closed before inference;
+intervened model output is rejected. The guardrail and its IAM permission must be
+approved and verified in AWS separately; the renderer does not create them. Other app API tokens are not automatically mounted; IRSA
 uses its own projected identity token. No application receives the sync role.
 
 Install and review External Secrets Operator with `external-secrets.io/v1` CRDs

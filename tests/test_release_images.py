@@ -246,6 +246,26 @@ def test_failed_signing_never_emits_release_manifest(tmp_path,monkeypatch):
 
 
 def test_cli_selection_requires_trusted_release_coordinates(tmp_path):
-    result=m.subprocess.run(['python3',str(ROOT/'scripts/release-images.py'),'--config','unused','--manifest','unused','--output',str(tmp_path/'out.json')],capture_output=True)
+    result=m.subprocess.run(['python3',str(ROOT/'scripts/release-images.py'),'--config','unused','--manifest','unused','--output',str(tmp_path/'out.json')],cwd=tmp_path,capture_output=True)
     assert result.returncode!=0 and b'Trusted --repository' in result.stderr
     assert not (tmp_path/'out.json').exists()
+
+
+@pytest.mark.parametrize('value', ['../outside.json', '/etc/passwd'])
+def test_cli_paths_cannot_escape_workspace(tmp_path, monkeypatch, value):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(m.argparse.ArgumentTypeError): m.workspace_path(value)
+
+
+def test_cli_paths_reject_symlinks_and_allow_workspace_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    target=tmp_path/'input.json';target.write_text('{}')
+    link=tmp_path/'linked.json';link.symlink_to(target)
+    with pytest.raises(m.argparse.ArgumentTypeError):m.workspace_path(link)
+    assert m.workspace_path('input.json')==target
+    assert m.workspace_path('new.json')==tmp_path/'new.json'
+
+
+@pytest.mark.parametrize('revision', ['--all', 'a'*40+' --all', '../../escape', 'A'*40])
+def test_cli_revision_rejects_command_options(revision):
+    with pytest.raises(m.argparse.ArgumentTypeError):m.revision_argument(revision)

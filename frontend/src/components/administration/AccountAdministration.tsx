@@ -50,7 +50,7 @@ export default function AccountAdministration() {
       <label>Role <select name="role" className={style}><option value="developer">Developer</option><option value="sre">SRE</option><option value="platform-engineer">Platform Engineer</option></select></label>
       <label>Password for new user <input name="password" type="password" minLength={15} maxLength={1024} autoComplete="new-password" className={style}/></label>
       <label>Email <input name="email" type="email" className={style}/></label>
-      <button disabled={busy} className={style}>Save account change</button>
+      <button type="submit" disabled={busy} className={style}>Save account change</button>
     </form>
     <div className="overflow-x-auto"><table className="w-full text-left"><caption>Users</caption><thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>{data?.users.map((user) => <tr key={user.username}><td>{user.username}</td><td>{user.email ?? "Not provided"}</td><td>{user.role}</td><td>{user.active ? "Active" : "Inactive"}</td></tr>)}</tbody></table></div>
     <form aria-label="Manage project membership" className="flex flex-wrap gap-3" onSubmit={(event) => { event.preventDefault(); void change(event.currentTarget); }}>
@@ -58,7 +58,7 @@ export default function AccountAdministration() {
       <label>Project <select required name="project_id" className={style}>{data?.projects.map((project) => <option key={project.id} value={project.id}>{project.name} · Owner {project.created_by ?? "Unverified"}</option>)}</select></label>
       <label>Member <select required name="username" className={style}>{data?.users.map((user) => <option key={user.username}>{user.username}</option>)}</select></label>
       <label>Access <select name="level" className={style}><option value="viewer">Viewer</option><option value="maintainer">Maintainer</option><option value="remove">Remove membership</option></select></label>
-      <button disabled={busy || !data?.projects.length} className={style}>Save membership</button>
+      <button type="submit" disabled={busy || !data?.projects.length} className={style}>Save membership</button>
     </form>
     {data?.projects.length === 0 && <p>No projects available.</p>}
     <ul aria-label="Project memberships">{data?.memberships.map((member) => <li key={member.project_id + member.username}>{member.project_id} · {member.username} · {member.level}</li>)}</ul>

@@ -472,11 +472,11 @@ export default function DeploymentsPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
+                  <label htmlFor="deployment-project" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Application / Project
                   </label>
                   {writableProjects.length > 0 ? (
-                    <select
+                    <select id="deployment-project"
                       required
                       value={form.project_id}
                       onChange={(event) => {
@@ -500,7 +500,7 @@ export default function DeploymentsPage() {
                       ))}
                     </select>
                   ) : (
-                    <input
+                    <input id="deployment-project"
                       required
                       placeholder="Project UUID (e.g. 550e8400-e29b-41d4-a716-446655440000)"
                       value={form.project_id}
@@ -513,10 +513,10 @@ export default function DeploymentsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
+                  <label htmlFor="deployment-environment" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Target Environment
                   </label>
-                  <select
+                  <select id="deployment-environment"
                     value={form.environment}
                     onChange={(event) =>
                       updateField("environment", event.target.value)
@@ -530,10 +530,10 @@ export default function DeploymentsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
+                  <label htmlFor="deployment-image" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Container Image
                   </label>
-                  <input
+                  <input id="deployment-image"
                     required
                     placeholder="e.g. ghcr.io/cloudforge/api-service:v1.0.0"
                     value={form.image}
@@ -545,10 +545,10 @@ export default function DeploymentsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
+                  <label htmlFor="deployment-commit" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Git Commit SHA
                   </label>
-                  <input
+                  <input id="deployment-commit"
                     required
                     placeholder="e.g. c0ffee1 or commit hash"
                     value={form.git_commit_sha}
@@ -580,10 +580,11 @@ export default function DeploymentsPage() {
                   </div> : <p className="text-xs">Requires configured Argo CRDs/controller and a verified stable baseline. Blue-green requires independent Platform Engineer promotion. Canary requires Prometheus analysis; traffic weights are not configured.</p>}
                 </fieldset>
                 <div>
-                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
+                  <label htmlFor="deployment-namespace" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--cf-text-secondary)]">
                     Kubernetes Namespace
                   </label>
                   <input
+                    id="deployment-namespace"
                     required
                     placeholder="e.g. cloudforge-dev"
                     value={operator && form.strategy === "rolling" ? form.namespace : (form.project_id ? `cf-${form.project_id}` : "")}

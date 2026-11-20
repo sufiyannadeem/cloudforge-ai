@@ -386,3 +386,26 @@ def test_security_trigger_scans_and_frontend_toolchain_match_release_policy():
     ci = yaml.safe_load((REPO_ROOT / '.github/workflows/ci.yml').read_text())
     node = next(step for step in ci['jobs']['frontend-ci']['steps'] if step.get('uses', '').startswith('actions/setup-node@'))
     assert node['with']['node-version'] == 22
+
+
+def test_python_ci_installs_only_hash_locked_wheels():
+    data=yaml.safe_load((REPO_ROOT/'.github/workflows/ci.yml').read_text())
+    for name in ['aiops-service-ci','finops-service-ci']:
+        step=next(s for s in data['jobs'][name]['steps'] if s.get('name')=='Install locked dependencies')
+        commands=step['run'].splitlines()
+        assert len(commands)==2
+        assert all('--only-binary=:all:' in cmd and '--require-hashes' in cmd for cmd in commands)
+        assert '../../tests/requirements-ci.lock' in commands[1]
+    lock=(REPO_ROOT/'tests/requirements-ci.lock').read_text()
+    import re
+    entries=[line for line in lock.splitlines() if line and not line.startswith('#')]
+    assert len(entries)==5
+    assert all(re.fullmatch(r'[a-z]+==[0-9.]+ --hash=sha256:[a-f0-9]{64}', line) for line in entries)
+
+
+def test_frontend_ci_cannot_run_dependency_install_hooks_or_fetch_npx_tools():
+    data=yaml.safe_load((REPO_ROOT/'.github/workflows/ci.yml').read_text())
+    steps=data['jobs']['frontend-ci']['steps']
+    assert next(s for s in steps if s.get('name')=='Install dependencies')['run']=='npm ci --ignore-scripts'
+    assert next(s for s in steps if s.get('name')=='Run TypeScript typecheck')['run']=='./node_modules/.bin/tsc --noEmit'
+    assert 'RUN npm ci --ignore-scripts' in (REPO_ROOT/'frontend/Dockerfile').read_text()

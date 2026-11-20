@@ -11,71 +11,17 @@ interface CommandCard {
   accentClass: string;
 }
 
-const commandCards: CommandCard[] = [
-  {
-    eyebrow: "Delivery",
-    title: "Deployments",
-    description:
-      "Inspect deployment state, execution history, and delivery activity.",
-    href: "/deployments",
-    icon: "⇧",
-    accentClass: "bg-amber-950/60 text-amber-400",
-  },
-  {
-    eyebrow: "Telemetry",
-    title: "Observability",
-    description:
-      "Review live service availability, traffic, errors, latency, and in-flight work.",
-    href: "/observability",
-    icon: "◉",
-    accentClass: "bg-emerald-950/60 text-emerald-400",
-  },
-  {
-    eyebrow: "Reliability",
-    title: "SLO & Error Budget",
-    description:
-      "Track reliability objectives, remaining error budget, and multi-window burn rates.",
-    href: "/slo",
-    icon: "◒",
-    accentClass: "bg-indigo-950/60 text-indigo-400",
-  },
-  {
-    eyebrow: "Incident response",
-    title: "AI-Ops Incidents",
-    description:
-      "Investigate incidents, review AI-assisted analysis, and manage controlled remediation.",
-    href: "/incidents",
-    icon: "⚡",
-    accentClass: "bg-rose-950/60 text-rose-400",
-  },
-  {
-    eyebrow: "AIOps",
-    title: "Anomaly Detection",
-    description:
-      "Review service behavior and anomaly classifications derived from operational telemetry.",
-    href: "/anomalies",
-    icon: "◌",
-    accentClass: "bg-violet-950/60 text-violet-400",
-  },
-  {
-    eyebrow: "Infrastructure",
-    title: "Infrastructure",
-    description:
-      "Inspect infrastructure resources managed through the CloudForge platform.",
-    href: "/infrastructure",
-    icon: "⌘",
-    accentClass: "bg-cyan-950/60 text-cyan-400",
-  },
-  {
-    eyebrow: "Cost Intelligence",
-    title: "FinOps & Cloud Cost",
-    description:
-      "Monitor AWS cloud spend, forecast costs, and review workload right-sizing recommendations.",
-    href: "/finops",
-    icon: "❖",
-    accentClass: "bg-teal-950/60 text-teal-400",
-  },
-];
+const commandCards: CommandCard[] = ([
+  ["Delivery", "Deployments", "Inspect deployment state, execution history, and delivery activity.", "/deployments", "⇧", "bg-amber-950/60 text-amber-400"],
+  ["Telemetry", "Observability", "Review live service availability, traffic, errors, latency, and in-flight work.", "/observability", "◉", "bg-emerald-950/60 text-emerald-400"],
+  ["Reliability", "SLO & Error Budget", "Track reliability objectives, remaining error budget, and multi-window burn rates.", "/slo", "◒", "bg-indigo-950/60 text-indigo-400"],
+  ["Incident response", "AI-Ops Incidents", "Investigate incidents, review AI-assisted analysis, and manage controlled remediation.", "/incidents", "⚡", "bg-rose-950/60 text-rose-400"],
+  ["AIOps", "Anomaly Detection", "Review service behavior and anomaly classifications derived from operational telemetry.", "/anomalies", "◌", "bg-violet-950/60 text-violet-400"],
+  ["Infrastructure", "Infrastructure", "Inspect infrastructure resources managed through the CloudForge platform.", "/infrastructure", "⌘", "bg-cyan-950/60 text-cyan-400"],
+  ["Cost Intelligence", "FinOps & Cloud Cost", "Monitor AWS cloud spend, forecast costs, and review workload right-sizing recommendations.", "/finops", "❖", "bg-teal-950/60 text-teal-400"],
+] as [string, string, string, string, string, string][]).map(
+  ([eyebrow, title, description, href, icon, accentClass]) => ({ eyebrow, title, description, href, icon, accentClass }),
+);
 
 const developerCards: CommandCard[] = [
   { eyebrow: "Projects", title: "My Projects", description: "Create and manage projects you can access.", href: "/projects", icon: "◈", accentClass: "bg-indigo-950/60 text-indigo-400" },

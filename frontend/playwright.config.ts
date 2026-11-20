@@ -5,5 +5,5 @@ export default defineConfig({
   timeout: 90_000,
   use: { baseURL: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100", headless: true },
   reporter: "list",
-  outputDir: "/tmp/cloudforge-playwright-results",
+  outputDir: "./test-results",
 });

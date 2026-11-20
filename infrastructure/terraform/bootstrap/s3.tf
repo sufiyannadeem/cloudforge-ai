@@ -8,6 +8,13 @@ resource "aws_s3_bucket" "terraform_state" {
   }
 }
 
+resource "aws_s3_bucket_logging" "terraform_state" {
+  bucket                = aws_s3_bucket.terraform_state.id
+  expected_bucket_owner = var.account_id
+  target_bucket         = var.state_access_log_bucket_name
+  target_prefix         = "terraform-state/${var.state_bucket_name}/"
+}
+
 resource "aws_s3_bucket_versioning" "terraform_state" {
   bucket = aws_s3_bucket.terraform_state.id
 

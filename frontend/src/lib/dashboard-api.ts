@@ -175,6 +175,6 @@ export async function getDashboardData(session: CloudForgeSession): Promise<Dash
       availability: null, requestRate: null, errorRate: null, p95Latency: null,
       deploymentsInProgress: null, requestsInFlight: null,
     },
-    errors: errors.sort(),
+    errors: errors.sort((left, right) => left.localeCompare(right)),
   };
 }

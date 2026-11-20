@@ -12,8 +12,9 @@ mock_provider "aws" {
 }
 
 variables {
-  account_id        = "123456789012"
-  state_bucket_name = "cloudforge-test-tfstate"
+  account_id                   = "123456789012"
+  state_bucket_name            = "cloudforge-test-tfstate"
+  state_access_log_bucket_name = "cloudforge-test-access-logs"
 }
 
 run "only_the_configured_service_account_can_federate" {
@@ -109,4 +110,24 @@ run "wildcard_secret_arns_are_rejected" {
     secret_sync_secret_arns   = ["arn:aws:secretsmanager:eu-west-1:123456789012:secret:*"]
   }
   expect_failures = [var.secret_sync_secret_arns]
+}
+
+run "state_access_logging_is_bound_to_approved_destination" {
+  command = plan
+  variables {
+    runtime_principal_arn = "arn:aws:iam::123456789012:role/workload"
+  }
+  assert {
+    condition     = aws_s3_bucket_logging.terraform_state.target_bucket == var.state_access_log_bucket_name && aws_s3_bucket_logging.terraform_state.target_prefix == "terraform-state/${var.state_bucket_name}/" && aws_s3_bucket_logging.terraform_state.expected_bucket_owner == var.account_id
+    error_message = "State access logging must use the approved destination, state-specific prefix and expected account."
+  }
+}
+
+run "state_bucket_cannot_log_to_itself" {
+  command = plan
+  variables {
+    runtime_principal_arn        = "arn:aws:iam::123456789012:role/workload"
+    state_access_log_bucket_name = "cloudforge-test-tfstate"
+  }
+  expect_failures = [var.state_access_log_bucket_name]
 }

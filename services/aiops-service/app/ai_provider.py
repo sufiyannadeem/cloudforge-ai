@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -57,6 +58,9 @@ class AIProvider:
             "",
         )
 
+        self.guardrail_id = os.getenv("AI_BEDROCK_GUARDRAIL_ID", "").strip()
+        self.guardrail_version = os.getenv("AI_BEDROCK_GUARDRAIL_VERSION", "").strip()
+
         self.aws_region = os.getenv(
             "AWS_REGION",
             os.getenv(
@@ -87,7 +91,7 @@ class AIProvider:
             return True
 
         if self.provider == "bedrock":
-            return bool(self.model)
+            return bool(self.model) and self._valid_bedrock_guardrail()
 
         return (
             self.provider == "openai_compatible"
@@ -201,6 +205,10 @@ class AIProvider:
                 ),
             )
 
+    def _valid_bedrock_guardrail(self) -> bool:
+        return bool(re.fullmatch(r"[a-z0-9]{1,64}", self.guardrail_id)
+                    and re.fullmatch(r"[1-9][0-9]{0,7}", self.guardrail_version))
+
     def _analyze_bedrock(
         self,
         *,
@@ -228,6 +236,12 @@ class AIProvider:
                 ),
             )
 
+        if not self._valid_bedrock_guardrail():
+            return AIProviderResult(
+                status="error", provider="bedrock", model=self.model, content=None,
+                error="Bedrock requires an approved AI_BEDROCK_GUARDRAIL_ID and published numeric AI_BEDROCK_GUARDRAIL_VERSION.",
+            )
+
         try:
             import boto3
             from botocore.exceptions import (
@@ -247,6 +261,8 @@ class AIProvider:
 
             response = client.invoke_model(
                 modelId=self.model,
+                guardrailIdentifier=self.guardrail_id,
+                guardrailVersion=self.guardrail_version,
                 body=json.dumps(
                     request_body
                 ),
@@ -259,6 +275,12 @@ class AIProvider:
             response_json = json.loads(
                 response_body.decode("utf-8")
             )
+
+            if response_json.get("amazon-bedrock-guardrailAction") == "INTERVENED":
+                return AIProviderResult(
+                    status="error", provider="bedrock", model=self.model, content=None,
+                    error="Bedrock guardrail intervened; model output rejected.",
+                )
 
             content = self._extract_bedrock_content(
                 response_json

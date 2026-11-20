@@ -21,7 +21,7 @@ export default function RequestEstimate({ plan }: { plan: PlanDetails }) {
     }).then(async (response) => {
       const data: { unit_monthly_usd?: unknown } = response.ok ? await response.json() : {};
       const rate = data.unit_monthly_usd;
-      const monthly = typeof rate === "number" && rate >= 0 ? rate * basis.quantity : NaN;
+      const monthly = typeof rate === "number" && rate >= 0 ? rate * basis.quantity : Number.NaN;
       if (!controller.signal.aborted) setEstimate({ monthly: Number.isFinite(monthly) ? monthly : null });
     }).catch(() => {
       if (!controller.signal.aborted) setEstimate({ monthly: null });

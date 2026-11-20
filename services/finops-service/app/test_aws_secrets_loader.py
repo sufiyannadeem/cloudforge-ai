@@ -170,7 +170,7 @@ def test_documentation_and_loader_paths_match():
         assert get_default_secret_path(svc, env="production") == expected_path
 
     # Observability canonical path
-    assert "cloudforge/prod/observability/smtp" == "cloudforge/prod/observability/smtp"
+    assert get_default_secret_path("observability", env="prod") == "cloudforge/prod/observability/credentials"
 
 
 

@@ -42,7 +42,10 @@ def main():
         command('attest-blob','--yes','--key','fixture.key','--signing-config','local-config.json','--bundle','attestation.json','--type',predicate_type,'--predicate','predicate.json','payload')
         attest=['verify-blob-attestation','--trusted-root','local-root.json','--insecure-ignore-tlog','--key','fixture.pub','--bundle','attestation.json','--type',predicate_type,'payload']
         command(*attest)
-        bundle=json.loads((root/'attestation.json').read_text())
+        attestation=root/'attestation.json'
+        if attestation.is_symlink() or not attestation.resolve(strict=True).is_relative_to(root):
+            raise ValueError('Attestation must be a regular fixture file')
+        bundle=json.loads(attestation.read_text())
         envelope=bundle['dsseEnvelope']
         statement=json.loads(base64.b64decode(envelope['payload']))
         statement['predicate']['revision']='b'*40

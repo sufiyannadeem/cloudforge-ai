@@ -68,7 +68,7 @@ def test_prompt_preserves_existing_contract():
     assert "error_rate" in prompt
 
 
-def test_prompt_contains_evidence_provenance():
+def _knowledge_prompt():
     service = AIEnrichmentService()
 
     evidence = EvidencePack(
@@ -107,6 +107,12 @@ def test_prompt_contains_evidence_provenance():
         evidence,
         package,
     )
+
+    return prompt
+
+
+def test_prompt_contains_evidence_provenance():
+    prompt = _knowledge_prompt()
 
     assert (
         "AUTHORITATIVE OPERATIONAL EVIDENCE"
@@ -187,44 +193,7 @@ def test_prompt_keeps_telemetry_and_knowledge_separate():
 
 
 def test_prompt_marks_knowledge_as_non_authoritative():
-    service = AIEnrichmentService()
-
-    evidence = EvidencePack(
-        incident_id="incident-1",
-        service="deployment-service",
-        alert_name="HighErrorRate",
-        incident_summary="Error rate increased.",
-        deterministic_assessment=(
-            "Elevated error rate observed."
-        ),
-        evidence_findings=[],
-        operational_metrics={
-            "error_rate": 0.25
-        },
-        anomaly_classification="critical",
-        anomaly_metrics=[],
-        slo_classification="breached",
-        slo_results=[],
-        deployment_correlations=[],
-    )
-
-    envelope = AIEvidenceEnvelope(
-        incident_id="incident-1"
-    )
-
-    package = AIEvidencePackage(
-        operational_evidence=envelope,
-        knowledge_context=(
-            "CLOUDFORGE OPERATIONAL KNOWLEDGE\n"
-            "Evidence type: operational_knowledge\n"
-            "Authoritative: false\n"
-        ),
-    )
-
-    prompt = service._build_prompt(
-        evidence,
-        package,
-    )
+    prompt = _knowledge_prompt()
 
     assert (
         "It does not prove root cause."

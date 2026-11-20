@@ -6,6 +6,7 @@ Use an approved bootstrap identity in the intended account. The state bucket and
 cd infrastructure/terraform/bootstrap
 export AWS_REGION=eu-west-1 TF_VAR_aws_region=eu-west-1
 export TF_VAR_account_id="$(aws sts get-caller-identity --region "$AWS_REGION" --query Account --output text)"
+export TF_VAR_state_access_log_bucket_name="${APPROVED_STATE_ACCESS_LOG_BUCKET:?set an approved existing log bucket}"
 export TF_VAR_state_bucket_name="cloudforge-ai-${TF_VAR_account_id}-tfstate"
 
 # For an existing EKS cluster with its IAM OIDC provider already registered
@@ -118,6 +119,7 @@ After approved role creation, generate the bootstrap plan using the verified acc
 ```sh
 export AWS_REGION=eu-west-1
 export TF_VAR_account_id=933018172228 TF_VAR_aws_region=eu-west-1
+export TF_VAR_state_access_log_bucket_name="${APPROVED_STATE_ACCESS_LOG_BUCKET:?set an approved existing log bucket}"
 export TF_VAR_state_bucket_name=cloudforge-ai-933018172228-tfstate
 export TF_VAR_runtime_principal_arn=arn:aws:iam::933018172228:role/cloudforge-local-workload
 unset TF_VAR_runtime_oidc_provider_arn
@@ -175,3 +177,10 @@ secrets nor a controller. The FinOps read-only role, secret-controller Kubernete
 permissions, OIDC provider and live endpoint access remain explicit prerequisites.
 An empty secret list creates no sync role. Review a saved bootstrap plan before any
 separately authorized IAM/state changes; no apply is part of local validation.
+
+State access logging requires an approved existing destination bucket in the same
+account/region, with public access blocked, encryption, retention and a
+`logging.s3.amazonaws.com` delivery policy restricted to the state bucket ARN and
+source account. This bootstrap does not create or verify that external destination;
+verify it read-only before approving the plan. State and log buckets must differ.
+No cloud changes are authorized by these instructions.

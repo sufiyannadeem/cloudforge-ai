@@ -47,11 +47,15 @@ disabled. Trust policy, registry retention, network access and real hosted
 keyless execution still require separately authorized acceptance.
 
 After an approved hosted run, use its immutable manifest with real non-secret
-release inputs:
+release inputs in an existing private review workspace. CLI paths must remain
+inside the current directory; symlinks/outside paths are rejected. From repo root:
 
 ```sh
-python3 scripts/release-images.py --config /path/to/deployment-inputs.json --manifest /path/to/images.json --repository sufiyannadeem/cloudforge-ai --revision "${APPROVED_SHA:?}" --run-id "${APPROVED_RUN_ID:?}" --run-attempt "${APPROVED_RUN_ATTEMPT:?}" --output /tmp/reviewed-release-inputs.json
-python3 scripts/render-kubernetes.py --config /tmp/reviewed-release-inputs.json > /tmp/reviewed-release.yml
+REPO_ROOT="$PWD"
+cd "${REVIEW_WORKSPACE:?directory containing deployment-inputs.json and images.json}"
+umask 077
+python3 "$REPO_ROOT/scripts/release-images.py" --config deployment-inputs.json --manifest images.json --repository sufiyannadeem/cloudforge-ai --revision "${APPROVED_SHA:?}" --run-id "${APPROVED_RUN_ID:?}" --run-attempt "${APPROVED_RUN_ATTEMPT:?}" --output reviewed-release-inputs.json
+python3 "$REPO_ROOT/scripts/render-kubernetes.py" --config reviewed-release-inputs.json > reviewed-release.yml
 ```
 
 Check renderer CLI help if using a different version; never overwrite an approved

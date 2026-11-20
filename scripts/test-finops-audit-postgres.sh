@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PGPASSWORD
 PGPASSWORD=$(docker exec cloudforge-postgres sh -c 'printf %s "$POSTGRES_PASSWORD"')
-test -n "$PGPASSWORD"
+[[ -n "$PGPASSWORD" ]]
 schema="finops_audit_test_$(date +%s)_$$"
 admin=(psql -h 127.0.0.1 -U cloudforge -d cloudforge -v ON_ERROR_STOP=1 -q)
 "${admin[@]}" -c "CREATE SCHEMA $schema"

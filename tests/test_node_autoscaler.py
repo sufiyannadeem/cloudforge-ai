@@ -53,7 +53,7 @@ def test_preparation_creates_review_artifacts_and_cannot_overwrite(tmp_path, inp
     config.write_text(json.dumps(inputs))
     output = tmp_path / 'review'
     command = [sys.executable, str(ROOT / 'scripts/prepare-node-autoscaler.py'), '--config', str(config), '--output-dir', str(output)]
-    result = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 0
     assert {p.name for p in output.iterdir()} == {'values.yml', 'iam-trust.json', 'iam-policy.json', 'kustomization.yml', 'reliability-patch.yml'}
     patch = yaml.safe_load((output / 'reliability-patch.yml').read_text())
@@ -61,3 +61,12 @@ def test_preparation_creates_review_artifacts_and_cannot_overwrite(tmp_path, inp
     assert patch[1]['path'].endswith('/startupProbe') and patch[2]['path'].endswith('/readinessProbe')
     assert 'unused-patch-name' not in (output / 'reliability-patch.yml').read_text()
     assert subprocess.run(command, capture_output=True).returncode != 0
+
+
+def test_cli_config_and_output_cannot_escape_workspace(tmp_path, monkeypatch):
+    import argparse
+    monkeypatch.chdir(tmp_path)
+    for value in ['../outside', '/etc/passwd']:
+        with pytest.raises(argparse.ArgumentTypeError): module.workspace_path(value)
+    link=tmp_path/'link';link.symlink_to(tmp_path/'config')
+    with pytest.raises(argparse.ArgumentTypeError): module.workspace_path(link)
