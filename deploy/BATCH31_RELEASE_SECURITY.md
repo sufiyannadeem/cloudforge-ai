@@ -1,5 +1,10 @@
 # Batch 31 — release security configuration (not applied)
 
+**Solo-maintainer update:** [current GitHub setup](github/SOLO_MAINTAINER.md)
+supersedes this historical requirement for independent GitHub reviewers. PRs,
+both CI checks and signing remain required; platform Terraform/remediation
+approval rules are unchanged. No hosted settings have been applied.
+
 **PARTIAL; publication/deployment remain NO-GO.** Local baseline `868d813`.
 Read-only GitHub checks on November 20, 2026 still show ruleset 24049172 with zero
 approving reviews and only `Security Gate` required, and zero environments. No

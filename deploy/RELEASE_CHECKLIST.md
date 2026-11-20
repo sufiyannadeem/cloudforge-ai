@@ -90,14 +90,14 @@ The historical local frontend image ID is `sha256:405ca951da593e1f97263288954a92
 
 ## Batch 28 integration gates
 
-- [ ] Complete [Batch 31 release security](BATCH31_RELEASE_SECURITY.md): apply independently reviewed ruleset/release settings, prove no bypass, and accept real digest-bound keyless signing/provenance and consumer verification. Local configuration/tests do not establish hosted enforcement.
+- [ ] Apply only after explicit owner approval: [solo-maintainer GitHub settings](github/SOLO_MAINTAINER.md), PR required with zero approvals, both strict aggregate checks, no bypass actors and branch-restricted release without reviewers. Disable environment administrator bypass where supported and record actual evidence. No independent GitHub approval is claimed.
 
-- [ ] Complete [Batch 30 GitHub release preparation](BATCH30_RELEASE_PREPARATION.md): independent reviews, both required aggregate checks, real protected release environment and hosted digest/signature acceptance. No push/publication is authorized by this checklist.
+- [ ] Complete [Batch 31 signing acceptance](BATCH31_RELEASE_SECURITY.md) under the current solo policy: real digest-bound keyless signing/provenance and consumer verification. Local configuration/tests do not establish hosted enforcement. No push/publication is authorized by this checklist.
 
 - [ ] Use the [Batch 29 local gate](BATCH29_RELEASE_GATE.md) for current classifications, confirmed DDL-authority fix, focused evidence and ordered acceptance. LOCAL-PASS never authorizes deployment or cloud writes.
 
 - [ ] Use [the current closure evidence](BATCH28_CLOSURE.md). Complete the approved per-service DB ownership/grant/credential/CA handoff; production rejects shared principals or unverified TLS. Do not run bootstrap SQL against existing data without review.
-- [ ] Require all seven hosted image builds/scans, independent release-environment approval, actual immutable digest output, signing/provenance and retention acceptance. Nothing was published locally.
+- [ ] Require all seven hosted image builds/scans, explicit maintainer publication opt-in, actual immutable digest output, signing/provenance and retention acceptance. Nothing was published locally. Platform infrastructure/remediation approval requirements remain unchanged.
 - [ ] Review Argo/ESO controller versions/privileges, trusted SSO groups, exact repo/revision, CA/secret readiness and migration/grant hooks before any sync. Plain kubectl apply does not enforce hook ordering.
 - [ ] Keep scheduled drift disabled until its dedicated DB/IRSA credentials, provider/secret read permissions and metric delivery are verified. Read-only observation is not approval for apply/remediation.
 - [ ] Implement and independently verify the central collector/signature/immutable-anchor design before claiming centralized tamper-evident audit. Retain existing per-feature histories and external recovery authorization.

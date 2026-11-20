@@ -82,15 +82,15 @@ def verify_manifest(manifest, repository, revision, run_id, run_attempt):
 
 
 def verify_release_environment(environment):
-    """A named environment alone does not establish independent approval."""
+    """Require branch protection without claiming a solo release has peer approval."""
     policy = environment.get('deployment_branch_policy') or {}
     reviews = [rule for rule in environment.get('protection_rules', [])
                if rule.get('type') == 'required_reviewers']
     if (environment.get('name') != 'release' or policy.get('protected_branches') is not True
-            or policy.get('custom_branch_policies') is not False or len(reviews) != 1
-            or reviews[0].get('prevent_self_review') is not True
-            or not reviews[0].get('reviewers')):
-        raise ValueError('Release requires protected branches and independent environment reviewers')
+            or policy.get('custom_branch_policies') is not False):
+        raise ValueError('Release requires a protected-branches-only environment')
+    if any(rule.get('reviewers') != [] for rule in reviews):
+        raise ValueError('Solo release environment must not require reviewers')
 
 
 def artifacts(root, revision):

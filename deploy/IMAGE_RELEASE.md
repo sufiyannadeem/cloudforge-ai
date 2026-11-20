@@ -7,9 +7,11 @@ artifacts from that same workflow run, checks all archive bindings first, loads
 and checks each image ID, and pushes without rebuilding. The output `images.json`
 contains actual registry digests, never guessed hashes or local config IDs.
 
-Before enabling publication, administrators must preconfigure the `release`
-environment with independent reviewers, prevent self-review/bypass and constrain
-it to protected main. Protect the workflow/source branch and required CI checks;
+The current [solo-maintainer setup](github/SOLO_MAINTAINER.md) requires a `release`
+environment restricted to protected branches, without required reviewers. The
+workflow additionally restricts publication to main. Disable administrator bypass
+where GitHub exposes that setting; do not claim a second-person approval gate.
+Protect the workflow/source branch and both required CI checks;
 review GHCR package permissions and artifact storage limits/retention. No workflow
 or environment was invoked/configured by this local change. Build/scan jobs have
 read-only repository permission. Only the approved publish job gets package-write
@@ -17,20 +19,22 @@ and artifact-read permission. It has no AWS or deployment permission.
 
 Publishing is disabled by default and allowed only for an explicit manual
 main-branch request. This is **PARTIAL / hosted verification BLOCKED**, not a
-claim that an environment with missing reviewer configuration is protected.
+claim of independent approval or verified hosted enforcement.
 The publish job now checks the actual GitHub environment before downloading
-artifacts or logging into GHCR. Missing/unreadable policy, absent reviewers,
-permitted self-review or unrestricted branches fails closed. It requires
+artifacts or logging into GHCR. Missing/unreadable policy or unrestricted branches
+fails closed. Unexpected required reviewers are rejected to prevent solo lockout.
+It requires
 protected-branches-only policy (not custom patterns); main protection and disabled
-administrator bypass must still be independently verified. This configuration
-check does not prove signed provenance or replace GitHub's approval enforcement.
+administrator bypass must still be verified against actual GitHub settings. This
+configuration check does not prove signed provenance or human approval.
 Batch 31 wires pinned Cosign 3.1.4 keyless signing and a custom signed
 scanned-image release predicate. Only the protected publish job has OIDC and
 package-write permission. The predicate binds source SHA, workflow/run/attempt,
 service, scanned config ID, archive SHA256 and SBOM SHA256 to the actual registry
 digest. This is a scanned-build handoff receipt, not hermetic/SLSA-certified
 BuildKit provenance; `provenance: false` on the archive-only Docker build remains
-intentional. [Current security setup and limits](BATCH31_RELEASE_SECURITY.md).
+intentional. [Signing design and limits](BATCH31_RELEASE_SECURITY.md) remain valid;
+the solo setup supersedes its independent-review prerequisites for GitHub only.
 
 Images initially receive unique candidate tags. After upload, Cosign signs and
 attests each exact digest. All seven signatures and signed claims must verify
@@ -40,7 +44,7 @@ No consumer should trust a candidate tag or an unsigned manifest. Verification
 requires the exact workflow/main identity, GitHub issuer, source SHA, event/ref,
 repository and expected run/attempt. No transparency/certificate checks are
 disabled. Trust policy, registry retention, network access and real hosted
-keyless execution still require independent acceptance.
+keyless execution still require separately authorized acceptance.
 
 After an approved hosted run, use its immutable manifest with real non-secret
 release inputs:
@@ -52,7 +56,7 @@ python3 scripts/render-kubernetes.py --config /tmp/reviewed-release-inputs.json 
 
 Check renderer CLI help if using a different version; never overwrite an approved
 release artifact. Install the reviewed pinned Cosign tool first. Take expected
-SHA/run/attempt from independently reviewed hosted evidence, never from the
+SHA/run/attempt from maintainer-reviewed hosted evidence, never from the
 untrusted manifest itself. CLI selection verifies signatures/provenance against
 the registry before writing renderer inputs; old unsigned manifests fail closed.
 The six workload images are pinned to registry digests; the

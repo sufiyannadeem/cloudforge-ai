@@ -1,5 +1,9 @@
 # Batch 30 — GitHub release preparation
 
+**Current policy:** [solo-maintainer setup](github/SOLO_MAINTAINER.md) replaces the
+independent GitHub-review requirements below. The PR/security/signing boundaries
+remain; this document's GitHub snapshot and earlier review model are historical.
+
 **Batch 31 update:** [local signing/protection configuration](BATCH31_RELEASE_SECURITY.md)
 supersedes the signing-code gap below. GitHub protection enforcement and hosted
 keyless acceptance remain unverified; this document retains its historical snapshot.

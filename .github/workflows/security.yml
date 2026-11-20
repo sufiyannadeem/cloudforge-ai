@@ -235,7 +235,7 @@ jobs:
           echo "CLOUDFORGE AI SECURITY GATE EVALUATION"
           echo "=========================================="
 
-          python3 -c "import textwrap; exec(textwrap.dedent('''
+          python3 - <<'PY'
           import json, os, sys
 
           event_name = os.environ.get('EVENT_NAME', '')
@@ -296,4 +296,4 @@ jobs:
           else:
               print(f'\n[ERROR] Security gate incomplete. Passed: {len(passed)}/{len(required_jobs)}')
               sys.exit(1)
-          '''))"
+          PY
