@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine3.24@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,8 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --system appgroup \
-    && useradd --system --gid appgroup --home-dir /app appuser
+RUN apk add --no-cache ca-certificates libstdc++ krb5-libs=1.22.3-r0 \
+    && addgroup -S appgroup \
+    && adduser -S -D -H -G appgroup -h /app appuser
 
 COPY requirements.lock .
 

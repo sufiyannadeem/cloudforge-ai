@@ -52,7 +52,7 @@ Terraform drift scanning reuses infrastructure-service. Kubernetes diagnosis reu
 | FinOps service | `services/finops-service/` | 8091 |
 | Prometheus / Grafana / Alertmanager | `monitoring/` | 9090 / 3001 / 9093 |
 
-The frontend pins Next.js 16.4.5 and uses Node 22 in its production Dockerfile. Backend services use Go 1.25 and Python 3.12; PostgreSQL uses version 16. The infrastructure image includes Terraform. Versions and build inputs are defined in the service Dockerfiles, module files and lockfiles.
+The frontend pins Next.js 16.4.5 and uses Node 22 in its production Dockerfile. Backend services use Go 1.26.11 and Python 3.12; PostgreSQL uses version 16. The infrastructure image includes Terraform 1.17.2. Versions and build inputs are defined in the service Dockerfiles, module files and lockfiles. See [local image CVE remediation evidence](deploy/security/BATCH32_IMAGE_REMEDIATION.md).
 
 ## 1. Internal AI DevOps Platform
 
@@ -137,7 +137,7 @@ The [deployment guide](deploy/kubernetes/README.md), [bootstrap runbook](infrast
 
 ## Local setup
 
-Docker with Compose is required for the local stack. Source tests additionally need Node 22, Go 1.25, Python 3.12 and the dependencies in each module/lockfile.
+Docker with Compose is required for the local stack. Source tests additionally need Node 22, Go 1.26.11, Python 3.12 and the dependencies in each module/lockfile.
 
 From the repository root, preserve any existing private configuration.
 

@@ -71,7 +71,7 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
-          terraform_version: "1.16.2"
+          terraform_version: "1.17.2"
 
       - name: Verify Terraform formatting
         run: terraform fmt -check -recursive infrastructure/terraform
@@ -97,7 +97,7 @@ jobs:
           format: table
 
   # ============================================================
-  # 3. Project Service (Go 1.25)
+  # 3. Project Service (Go 1.26)
   # ============================================================
   project-service-ci:
     name: Project Service CI
@@ -192,7 +192,7 @@ jobs:
             ./services/project-service
 
   # ============================================================
-  # 4. Infrastructure Service (Go 1.25 + Terraform Engine)
+  # 4. Infrastructure Service (Go 1.26 + Terraform Engine)
   # ============================================================
   infrastructure-service-ci:
     name: Infrastructure Service CI
@@ -286,7 +286,7 @@ jobs:
             ./services/infrastructure-service
 
   # ============================================================
-  # 5. Deployment Service (Go 1.25 + SRE Engine)
+  # 5. Deployment Service (Go 1.26 + SRE Engine)
   # ============================================================
   deployment-service-ci:
     name: Deployment Service CI

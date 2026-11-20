@@ -1,6 +1,6 @@
 module github.com/sufiyannadeem/cloudforge-ai-project-service
 
-go 1.25.14
+go 1.26.11
 
 require (
 	github.com/google/uuid v1.6.0

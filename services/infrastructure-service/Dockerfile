@@ -1,6 +1,6 @@
-FROM hashicorp/terraform:1.16.4 AS terraform
+FROM hashicorp/terraform:1.17.2@sha256:6e9c1e647c31a960dc9b59e13272f9111d90010c10b717f77ffb324767660475 AS terraform
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.11-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS builder
 
 WORKDIR /app
 

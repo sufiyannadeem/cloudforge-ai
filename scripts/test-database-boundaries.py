@@ -82,7 +82,7 @@ def main():
             run('migrate-'+service,drill.image,['migrate'],'migrator',
                 ('--mount',f'type=bind,src={output/service},dst=/migrator,readonly','--entrypoint','/migrator','-e','TERRAFORM_READ_ONLY=true'))
         if drill.sql(db,'SELECT count(*) FROM schema_migrations')!=b'23':raise RuntimeError('migration receipts mismatch')
-        aiops_image=drill.docker('image','inspect','cloudforge-ai-aiops-service:latest','--format','{{.Id}}').stdout.decode().strip()
+        aiops_image=drill.docker('image','inspect',os.getenv('CLOUDFORGE_AIOPS_TEST_IMAGE','cloudforge-ai-aiops-service:latest'),'--format','{{.Id}}').stdout.decode().strip()
         run('aiops-migrate',aiops_image,['python','-m','app.database'],'migrator',
             ('--mount',f'type=bind,src={ROOT/"services/aiops-service/app"},dst=/app/app,readonly','--entrypoint',''))
         # Prove that stale column ACLs cannot survive a reviewed handoff.
@@ -90,6 +90,24 @@ def main():
         drill.sql(db,'SET ROLE cf_migrator;\n'+(ROOT/'deploy/postgres/002_runtime_grants.sql').read_text())
         for principal in principals[1:]:
             run('check-'+principal,drill.image,[],principal,('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE='+principal))
+        # Optional candidate-image checks exercise its native libpq/TLS and audit writes.
+        if os.getenv('CLOUDFORGE_FINOPS_TEST_IMAGE'):
+            finops_image=drill.docker('image','inspect',os.environ['CLOUDFORGE_FINOPS_TEST_IMAGE'],'--format','{{.Id}}').stdout.decode().strip()
+            check_python="""import os,psycopg
+from app.service_identity import production_database
+principal=os.environ['CHECK_SERVICE']
+dsn=os.environ['DATABASE_URL']
+production_database(dsn,'cf_'+principal)
+with psycopg.connect(dsn,connect_timeout=3) as db:
+    assert db.execute('SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()').fetchone()[0]
+    if principal=='finops_project':
+        db.execute('SELECT id,project_id FROM infrastructure_resources LIMIT 1')
+    else:
+        row=db.execute("INSERT INTO finops_anomaly_captures VALUES (gen_random_uuid(),'123456789012','native-fixture',now(),'{}') RETURNING id").fetchone()
+        assert db.execute('SELECT actor FROM finops_anomaly_captures WHERE id=%s',(row[0],)).fetchone()[0]=='native-fixture'
+"""
+            for principal in ['finops_project','finops_audit']:
+                run('native-'+principal,finops_image,['python','-c',check_python],principal,('--entrypoint','','-e','CHECK_SERVICE='+principal))
         for name,url in [('wrong-host',dsn('deployment','wrong-host')),('unverified',dsn('deployment',ssl='require'))]:
             run('deny-'+name,drill.image,[],'deployment',('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE=deployment','-e','DATABASE_URL='+url),expected=1)
         proof=secrets.token_hex(32)
@@ -114,6 +132,8 @@ def main():
         report={'status':'PASS' if success and not failures else 'FAIL','fixture':drill.run_id,
                 ('checks' if success else 'planned_checks'):['23 one-shot migrations','AIOps one-shot schema','7 runtime principals','pre-existing runtime DDL authority rejected','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences'],
                 'cleanup_failures':failures}
+        if os.getenv('CLOUDFORGE_FINOPS_TEST_IMAGE'):
+            report['native_finops_tls_and_audit']='PASS' if success else 'UNVERIFIED'
         (output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
     return int(not success or bool(failures))
 
