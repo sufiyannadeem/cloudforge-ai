@@ -1,4 +1,6 @@
 import Link from "next/link";
+import type { CloudForgeRole } from "@/lib/auth";
+import { canAccessPage, dashboardCapabilities } from "@/lib/role-access";
 
 interface CommandCard {
   eyebrow: string;
@@ -9,86 +11,47 @@ interface CommandCard {
   accentClass: string;
 }
 
-const commandCards: CommandCard[] = [
-  {
-    eyebrow: "Delivery",
-    title: "Deployments",
-    description:
-      "Inspect deployment state, execution history, and delivery activity.",
-    href: "/deployments",
-    icon: "⇧",
-    accentClass: "bg-amber-950/60 text-amber-400",
-  },
-  {
-    eyebrow: "Telemetry",
-    title: "Observability",
-    description:
-      "Review live service availability, traffic, errors, latency, and in-flight work.",
-    href: "/observability",
-    icon: "◉",
-    accentClass: "bg-emerald-950/60 text-emerald-400",
-  },
-  {
-    eyebrow: "Reliability",
-    title: "SLO & Error Budget",
-    description:
-      "Track reliability objectives, remaining error budget, and multi-window burn rates.",
-    href: "/slo",
-    icon: "◒",
-    accentClass: "bg-indigo-950/60 text-indigo-400",
-  },
-  {
-    eyebrow: "Incident response",
-    title: "AI-Ops Incidents",
-    description:
-      "Investigate incidents, review AI-assisted analysis, and manage controlled remediation.",
-    href: "/incidents",
-    icon: "⚡",
-    accentClass: "bg-rose-950/60 text-rose-400",
-  },
-  {
-    eyebrow: "AIOps",
-    title: "Anomaly Detection",
-    description:
-      "Review service behavior and anomaly classifications derived from operational telemetry.",
-    href: "/anomalies",
-    icon: "◌",
-    accentClass: "bg-violet-950/60 text-violet-400",
-  },
-  {
-    eyebrow: "Infrastructure",
-    title: "Infrastructure",
-    description:
-      "Inspect infrastructure resources managed through the CloudForge platform.",
-    href: "/infrastructure",
-    icon: "⌘",
-    accentClass: "bg-cyan-950/60 text-cyan-400",
-  },
+const commandCards: CommandCard[] = ([
+  ["Delivery", "Deployments", "Inspect deployment state, execution history, and delivery activity.", "/deployments", "⇧", "bg-amber-950/60 text-amber-400"],
+  ["Telemetry", "Observability", "Review live service availability, traffic, errors, latency, and in-flight work.", "/observability", "◉", "bg-emerald-950/60 text-emerald-400"],
+  ["Reliability", "SLO & Error Budget", "Track reliability objectives, remaining error budget, and multi-window burn rates.", "/slo", "◒", "bg-indigo-950/60 text-indigo-400"],
+  ["Incident response", "AI-Ops Incidents", "Investigate incidents, review AI-assisted analysis, and manage controlled remediation.", "/incidents", "⚡", "bg-rose-950/60 text-rose-400"],
+  ["AIOps", "Anomaly Detection", "Review service behavior and anomaly classifications derived from operational telemetry.", "/anomalies", "◌", "bg-violet-950/60 text-violet-400"],
+  ["Infrastructure", "Infrastructure", "Inspect infrastructure resources managed through the CloudForge platform.", "/infrastructure", "⌘", "bg-cyan-950/60 text-cyan-400"],
+  ["Cost Intelligence", "FinOps & Cloud Cost", "Monitor AWS cloud spend, forecast costs, and review workload right-sizing recommendations.", "/finops", "❖", "bg-teal-950/60 text-teal-400"],
+] as [string, string, string, string, string, string][]).map(
+  ([eyebrow, title, description, href, icon, accentClass]) => ({ eyebrow, title, description, href, icon, accentClass }),
+);
+
+const developerCards: CommandCard[] = [
+  { eyebrow: "Projects", title: "My Projects", description: "Create and manage projects you can access.", href: "/projects", icon: "◈", accentClass: "bg-indigo-950/60 text-indigo-400" },
+  { eyebrow: "Infrastructure", title: "Infrastructure requests", description: "Generate Terraform plans and track approval and provisioning.", href: "/infrastructure", icon: "⌘", accentClass: "bg-cyan-950/60 text-cyan-400" },
+  { eyebrow: "Delivery", title: "My Deployments", description: "Deploy applications and review project deployment attempts.", href: "/deployments", icon: "⇧", accentClass: "bg-amber-950/60 text-amber-400" },
+  { eyebrow: "Telemetry", title: "Project monitoring", description: "View deployment status summaries for authorized projects.", href: "/observability", icon: "◉", accentClass: "bg-emerald-950/60 text-emerald-400" },
+  { eyebrow: "Costs", title: "Project FinOps", description: "Check availability of verified, read-only project costs.", href: "/project-costs", icon: "$", accentClass: "bg-teal-950/60 text-teal-400" },
 ];
 
-export default function PlatformCommandCenter() {
+const administrativeCards: CommandCard[] = [
+  { eyebrow: "Approvals", title: "Terraform review queue", description: "Review submitted plans and execute independently approved changes.", href: "/infrastructure?review=pending", icon: "✓", accentClass: "bg-amber-950/60 text-amber-400" },
+  { eyebrow: "Projects", title: "All Projects", description: "View project ownership and manage project records.", href: "/projects", icon: "◈", accentClass: "bg-indigo-950/60 text-indigo-400" },
+  { eyebrow: "Administration", title: "Users & audit history", description: "Find account management and Terraform review history.", href: "/administration", icon: "◇", accentClass: "bg-violet-950/60 text-violet-400" },
+];
+
+export default function PlatformCommandCenter({ role }: { role: CloudForgeRole }) {
+  const cards = role === "developer" ? developerCards :
+    [...(dashboardCapabilities(role).administration ? administrativeCards : []), ...commandCards];
   return (
     <section>
       <div className="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
         <div>
-          <p className="text-sm font-medium text-indigo-400">
-            Platform control plane
-          </p>
-
           <h3 className="mt-1 text-xl font-semibold text-[var(--cf-text)]">
-            Command center
+            {role === "developer" ? "Project tools" : "Operational tools"}
           </h3>
-
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--cf-text-muted)]">
-            Move from platform health to delivery, reliability,
-            observability, and AI-assisted incident response without
-            leaving the CloudForge control plane.
-          </p>
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {commandCards.map((card) => (
+        {cards.filter((card) => canAccessPage(role, card.href.split("?", 1)[0])).map((card) => (
           <Link
             key={card.href}
             href={card.href}

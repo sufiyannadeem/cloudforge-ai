@@ -65,7 +65,7 @@ func TestDeploymentRepositoryNotFoundErrors(t *testing.T) {
 			UpdatedAt:    time.Now().UTC(),
 		}
 
-		err := repo.Update(ctx, deployment)
+		err := repo.Update(ctx, deployment, deployment)
 
 		if err != ErrDeploymentNotFound {
 			t.Fatalf(

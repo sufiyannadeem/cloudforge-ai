@@ -1,0 +1,7 @@
+{
+  "repo_url": null,
+  "revision": null,
+  "path": null,
+  "argocd_namespace": "argocd",
+  "operator_groups": []
+}

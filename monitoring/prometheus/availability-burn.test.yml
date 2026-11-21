@@ -1,0 +1,43 @@
+rule_files:
+  - rules/cloudforge-recording.yml
+evaluation_interval: 15s
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'up{job="deployment-service",service="deployment-service",environment="healthy"}'
+        values: '1x20'
+      - series: 'up{job="deployment-service",service="deployment-service",environment="down"}'
+        values: '0x20'
+    promql_expr_test:
+      - expr: cloudforge:slo_availability_burn:5m
+        eval_time: 2m
+        exp_samples: []
+      - expr: cloudforge:slo_availability_burn:5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'cloudforge:slo_availability_burn:5m{job="deployment-service",service="deployment-service",environment="healthy"}'
+            value: 0
+          - labels: 'cloudforge:slo_availability_burn:5m{job="deployment-service",service="deployment-service",environment="down"}'
+            value: 1000
+      - expr: cloudforge:slo_availability_burn:30m
+        eval_time: 5m
+        exp_samples: []
+  - interval: 15s
+    input_series:
+      - series: 'up{job="deployment-service",service="deployment-service",environment="local"}'
+        values: '1x269'
+      - series: 'cloudforge:slo_availability_burn:6h{job="deployment-service",service="deployment-service",environment="local"}'
+        values: '0x269'
+    promql_expr_test:
+      - expr: cloudforge:slo_availability_burn:6h
+        eval_time: 67m15s
+        exp_samples:
+          - labels: 'cloudforge:slo_availability_burn:6h{job="deployment-service",service="deployment-service",environment="local"}'
+            value: 0
+      - expr: >
+          cloudforge:slo_availability_burn:6h{job="deployment-service",service="deployment-service"}
+          and on (job, service, environment) (min by (job, service, environment) (count_over_time(up{job="deployment-service",service="deployment-service"}[6h])) >= 1296)
+          and on (job, service, environment) (max by (job, service, environment) (time() - timestamp(up{job="deployment-service",service="deployment-service"})) <= 45)
+          and on (job, service, environment) (time() - timestamp(cloudforge:slo_availability_burn:6h{job="deployment-service",service="deployment-service"}) <= 60)
+        eval_time: 67m15s
+        exp_samples: []

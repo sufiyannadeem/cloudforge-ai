@@ -1,0 +1,42 @@
+# NOT READY TO APPLY. An operator must verify real workload metric names, labels,
+# freshness and request counts and set evidence-verified=true only after testing.
+# Replace PROJECT_UUID and PROMETHEUS_ADDRESS. Not platform-service request metrics.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: cloudforge-release-health
+  namespace: cf-PROJECT_UUID
+  annotations:
+    cloudforge.ai/evidence-verified: "false"
+spec:
+  args:
+    - name: namespace
+    - name: revision
+  metrics:
+    - name: measured-requests
+      interval: 30s
+      count: 5
+      failureLimit: 0
+      consecutiveErrorLimit: 1
+      successCondition: len(result) == 1 && result[0] >= 30 && result[0] < 1e12
+      failureCondition: len(result) != 1 || !(result[0] >= 30 && result[0] < 1e12)
+      provider:
+        prometheus:
+          address: "${PROMETHEUS_ADDRESS}"
+          query: |
+            sum(increase(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.revision}}",status=~"[1-5][0-9][0-9]"}[5m]))
+            and on() (max(timestamp(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.revision}}"})) > time() - 60)
+    - name: request-success
+      interval: 30s
+      count: 5
+      failureLimit: 0
+      consecutiveErrorLimit: 1
+      successCondition: len(result) == 1 && result[0] >= 0.99 && result[0] <= 1
+      failureCondition: len(result) != 1 || !(result[0] >= 0.99 && result[0] <= 1)
+      provider:
+        prometheus:
+          address: "${PROMETHEUS_ADDRESS}"
+          query: |
+            (sum(rate(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.revision}}",status=~"[1-4][0-9][0-9]"}[5m])) /
+             sum(rate(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.revision}}",status=~"[1-5][0-9][0-9]"}[5m])))
+            and on() (max(timestamp(http_requests_total{namespace="{{args.namespace}}",rollouts_pod_template_hash="{{args.revision}}"})) > time() - 60)

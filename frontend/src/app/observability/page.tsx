@@ -1,8 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { useViewerSession } from "@/components/layout/ViewerSession";
+import { selectAuthorizedProject } from "@/lib/role-access";
+import PlatformReliability from "@/components/dashboard/PlatformReliability";
 import AppShell from "@/components/layout/AppShell";
+import { frontendApi } from "@/lib/frontend-api";
+import type { Project } from "@/types/api";
 import {
   getDeploymentProgress,
   getErrorRate,
@@ -91,7 +97,71 @@ function MetricCard({
   );
 }
 
+function ProjectObservability() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selected, setSelected] = useState("");
+  const [summary, setSummary] = useState<{ project_id: string; deployments_by_status: Record<string, number> } | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    frontendApi.projects.list().then(({ data }) => {
+      if (!active) return;
+      setProjects(data);
+      const requested = new URLSearchParams(window.location.search).get("project");
+      const project = selectAuthorizedProject(data, requested);
+      setSelected(project?.id ?? "");
+      if (requested && !project) setError("Project unavailable or access denied.");
+    }).catch(() => { if (active) setError("Could not load projects."); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    let active = true;
+    frontendApi.projects.observability(selected).then((data) => {
+      if (active) setSummary(data);
+    }).catch(() => { if (active) setError("Project telemetry is unavailable."); });
+    return () => { active = false; };
+  }, [selected]);
+
+  return (
+    <AppShell>
+      <main className="space-y-4 p-6">
+        <h1 className="text-3xl font-bold">Project observability</h1>
+        <Link href="/deployments" className="text-sm underline">View deployment logs and health</Link>
+        <label className="block space-y-2">
+          <span className="block">Project</span>
+          <select className="rounded border p-2" value={selected} onChange={(event) => {
+            setSelected(event.target.value);
+            setError("");
+          }}>
+            {projects.length === 0 && <option value="">No projects available</option>}
+            {projects.map(({ id, name }) => <option value={id} key={id}>{name}</option>)}
+          </select>
+        </label>
+        {error && <p role="alert">{error}</p>}
+        {summary?.project_id === selected && (
+          <section>
+            <h2 className="font-semibold">Deployments by status</h2>
+            {Object.keys(summary.deployments_by_status).length === 0 ? <p>No deployments recorded.</p> : (
+              <dl className="grid max-w-sm grid-cols-2 gap-2">
+                {Object.entries(summary.deployments_by_status).map(([status, count]) => (
+                  <div key={status} className="rounded border p-2"><dt>{status}</dt><dd>{count}</dd></div>
+                ))}
+              </dl>
+            )}
+          </section>
+        )}
+      </main>
+    </AppShell>
+  );
+}
+
 export default function ObservabilityPage() {
+  const role = useViewerSession()?.role;
+  const operator = role === "sre" || role === "platform-engineer";
+
   const [metrics, setMetrics] =
     useState<ObservabilityMetrics>(EMPTY_METRICS);
   const [isLoading, setIsLoading] = useState(true);
@@ -100,6 +170,7 @@ export default function ObservabilityPage() {
   );
 
   const loadMetrics = useCallback(async () => {
+    if (!operator) return;
     const [
       availability,
       requestRate,
@@ -127,7 +198,7 @@ export default function ObservabilityPage() {
 
     setLastUpdated(new Date().toLocaleTimeString());
     setIsLoading(false);
-  }, []);
+  }, [operator]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -151,9 +222,15 @@ export default function ObservabilityPage() {
     };
   }, [refreshOnMount]);
 
+  if (role === "developer") return <ProjectObservability />;
+  if (!operator) {
+    return <AppShell><main className="p-6">{"Loading observability…"}</main></AppShell>;
+  }
+
   return (
     <AppShell>
       <main className="min-w-0 space-y-6 bg-[var(--cf-background)] p-4 text-[var(--cf-text)] md:p-6">
+        <PlatformReliability />
         <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">

@@ -11,6 +11,16 @@ import (
 
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-infrastructure-service/internal/repository"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
+)
+
+var (
+	ErrResourceStatusManaged = errors.New(
+		"resource status is managed by the provisioning workflow",
+	)
+	ErrProvisioningFieldsLocked = errors.New(
+		"provisioning-sensitive fields cannot be changed in the current state",
+	)
 )
 
 type ResourceService struct {
@@ -33,17 +43,39 @@ func (s *ResourceService) Create(
 
 	now := time.Now().UTC()
 
+	var projectID *uuid.UUID
+
+	if strings.TrimSpace(input.ProjectID) != "" {
+		parsed, err := uuid.Parse(strings.TrimSpace(input.ProjectID))
+		if err != nil {
+			return model.InfrastructureResource{}, fmt.Errorf(
+				"invalid project_id: %w",
+				err,
+			)
+		}
+
+		projectID = &parsed
+	}
+
 	resource := model.InfrastructureResource{
 		ID:                 uuid.New(),
+		ProjectID:          projectID,
+		RequestedBy:        identity.FromContext(ctx).Subject,
 		Name:               strings.TrimSpace(input.Name),
 		Description:        strings.TrimSpace(input.Description),
+		ResourceType:       strings.TrimSpace(input.ResourceType),
 		Provider:           input.Provider,
 		Region:             strings.TrimSpace(input.Region),
 		Environment:        strings.TrimSpace(input.Environment),
-		Status:             model.ResourceStatusActive,
-		TerraformDirectory: strings.TrimSpace(input.TerraformDirectory),
+		Configuration:      input.Configuration,
+		Status:             model.ResourceStatusPending,
+		TerraformDirectory: "",
 		CreatedAt:          now,
 		UpdatedAt:          now,
+	}
+
+	if resource.Configuration == nil {
+		resource.Configuration = make(map[string]any)
 	}
 
 	if err := s.store.Create(ctx, resource); err != nil {
@@ -58,7 +90,9 @@ func (s *ResourceService) GetByID(
 	id uuid.UUID,
 ) (model.InfrastructureResource, error) {
 	if id == uuid.Nil {
-		return model.InfrastructureResource{}, errors.New("resource ID cannot be empty")
+		return model.InfrastructureResource{}, errors.New(
+			"resource ID cannot be empty",
+		)
 	}
 
 	return s.store.GetByID(ctx, id)
@@ -90,12 +124,26 @@ func (s *ResourceService) Update(
 	input model.UpdateResourceInput,
 ) (model.InfrastructureResource, error) {
 	if id == uuid.Nil {
-		return model.InfrastructureResource{}, errors.New("resource ID cannot be empty")
+		return model.InfrastructureResource{}, errors.New(
+			"resource ID cannot be empty",
+		)
 	}
 
 	resource, err := s.store.GetByID(ctx, id)
 	if err != nil {
 		return model.InfrastructureResource{}, err
+	}
+
+	// Only the provisioning workflow may transition resource status.
+	if input.Status != nil {
+		return model.InfrastructureResource{}, ErrResourceStatusManaged
+	}
+
+	// Prevent edits that could invalidate a generated plan or misrepresent
+	// infrastructure that is already provisioned.
+	if (!canUpdateProvisioningFields(resource.Status) || resource.AWSLastVerifiedAt != nil || resource.TerraformResourceID != "") &&
+		hasProvisioningSensitiveUpdate(input) {
+		return model.InfrastructureResource{}, ErrProvisioningFieldsLocked
 	}
 
 	if input.Name != nil {
@@ -138,16 +186,6 @@ func (s *ResourceService) Update(
 		resource.Environment = environment
 	}
 
-	if input.Status != nil {
-		if !input.Status.IsValid() {
-			return model.InfrastructureResource{}, errors.New(
-				"invalid resource status",
-			)
-		}
-
-		resource.Status = *input.Status
-	}
-
 	if input.TerraformDirectory != nil {
 		directory := strings.TrimSpace(*input.TerraformDirectory)
 
@@ -160,9 +198,13 @@ func (s *ResourceService) Update(
 		resource.TerraformDirectory = directory
 	}
 
+	if input.Configuration != nil {
+		resource.Configuration = input.Configuration
+	}
+
 	resource.UpdatedAt = time.Now().UTC()
 
-	if err := s.store.Update(ctx, resource); err != nil {
+	if err := s.store.UpdateEditable(ctx, id, input, resource.Status); err != nil {
 		return model.InfrastructureResource{}, err
 	}
 
@@ -177,7 +219,25 @@ func (s *ResourceService) Delete(
 		return errors.New("resource ID cannot be empty")
 	}
 
-	return s.store.Delete(ctx, id)
+	resource, err := s.store.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	switch resource.Status {
+	case model.ResourceStatusActive,
+		model.ResourceStatusProvisioning,
+		model.ResourceStatusPlanning,
+		model.ResourceStatusAwaitingApproval,
+		model.ResourceStatusAwaitingDestroyApproval,
+		model.ResourceStatusDestroying,
+		model.ResourceStatusDestroyFailed:
+		return errors.New(
+			"cannot delete an infrastructure resource while it is active or provisioning",
+		)
+	}
+
+	return s.store.DeleteIfStatusAllowed(ctx, id)
 }
 
 func validateCreateInput(input model.CreateResourceInput) error {
@@ -190,7 +250,16 @@ func validateCreateInput(input model.CreateResourceInput) error {
 	}
 
 	if !input.Provider.IsValid() {
-		return fmt.Errorf("invalid provider: %s", input.Provider)
+		return fmt.Errorf(
+			"invalid provider: %s",
+			input.Provider,
+		)
+	}
+
+	if input.Provider != model.ProviderAWS {
+		return errors.New(
+			"only AWS infrastructure provisioning is currently supported",
+		)
 	}
 
 	if strings.TrimSpace(input.Region) == "" {
@@ -201,9 +270,27 @@ func validateCreateInput(input model.CreateResourceInput) error {
 		return errors.New("environment cannot be empty")
 	}
 
-	if strings.TrimSpace(input.TerraformDirectory) == "" {
-		return errors.New("terraform directory cannot be empty")
+	switch strings.TrimSpace(input.ResourceType) {
+	case "aws_vpc", "aws_ec2", "aws_s3", "aws_rds", "aws_eks", "aws_lb":
+	default:
+		return fmt.Errorf(
+			"unsupported resource type: %s",
+			input.ResourceType,
+		)
 	}
 
 	return nil
+}
+
+func canUpdateProvisioningFields(status model.ResourceStatus) bool {
+	return status == model.ResourceStatusPending ||
+		status == model.ResourceStatusFailed
+}
+
+func hasProvisioningSensitiveUpdate(input model.UpdateResourceInput) bool {
+	return input.Name != nil ||
+		input.Region != nil ||
+		input.Environment != nil ||
+		input.TerraformDirectory != nil ||
+		input.Configuration != nil
 }

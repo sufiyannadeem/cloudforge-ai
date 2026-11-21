@@ -7,22 +7,22 @@ from psycopg import Connection
 from psycopg.rows import dict_row
 
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 
 def _require_database_url() -> str:
-    if not DATABASE_URL:
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
         raise RuntimeError(
             "DATABASE_URL must be set; passwordless database connections are not allowed"
         )
-    return DATABASE_URL
+    return database_url
 
 
 @contextmanager
-def get_connection() -> Iterator[Connection]:
+def get_connection(*, connect_timeout: int = 0) -> Iterator[Connection]:
     connection = psycopg.connect(
         _require_database_url(),
         row_factory=dict_row,
+        connect_timeout=connect_timeout,
     )
 
     try:
@@ -35,8 +35,38 @@ def get_connection() -> Iterator[Connection]:
         connection.close()
 
 
-def initialize_database() -> None:
-    with get_connection() as connection:
+def claim_telemetry_assertion(nonce: str, expiry: int) -> bool:
+    with get_connection(connect_timeout=2) as connection:
+        connection.execute("SET LOCAL statement_timeout = '2s'")
+        connection.execute("DELETE FROM aiops_telemetry_nonces WHERE expires_at <= clock_timestamp()")
+        result = connection.execute("""
+            INSERT INTO aiops_telemetry_nonces (nonce, expires_at)
+            SELECT %s, to_timestamp(%s) WHERE to_timestamp(%s) > clock_timestamp()
+            ON CONFLICT DO NOTHING
+        """, (nonce.lower(), expiry, expiry))
+        return result.rowcount == 1
+
+
+def initialize_database(*, migration: bool = False) -> None:
+    if os.getenv("APP_ENV") == "production":
+        if not migration:
+            raise RuntimeError("Use the explicit migration command before runtime startup")
+        from .service_identity import production_database
+        production_database(_require_database_url(), "cf_migrator")
+    with get_connection(connect_timeout=5) as connection:
+        connection.execute("SET LOCAL lock_timeout = '60s'")
+        connection.execute("SET LOCAL statement_timeout = '120s'")
+        connection.execute("SELECT pg_advisory_xact_lock(719920526321)")
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS aiops_telemetry_nonces (
+                nonce TEXT PRIMARY KEY,
+                expires_at TIMESTAMPTZ NOT NULL
+            )
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS aiops_telemetry_nonces_expiry
+            ON aiops_telemetry_nonces(expires_at)
+        """)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS aiops_incidents (
@@ -252,7 +282,12 @@ def initialize_database() -> None:
                 updated_at TIMESTAMPTZ NOT NULL,
                 approved_at TIMESTAMPTZ,
                 rejected_at TIMESTAMPTZ,
-                executed_at TIMESTAMPTZ
+                executed_at TIMESTAMPTZ,
+                expires_at TIMESTAMPTZ,
+                verification_started_at TIMESTAMPTZ,
+                verified_at TIMESTAMPTZ,
+                verification_result JSONB NOT NULL DEFAULT '{}'::jsonb,
+                execution_idempotency_key VARCHAR(255)
             )
             """
         )
@@ -275,6 +310,70 @@ def initialize_database() -> None:
 
         connection.execute(
             """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verification_started_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS verification_result JSONB
+            NOT NULL DEFAULT '{}'::jsonb
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS execution_idempotency_key VARCHAR(255)
+            """
+        )
+
+        connection.execute(
+            """
+            ALTER TABLE aiops_remediation_proposals
+            ADD COLUMN IF NOT EXISTS approved_role VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS approved_environment VARCHAR(32),
+            ADD COLUMN IF NOT EXISTS dispatch_token_hash VARCHAR(64),
+            ADD COLUMN IF NOT EXISTS dispatch_consumed_at TIMESTAMPTZ
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS
+            uq_aiops_remediation_execution_idempotency
+            ON aiops_remediation_proposals (execution_idempotency_key)
+            WHERE execution_idempotency_key IS NOT NULL
+            """
+        )
+
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS
+            idx_aiops_remediation_expires_at
+            ON aiops_remediation_proposals (expires_at)
+            WHERE expires_at IS NOT NULL
+            """
+        )
+
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS
             idx_aiops_remediation_created_at
             ON aiops_remediation_proposals (created_at DESC)
@@ -282,3 +381,7 @@ def initialize_database() -> None:
         )
 
         print("AI-Ops database initialized successfully.")
+
+
+if __name__ == "__main__":
+    initialize_database(migration=True)

@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestProviderIsValid(t *testing.T) {
 	validProviders := []Provider{
@@ -59,5 +62,22 @@ func TestResourceStatusIsInvalid(t *testing.T) {
 		if status.IsValid() {
 			t.Errorf("expected status %q to be invalid", status)
 		}
+	}
+}
+
+func TestActiveWorkflowDoesNotClaimLiveAWSVerification(t *testing.T) {
+	resource := InfrastructureResource{Status: ResourceStatusActive, Provider: ProviderAWS,
+		EC2Attribution: &EC2Attribution{InstanceID: "private-state-id"}}
+	body, err := json.Marshal(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(body, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["status"] != "active" || response["status_source"] != "terraform_workflow" ||
+		response["aws_live_status"] != "unverified" || response["EC2Attribution"] != nil {
+		t.Fatalf("unexpected workflow status metadata")
 	}
 }

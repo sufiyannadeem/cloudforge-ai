@@ -1,0 +1,30 @@
+# Offline inputs exercise the existing production rule; no live health claim.
+rule_files:
+  - ../rules/cloudforge-alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: service-outage-fires-after-hold-and-clears-on-recovery
+    interval: 30s
+    input_series:
+      - series: 'up{job="deployment-service",instance="fixture:8082"}'
+        values: '1 0 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: DeploymentServiceDown
+        exp_alerts: []
+      - eval_time: 1m30s
+        alertname: DeploymentServiceDown
+        exp_alerts:
+          - exp_labels:
+              job: deployment-service
+              instance: fixture:8082
+              severity: critical
+              service: deployment-service
+              team: platform
+            exp_annotations:
+              summary: Deployment service is down
+              description: The deployment-service target has been unavailable for more than one minute.
+              runbook: Check deployment-service container logs and container health.
+      - eval_time: 2m
+        alertname: DeploymentServiceDown
+        exp_alerts: []

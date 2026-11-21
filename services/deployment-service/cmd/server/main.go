@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/worker"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func main() {
@@ -37,13 +39,19 @@ func main() {
 
 	slog.SetDefault(logger)
 
-	cfg, err := config.Load()
+	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
+	cfg, err := config.Load(migrateOnly)
 	if err != nil {
 		logger.Error(
 			"failed to load configuration",
 			"error",
 			err,
 		)
+		os.Exit(1)
+	}
+
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "deployment", migrateOnly); err != nil {
+		logger.Error("database security policy failed", "error", err)
 		os.Exit(1)
 	}
 
@@ -65,13 +73,18 @@ func main() {
 
 	migrationRunner := migration.NewRunner(pool)
 
-	if err := migrationRunner.Run(ctx); err != nil {
-		logger.Error(
-			"failed to run database migrations",
-			"error",
-			err,
-		)
-		os.Exit(1)
+	if cfg.AppEnv != "production" || migrateOnly {
+		if err := migrationRunner.Run(ctx); err != nil {
+			logger.Error(
+				"failed to run database migrations",
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+	}
+	if migrateOnly {
+		return
 	}
 
 	deploymentRepository := repository.NewDeploymentRepository(pool)
@@ -123,61 +136,113 @@ func main() {
 		promhttp.HandlerOpts{},
 	)
 
-	simulatedExecutor := executor.SimulatedExecutor{
-		ExecutionDelay: 2 * time.Second,
-		ShouldFail:     false,
-	}
+	var deploymentExec executor.Executor
+	telemetryHandler := handler.NewProjectTelemetryHandler(nil, "", deploymentRepository)
+	if cfg.AppEnv == "production" || cfg.DeploymentExecutor == "kubernetes" {
+		k8sOpts := executor.KubernetesOptions{
+			ClusterName:      cfg.EKSClusterName,
+			AWSRegion:        cfg.AWSRegion,
+			DefaultNamespace: cfg.KubernetesNamespace,
+			KubectlPath:      cfg.KubectlPath,
+			AWSCLIPath:       cfg.AWSCLIPath,
+			KubeConfig:       cfg.KubeConfig,
+			Timeout:          time.Duration(cfg.RolloutTimeoutSeconds) * time.Second,
+			ArgoEnabled:      os.Getenv("ARGO_ROLLOUTS_ENABLED") == "true",
+			AnalysisTemplate: os.Getenv("ARGO_ANALYSIS_TEMPLATE"),
+		}
 
-	deploymentRunner, err := service.NewDeploymentRunnerWithAttemptsAndMetrics(
-		deploymentService,
-		attemptRepository,
-		simulatedExecutor,
-		logger,
-		deploymentMetrics,
-	)
-	if err != nil {
+		k8sExec, err := executor.NewProductionKubernetesExecutor(deploymentService, k8sOpts)
+		if err != nil {
+			logger.Error(
+				"failed to configure production Kubernetes executor",
+				"error",
+				err,
+			)
+			os.Exit(1)
+		}
+
+		if err := k8sExec.EnsureClusterConfig(ctx); err != nil {
+			logger.Error(
+				"failed to authenticate or configure Kubernetes cluster",
+				"error",
+				err,
+				"cluster",
+				cfg.EKSClusterName,
+				"region",
+				cfg.AWSRegion,
+			)
+			os.Exit(1)
+		}
+
+		if err := k8sExec.CheckAPIConnectivity(ctx); err != nil {
+			logger.Error(
+				"failed to connect to Kubernetes cluster API",
+				"error",
+				err,
+				"cluster",
+				cfg.EKSClusterName,
+				"region",
+				cfg.AWSRegion,
+			)
+			os.Exit(1)
+		}
+
+		deploymentExec = k8sExec
+		deploymentService.SetProgressiveEnabled(os.Getenv("ARGO_ROLLOUTS_ENABLED") == "true")
+		deploymentRepository.SetExecutionMode("kubernetes")
+		telemetryHandler = handler.NewProjectTelemetryHandler(k8sExec, os.Getenv("PROMETHEUS_URL"), deploymentRepository)
+		logger.Info(
+			"configured Kubernetes deployment executor and verified API connectivity",
+			"executor",
+			"kubernetes",
+			"cluster",
+			cfg.EKSClusterName,
+			"region",
+			cfg.AWSRegion,
+			"namespace",
+			cfg.KubernetesNamespace,
+		)
+	} else if cfg.DeploymentExecutor == "simulated" || cfg.AppEnv == "development" || cfg.AppEnv == "test" {
+		deploymentRepository.SetExecutionMode("simulated")
+		deploymentExec = executor.SimulatedExecutor{
+			ExecutionDelay: 2 * time.Second,
+			ShouldFail:     false,
+		}
+		logger.Info("configured local deployment executor", "executor", "simulated")
+	} else {
 		logger.Error(
-			"failed to create deployment runner",
-			"error",
-			err,
+			"cannot initialize executor: production mode requires Kubernetes configuration and cannot use simulation",
+			"env",
+			cfg.AppEnv,
+			"executor",
+			cfg.DeploymentExecutor,
 		)
 		os.Exit(1)
 	}
 
-	deploymentWorker, err := worker.New(
-		worker.Config{
-			QueueSize: 100,
-			Workers:   2,
-			Handler: func(
-				ctx context.Context,
-				job worker.Job,
-			) error {
-				return deploymentRunner.Run(
-					ctx,
-					job.DeploymentID,
-				)
-			},
-			Logger: logger,
-		},
+	shutdownContext, stop := signal.NotifyContext(
+		ctx,
+		syscall.SIGINT,
+		syscall.SIGTERM,
 	)
-	if err != nil {
-		logger.Error(
-			"failed to create deployment worker",
-			"error",
-			err,
-		)
-		os.Exit(1)
-	}
+	defer stop()
 
-	deploymentWorker.Start()
+	workersDone := worker.StartDurable(shutdownContext, 2, deploymentRepository, deploymentExec, deploymentMetrics, logger)
 
 	deploymentHandler := handler.NewDeploymentHandler(
 		deploymentService,
 	)
 
+	if source, ok := deploymentExec.(interface {
+		RolloutState(context.Context, uuid.UUID) (executor.RolloutState, error)
+		Promote(context.Context, uuid.UUID, executor.RolloutState) error
+	}); ok {
+		deploymentHandler.Rollouts = &handler.RolloutHandler{Source: source, Store: deploymentRepository}
+	}
 	queuedDeploymentHandler := handler.NewQueuedDeploymentHandler(
 		deploymentService,
-		deploymentWorker,
+		nil,
+		deploymentRepository,
 	)
 
 	deploymentAttemptHandler := handler.NewDeploymentAttemptHandler(
@@ -190,29 +255,26 @@ func main() {
 		queuedDeploymentHandler,
 		deploymentAttemptHandler,
 		metricsHandler,
+		telemetryHandler,
 	)
+
+	authenticatedRouter := handler.NewAuthenticatedRouter(router,
+		os.Getenv("CLOUDFORGE_FRONTEND_KEY"), os.Getenv("CLOUDFORGE_AIOPS_DEPLOYMENT_KEY"), identity.ProjectAccess{DB: pool})
 
 	instrumentedRouter := metrics.Middleware(
 		serviceMetrics,
-	)(router)
+	)(authenticatedRouter)
 
 	server := &http.Server{
 		Addr: ":" + strconv.Itoa(cfg.ServerPort),
 
-		Handler: instrumentedRouter,
+		Handler: identity.WithReadiness(instrumentedRouter, pool.Ping, shutdownContext),
 
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-
-	shutdownContext, stop := signal.NotifyContext(
-		context.Background(),
-		syscall.SIGINT,
-		syscall.SIGTERM,
-	)
-	defer stop()
 
 	serverErrors := make(chan error, 1)
 
@@ -227,13 +289,12 @@ func main() {
 			true,
 			"worker_count",
 			2,
-			"queue_size",
-			100,
 		)
 
 		serverErrors <- server.ListenAndServe()
 	}()
 
+	serverFailed := false
 	select {
 	case err := <-serverErrors:
 		if !errors.Is(
@@ -246,9 +307,7 @@ func main() {
 				err,
 			)
 
-			deploymentWorker.Shutdown()
-
-			os.Exit(1)
+			serverFailed = true
 		}
 
 	case <-shutdownContext.Done():
@@ -257,12 +316,14 @@ func main() {
 		)
 	}
 
+	stop()
+
 	shutdownTimeout := time.Duration(
 		cfg.ShutdownTimeoutSeconds,
 	) * time.Second
 
 	shutdownCtx, cancel := context.WithTimeout(
-		context.Background(),
+		ctx,
 		shutdownTimeout,
 	)
 	defer cancel()
@@ -276,12 +337,19 @@ func main() {
 			err,
 		)
 
-		deploymentWorker.Shutdown()
-
 		os.Exit(1)
 	}
 
-	deploymentWorker.Shutdown()
+	select {
+	case <-workersDone:
+	case <-shutdownCtx.Done():
+		logger.Error("deployment worker shutdown timed out", "error", shutdownCtx.Err())
+		os.Exit(1)
+	}
+
+	if serverFailed {
+		os.Exit(1)
+	}
 
 	logger.Info(
 		"deployment service stopped successfully",

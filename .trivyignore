@@ -1,0 +1,15 @@
+# Trivy security policy exceptions with justifications
+#
+# AWS-0132 / AVD-AWS-0132 (S3 Bucket Default Encryption — KMS CMK not used):
+# Resource: infrastructure/terraform/bootstrap/s3.tf (aws_s3_bucket_server_side_encryption_configuration.terraform_state)
+# Suppression: Inline annotation only — see #trivy:ignore:AVD-AWS-0132 on s3.tf line 19.
+# Global suppression intentionally removed. The inline annotation provides narrowly-scoped,
+# resource-level suppression. No global override is present in this file.
+#
+# Justification: S3 bootstrap bucket uses AWS-managed AES256 server-side encryption to prevent
+# circular dependencies during initial remote state backend bootstrapping prior to KMS provisioning.
+# State data is protected via defense-in-depth controls:
+# 1. Strict TLS/HTTPS transport enforcement via bucket policy (DenyInsecureTransport / aws:SecureTransport: false).
+# 2. Complete public access block (block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets).
+# 3. Object versioning enabled to prevent accidental state deletion or corruption.
+# 4. Lifecycle rule expiring noncurrent state versions after 30 days.

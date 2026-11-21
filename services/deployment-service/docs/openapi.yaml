@@ -205,6 +205,41 @@ paths:
         "500":
           $ref: "#/components/responses/InternalServerError"
 
+  /api/v1/deployments/{id}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/DeploymentID"
+
+    post:
+      tags:
+        - Deployments
+      summary: Rollback deployment to previous successful release
+      operationId: rollbackDeployment
+      responses:
+        "201":
+          description: Rollback deployment created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Deployment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: No previous successful deployment available for rollback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: no previous successful deployment found for rollback
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+
   /api/v1/deployments/{id}/attempts:
     parameters:
       - $ref: "#/components/parameters/DeploymentID"
@@ -230,6 +265,49 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalServerError"
+
+  /api/v1/deployments/{id}/rollout:
+    get:
+      summary: Read verified Argo revision, preview readiness and promotion audit
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      responses:
+        "200":
+          description: Project-authorized live state and persisted promotion history
+        "503":
+          description: Controller, CRDs, ownership or audit state cannot be verified
+  /api/v1/deployments/{id}/promote:
+    post:
+      summary: Independently approve and submit this exact blue-green preview
+      description: Requires a fresh body-bound Platform Engineer identity, a different requester, a valid execution lease and an unused approval. Never bypasses canary analysis.
+      parameters:
+        - $ref: "#/components/parameters/DeploymentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uid, resource_version, approve]
+              properties:
+                uid:
+                  type: string
+                resource_version:
+                  type: string
+                approve:
+                  type: boolean
+                  enum: [true]
+      responses:
+        "202":
+          description: Promotion submitted; execution success still requires observed controller health
+        "401":
+          description: Missing, expired or unbound identity
+        "403":
+          description: Platform Engineer approval required
+        "409":
+          description: Self-approval, replay, stale or unhealthy revision, or uncertain promotion
+        "503":
+          description: Argo or durable audit unavailable
 
 components:
   parameters:
@@ -280,6 +358,28 @@ components:
           type: string
           example: ok
 
+    DeploymentStrategy:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [rolling, blue-green, canary]
+          default: rolling
+        max_surge:
+          type: integer
+          minimum: 0
+          maximum: 2
+        max_unavailable:
+          type: integer
+          minimum: 0
+          maximum: 2
+        readiness_gates:
+          type: array
+          maxItems: 4
+          items:
+            type: string
+      description: Progressive strategies require immutable images, Argo prerequisites and an existing verified stable baseline. Canary is replica-based without a traffic router.
+
     CreateDeploymentRequest:
       type: object
       required:
@@ -289,6 +389,8 @@ components:
         - git_commit_sha
         - namespace
       properties:
+        strategy:
+          $ref: "#/components/schemas/DeploymentStrategy"
         project_id:
           type: string
           format: uuid
@@ -361,6 +463,11 @@ components:
         - created_at
         - updated_at
       properties:
+        strategy:
+          $ref: "#/components/schemas/DeploymentStrategy"
+        created_by:
+          type: string
+          readOnly: true
         id:
           type: string
           format: uuid
@@ -530,6 +637,24 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
           example:
             error: deployment not found
+
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: unauthorized
+
+    Forbidden:
+      description: Insufficient permissions for requested action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error: forbidden
 
     InternalServerError:
       description: Internal server error

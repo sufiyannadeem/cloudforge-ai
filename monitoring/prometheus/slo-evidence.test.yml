@@ -1,0 +1,69 @@
+rule_files:
+  - slo-evidence-rules.yml
+evaluation_interval: 15s
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'up{job="deployment-service",service="deployment-service",environment="healthy"}'
+        values: '1x20'
+      - series: 'http_requests_total{job="deployment-service",service="deployment-service",environment="healthy",route="GET /api/v1/deployments",status="200"}'
+        values: '0+1x20'
+      - series: 'http_request_duration_seconds_count{job="deployment-service",service="deployment-service",environment="healthy",route="GET /api/v1/deployments"}'
+        values: '0+1x20'
+      - series: 'http_request_duration_seconds_bucket{job="deployment-service",service="deployment-service",environment="healthy",route="GET /api/v1/deployments",le="0.5"}'
+        values: '0+1x20'
+      - series: 'up{job="deployment-service",service="deployment-service",environment="failure"}'
+        values: '0x20'
+      - series: 'http_requests_total{job="deployment-service",service="deployment-service",environment="failure",route="GET /api/v1/deployments",status="200"}'
+        values: '0+8x20'
+      - series: 'http_requests_total{job="deployment-service",service="deployment-service",environment="failure",route="GET /api/v1/deployments",status="500"}'
+        values: '0+2x20'
+      - series: 'http_request_duration_seconds_count{job="deployment-service",service="deployment-service",environment="failure",route="GET /api/v1/deployments"}'
+        values: '0+10x20'
+      - series: 'http_request_duration_seconds_bucket{job="deployment-service",service="deployment-service",environment="failure",route="GET /api/v1/deployments",le="0.5"}'
+        values: '0+5x20'
+      - series: 'up{job="deployment-service",service="deployment-service",environment="stale"}'
+        values: '1x16'
+      - series: 'http_requests_total{job="deployment-service",service="deployment-service",environment="stale",route="GET /api/v1/deployments",status="200"}'
+        values: '0+1x16'
+      - series: 'up{job="deployment-service",service="deployment-service",environment="short-counters"}'
+        values: '1x20'
+      - series: 'http_requests_total{job="deployment-service",service="deployment-service",environment="short-counters",route="GET /api/v1/deployments",status="200"}'
+        values: '_x18 0 1'
+      - series: 'http_request_duration_seconds_count{job="deployment-service",service="deployment-service",environment="short-counters",route="GET /api/v1/deployments"}'
+        values: '_x18 0 1'
+      - series: 'http_request_duration_seconds_bucket{job="deployment-service",service="deployment-service",environment="short-counters",route="GET /api/v1/deployments",le="0.5"}'
+        values: '_x18 0 1'
+    promql_expr_test:
+      - expr: cloudforge:slo_availability:5m
+        eval_time: 0s
+        exp_samples: []
+      - expr: cloudforge:slo_request_success:5m
+        eval_time: 0s
+        exp_samples: []
+      - expr: cloudforge:slo_latency_compliance:5m
+        eval_time: 0s
+        exp_samples: []
+      - expr: cloudforge:slo_availability:5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'cloudforge:slo_availability:5m{job="deployment-service",service="deployment-service",environment="healthy"}'
+            value: 1
+          - labels: 'cloudforge:slo_availability:5m{job="deployment-service",service="deployment-service",environment="failure"}'
+            value: 0
+          - labels: 'cloudforge:slo_availability:5m{job="deployment-service",service="deployment-service",environment="short-counters"}'
+            value: 1
+      - expr: cloudforge:slo_request_success:5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'cloudforge:slo_request_success:5m{job="deployment-service",service="deployment-service",environment="healthy"}'
+            value: 1
+          - labels: 'cloudforge:slo_request_success:5m{job="deployment-service",service="deployment-service",environment="failure"}'
+            value: 0.8
+      - expr: cloudforge:slo_latency_compliance:5m
+        eval_time: 5m
+        exp_samples:
+          - labels: 'cloudforge:slo_latency_compliance:5m{job="deployment-service",service="deployment-service",environment="healthy"}'
+            value: 1
+          - labels: 'cloudforge:slo_latency_compliance:5m{job="deployment-service",service="deployment-service",environment="failure"}'
+            value: 0.5

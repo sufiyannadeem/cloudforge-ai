@@ -36,6 +36,11 @@ type DeploymentManager interface {
 		ctx context.Context,
 		id uuid.UUID,
 	) error
+
+	Rollback(
+		ctx context.Context,
+		id uuid.UUID,
+	) (model.Deployment, error)
 }
 
 type DeploymentQueueManager interface {

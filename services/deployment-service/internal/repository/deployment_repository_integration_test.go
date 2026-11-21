@@ -111,12 +111,21 @@ func TestDeploymentRepositoryCRUD(t *testing.T) {
 	})
 
 	t.Run("Update", func(t *testing.T) {
+		expected, err := repo.GetByID(ctx, deploymentID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		deployment.Status = model.DeploymentStatusQueued
 		deployment.UpdatedAt = time.Now().UTC()
 
-		err := repo.Update(ctx, deployment)
-		if err != nil {
-			t.Fatalf("Update() failed: %v", err)
+		errors := concurrentWrites(2, func() error {
+			return repo.Update(ctx, deployment, expected)
+		})
+		switch {
+		case errors[0] == nil && errors[1] == ErrDeploymentConflict:
+		case errors[1] == nil && errors[0] == ErrDeploymentConflict:
+		default:
+			t.Fatalf("expected one transition and one conflict, got %v", errors)
 		}
 
 		result, err := repo.GetByID(ctx, deploymentID)
@@ -130,6 +139,62 @@ func TestDeploymentRepositoryCRUD(t *testing.T) {
 				model.DeploymentStatusQueued,
 				result.Status,
 			)
+		}
+	})
+
+	t.Run("Stale configuration update", func(t *testing.T) {
+		expected, err := repo.GetByID(ctx, deploymentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imageUpdate := expected
+		imageUpdate.Image = "nginx:stable"
+		if err := repo.Update(ctx, imageUpdate, expected); err != nil {
+			t.Fatal(err)
+		}
+		namespaceUpdate := expected
+		namespaceUpdate.Namespace = "stale-namespace"
+		if err := repo.Update(ctx, namespaceUpdate, expected); err != ErrDeploymentConflict {
+			t.Fatalf("expected stale update conflict, got %v", err)
+		}
+		current, err := repo.GetByID(ctx, deploymentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Image != imageUpdate.Image || current.Namespace != expected.Namespace {
+			t.Fatal("stale write changed deployment configuration")
+		}
+	})
+
+	t.Run("Concurrent attempt allocation", func(t *testing.T) {
+		attempts, err := NewDeploymentAttemptRepository(pool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const count = 8
+		for _, err := range concurrentWrites(count, func() error {
+			now := time.Now()
+			return attempts.Create(ctx, model.DeploymentAttempt{
+				ID: uuid.New(), DeploymentID: deploymentID, Status: model.AttemptStatusRunning,
+				StartedAt: now, CreatedAt: now,
+			})
+		}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		history, err := attempts.ListByDeploymentID(ctx, deploymentID, count, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		numbers := make(map[int]bool, count)
+		for _, attempt := range history {
+			numbers[attempt.AttemptNumber] = true
+		}
+		for number := 1; number <= count; number++ {
+			if !numbers[number] {
+				t.Fatalf("attempt number %d missing from %v", number, numbers)
+			}
 		}
 	})
 
@@ -147,4 +212,21 @@ func TestDeploymentRepositoryCRUD(t *testing.T) {
 			)
 		}
 	})
+}
+
+func concurrentWrites(count int, write func() error) []error {
+	start := make(chan struct{})
+	results := make(chan error, count)
+	for range count {
+		go func() {
+			<-start
+			results <- write()
+		}()
+	}
+	close(start)
+	errs := make([]error, count)
+	for i := range errs {
+		errs[i] = <-results
+	}
+	return errs
 }

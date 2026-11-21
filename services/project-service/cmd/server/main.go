@@ -13,18 +13,26 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/accounts"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/config"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/database"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/handler"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-project-service/internal/service"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("failed to load configuration: %v", err)
+	}
+
+	migrateOnly := len(os.Args) == 2 && os.Args[1] == "migrate"
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "project", migrateOnly); err != nil {
+		log.Fatal(err)
 	}
 
 	ctx, stop := signal.NotifyContext(
@@ -40,26 +48,67 @@ func main() {
 	}
 	defer dbPool.Close()
 
-	if err := migration.Run(ctx, dbPool); err != nil {
-		log.Fatalf("failed to run database migrations: %v", err)
+	if cfg.AppEnv != "production" || migrateOnly {
+		if err := migration.Run(ctx, dbPool); err != nil {
+			log.Fatalf("failed to run database migrations: %v", err)
+		}
+	}
+	if migrateOnly {
+		return
+	}
+
+	accountStore := accounts.NewStore(dbPool)
+	if len(os.Args) > 1 {
+		if os.Args[1] != "account" {
+			log.Fatal("unknown project-service command")
+		}
+		if len(os.Args) > 2 {
+			switch os.Args[2] {
+			case "bootstrap", "create", "import-legacy":
+				if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+					log.Fatal("pipe the password to the account command from a silent prompt")
+				}
+			}
+		}
+		if err := accountStore.Admin(ctx, os.Args[2:], os.Stdin); err != nil {
+			log.Fatalf("account command failed: %v", err)
+		}
+		log.Println("account command completed")
+		return
 	}
 
 	log.Println("database migrations completed successfully")
 
 	projectRepository := repository.NewProjectRepository(dbPool)
 	projectService := service.NewProjectService(projectRepository)
-	projectHandler := handler.NewProjectHandler(projectService)
+	projectHandler := handler.ProjectAccess(handler.NewProjectHandler(projectService), dbPool)
 
 	mux := http.NewServeMux()
+	frontendKey := os.Getenv("CLOUDFORGE_FRONTEND_KEY")
+	accounts.RegisterRoutes(mux, accountStore, frontendKey)
+	accounts.RegisterAdminRoutes(mux, accountStore, frontendKey)
+	projectKeys := map[string]string{"frontend": frontendKey}
+	authenticatedProjects := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller, ok := identity.Verify(r, "project", projectKeys)
+		if !ok || !caller.Human() {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		projectHandler.ServeHTTP(w, identity.WithClaims(r, caller))
+	})
 
 	mux.HandleFunc("/health", healthHandler)
-	mux.Handle("/projects", projectHandler)
-	mux.Handle("/projects/", projectHandler)
+	mux.Handle("/projects", authenticatedProjects)
+	mux.Handle("/projects/", authenticatedProjects)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.ServerPort,
-		Handler:           requestIDMiddleware(loggingMiddleware(mux)),
+		Handler:           identity.WithReadiness(requestIDMiddleware(loggingMiddleware(mux)), dbPool.Ping, ctx),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)

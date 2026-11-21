@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from .remediation_models import (
     RemediationApprovalRequest,
@@ -10,6 +10,7 @@ from .remediation_models import (
     RemediationResponse,
 )
 from .remediation_service import RemediationService
+from .remediation_access import require_remediation_approver, require_remediation_human
 
 
 router = APIRouter(
@@ -26,6 +27,7 @@ service = RemediationService()
 )
 def get_remediation(
     incident_id: str,
+    caller: dict[str, str] = Depends(require_remediation_human),
 ) -> RemediationResponse:
 
     incident = service.incidents.get(incident_id)
@@ -107,13 +109,12 @@ def get_remediation(
 def preview_remediation(
     incident_id: str,
     request: RemediationPreviewRequest,
+    caller: dict[str, str] = Depends(require_remediation_human),
 ):
 
     try:
-        return service.preview(
-            incident_id,
-            request,
-        )
+        trusted_request = request.model_copy(update={"requested_by": caller["actor"]})
+        return service.preview(incident_id, trusted_request)
     except LookupError as exc:
         raise HTTPException(
             status_code=404,
@@ -128,6 +129,7 @@ def approve_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationApprovalRequest,
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -139,10 +141,7 @@ def approve_remediation(
         )
 
     try:
-        return service.approve(
-            proposal_id,
-            request.approved_by.strip(),
-        )
+        return service.approve(proposal_id, caller["actor"], caller["role"])
     except PermissionError as exc:
         raise HTTPException(
             status_code=409,
@@ -167,6 +166,7 @@ def reject_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationRejectionRequest,
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -180,7 +180,7 @@ def reject_remediation(
     try:
         return service.reject(
             proposal_id,
-            request.rejected_by.strip(),
+            caller["actor"],
             request.reason.strip(),
         )
     except ValueError as exc:
@@ -202,6 +202,7 @@ def execute_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationExecutionRequest,
+    caller: dict[str, str] = Depends(require_remediation_approver),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -215,7 +216,8 @@ def execute_remediation(
     try:
         return service.execute(
             proposal_id,
-            request.executed_by.strip(),
+            caller["actor"],
+            request.idempotency_key.strip(),
         )
 
     except PermissionError as exc:
@@ -230,8 +232,59 @@ def execute_remediation(
             detail=str(exc),
         ) from exc
 
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=f"Remediation execution failed: {exc}",
+        ) from exc
+
+
+@router.post(
+    "/{incident_id}/remediation/{proposal_id}/verify",
+)
+def verify_remediation(
+    incident_id: str,
+    proposal_id: str,
+    caller: dict[str, str] = Depends(require_remediation_human),
+):
+
+    proposal = service.remediations.get(proposal_id)
+
+    if proposal is None or proposal.incident_id != incident_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Remediation proposal not found",
+        )
+
+    try:
+        return service.verify(proposal_id)
+
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Remediation verification failed: {exc}",
         ) from exc

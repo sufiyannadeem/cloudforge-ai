@@ -12,10 +12,12 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/service"
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 type DeploymentHandler struct {
-	service service.DeploymentManager
+	Rollouts *RolloutHandler
+	service  service.DeploymentManager
 }
 
 func NewDeploymentHandler(
@@ -152,6 +154,25 @@ func (h *DeploymentHandler) Delete(
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *DeploymentHandler) Rollback(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	id, err := parseDeploymentID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	deployment, err := h.service.Rollback(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, deployment)
+}
+
 func decodeJSON(
 	r *http.Request,
 	target interface{},
@@ -235,10 +256,18 @@ func writeServiceError(
 	err error,
 ) {
 	switch {
+	case errors.Is(err, service.ErrProgressiveUnavailable):
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, identity.ErrProjectHidden), errors.Is(err, identity.ErrProjectWrite), errors.Is(err, identity.ErrProjectUnavailable):
+		writeError(w, identity.AccessStatus(err), "project access denied")
 	case errors.Is(err, repository.ErrDeploymentNotFound):
 		writeError(w, http.StatusNotFound, "deployment not found")
 
-	case errors.Is(err, service.ErrInvalidProjectID),
+	case errors.Is(err, service.ErrNoPreviousSuccessfulDeployment),
+		errors.Is(err, repository.ErrDeploymentConflict):
+		writeError(w, http.StatusConflict, err.Error())
+
+	case errors.Is(err, model.ErrInvalidStrategy), errors.Is(err, service.ErrInvalidProjectID),
 		errors.Is(err, service.ErrInvalidEnvironment),
 		errors.Is(err, service.ErrInvalidImage),
 		errors.Is(err, service.ErrInvalidGitCommitSHA),

@@ -8,6 +8,8 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from .service_identity import deployment_identity, open_deployment
+
 
 @dataclass
 class DeploymentRecord:
@@ -74,16 +76,22 @@ class DeploymentClient:
             f"/api/v1/deployments?{query}"
         )
 
+        try:
+            assertion = deployment_identity(url, "GET")
+        except RuntimeError as exc:
+            return [], str(exc)
+
         request = urllib.request.Request(
             url,
             method="GET",
             headers={
                 "Accept": "application/json",
+                "X-CloudForge-Identity": assertion,
             },
         )
 
         try:
-            with urllib.request.urlopen(
+            with open_deployment(
                 request,
                 timeout=self.timeout_seconds,
             ) as response:

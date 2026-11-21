@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useViewerSession } from "@/components/layout/ViewerSession";
+import { canWriteProject } from "@/lib/role-access";
+import { frontendApiRequest as requestJson } from "@/lib/frontend-api";
 import AppShell from "@/components/layout/AppShell";
 import type {
   CreateProjectInput,
@@ -17,40 +20,12 @@ const emptyForm: CreateProjectInput = {
   default_branch: "main",
 };
 
-async function requestJson<T>(
-  url: string,
-  options?: RequestInit,
-): Promise<T> {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-    cache: "no-store",
-  });
-
-  const contentType =
-    response.headers.get("content-type") ?? "";
-
-  const body = contentType.includes("application/json")
-    ? await response.json()
-    : null;
-
-  if (!response.ok) {
-    const message =
-      body?.error?.message ??
-      body?.message ??
-      `Request failed: ${response.status}`;
-
-    throw new Error(message);
-  }
-
-  return body as T;
-}
-
 export default function ProjectsPage() {
+  const role = useViewerSession()?.role;
+  const canCreate = role === "platform-engineer" || role === "developer";
+  const canEdit = (project: Project) => canCreate && canWriteProject(role, project.access_level);
+  const canDelete = (project: Project) => role === "platform-engineer" ||
+    (role === "developer" && project.access_level === "owner");
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -90,6 +65,15 @@ export default function ProjectsPage() {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   void loadProjects();
 }, [loadProjects]);
+
+  useEffect(() => {
+    if (!canCreate || new URLSearchParams(window.location.search).get("create") !== "1") return;
+    const timer = window.setTimeout(() => {
+      setShowForm(true);
+      window.history.replaceState(null, "", "/projects");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [canCreate]);
 
   const openCreateForm = () => {
     setEditingProject(null);
@@ -233,7 +217,7 @@ export default function ProjectsPage() {
             </p>
           </div>
 
-          <button
+          {canCreate && <button
             type="button"
             onClick={openCreateForm}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold
@@ -241,7 +225,7 @@ export default function ProjectsPage() {
             focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
           >
             + Create project
-          </button>
+          </button>}
         </header>
 
         {error && (
@@ -290,13 +274,13 @@ export default function ProjectsPage() {
                 No projects found.
               </p>
 
-              <button
+              {canCreate && <button
                 type="button"
                 onClick={openCreateForm}
                 className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
               >
                 Create your first project
-              </button>
+              </button>}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -357,7 +341,7 @@ export default function ProjectsPage() {
 
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
-                          <button
+                          {canEdit(project) && <button
                             type="button"
                             onClick={() =>
                               openEditForm(project)
@@ -371,9 +355,9 @@ export default function ProjectsPage() {
                               hover:text-[var(--cf-text)]"
                           >
                             Edit
-                          </button>
+                          </button>}
 
-                          <button
+                          {canDelete(project) && <button
                             type="button"
                             onClick={() =>
                               void deleteProject(project)
@@ -387,7 +371,7 @@ export default function ProjectsPage() {
                               dark:text-rose-400"
                           >
                             Delete
-                          </button>
+                          </button>}
                         </div>
                       </td>
                     </tr>
@@ -398,7 +382,7 @@ export default function ProjectsPage() {
           )}
         </section>
 
-        {showForm && (
+        {showForm && (editingProject ? canEdit(editingProject) : canCreate) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--cf-overlay)] p-4 backdrop-blur-sm">
             <div className="w-full max-w-lg rounded-2xl border border-[var(--cf-border)] bg-[var(--cf-surface)] p-6 shadow-2xl">
               <div className="flex items-start justify-between gap-4 border-b border-[var(--cf-border)] pb-4">

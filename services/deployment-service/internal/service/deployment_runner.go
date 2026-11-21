@@ -12,6 +12,7 @@ import (
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/executor"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/metrics"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
+	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/repository"
 )
 
 type DeploymentAttemptManager interface {
@@ -24,11 +25,6 @@ type DeploymentAttemptManager interface {
 		ctx context.Context,
 		attempt model.DeploymentAttempt,
 	) error
-
-	GetNextAttemptNumber(
-		ctx context.Context,
-		deploymentID uuid.UUID,
-	) (int, error)
 }
 
 type DeploymentRunner struct {
@@ -115,11 +111,29 @@ func (r *DeploymentRunner) Run(
 		)
 	}
 
+	if deployment.Status == model.DeploymentStatusPending {
+		queued := model.DeploymentStatusQueued
+		deployment, err = r.deploymentService.update(ctx, deployment, model.UpdateDeploymentInput{Status: &queued})
+		if err != nil {
+			return fmt.Errorf("mark deployment as queued: %w", err)
+		}
+	}
+
+	if deployment.Status != model.DeploymentStatusQueued {
+		return fmt.Errorf("%w: execution requires a queued deployment, got %s", ErrInvalidDeploymentTransition, deployment.Status)
+	}
+	running := model.DeploymentStatusRunning
+	if _, err := r.deploymentService.update(ctx, deployment, model.UpdateDeploymentInput{Status: &running}); err != nil {
+		return fmt.Errorf("claim deployment execution: %w", err)
+	}
+
 	attempt, err := r.startAttempt(ctx, deploymentID)
 	if err != nil {
-		return fmt.Errorf(
-			"start deployment attempt: %w",
-			err,
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return errors.Join(
+			fmt.Errorf("start deployment attempt: %w", err),
+			r.updateStatus(cleanupCtx, deploymentID, model.DeploymentStatusFailed),
 		)
 	}
 
@@ -141,48 +155,13 @@ func (r *DeploymentRunner) Run(
 		}
 	}()
 
-	if err := r.updateStatus(
-		ctx,
-		deploymentID,
-		model.DeploymentStatusQueued,
-	); err != nil {
-		r.completeAttempt(
-			ctx,
-			attempt,
-			model.AttemptStatusFailed,
-			err,
-			startTime,
-		)
-
-		return fmt.Errorf(
-			"mark deployment as queued: %w",
-			err,
-		)
-	}
-
-	if err := r.updateStatus(
-		ctx,
-		deploymentID,
-		model.DeploymentStatusRunning,
-	); err != nil {
-		r.completeAttempt(
-			ctx,
-			attempt,
-			model.AttemptStatusFailed,
-			err,
-			startTime,
-		)
-
-		return fmt.Errorf(
-			"mark deployment as running: %w",
-			err,
-		)
-	}
-
 	result, executionErr := r.executor.Execute(
 		ctx,
 		deploymentID,
 	)
+
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
 
 	if executionErr != nil {
 		r.logger.Error(
@@ -204,7 +183,7 @@ func (r *DeploymentRunner) Run(
 		}
 
 		r.completeAttempt(
-			ctx,
+			writeCtx,
 			attempt,
 			attemptStatus,
 			executionErr,
@@ -212,7 +191,7 @@ func (r *DeploymentRunner) Run(
 		)
 
 		statusErr := r.updateStatus(
-			ctx,
+			writeCtx,
 			deploymentID,
 			model.DeploymentStatusFailed,
 		)
@@ -239,12 +218,12 @@ func (r *DeploymentRunner) Run(
 	}
 
 	if err := r.updateStatus(
-		ctx,
+		writeCtx,
 		deploymentID,
 		model.DeploymentStatusSucceeded,
 	); err != nil {
 		r.completeAttempt(
-			ctx,
+			writeCtx,
 			attempt,
 			model.AttemptStatusFailed,
 			err,
@@ -268,7 +247,7 @@ func (r *DeploymentRunner) Run(
 	}
 
 	r.completeAttempt(
-		ctx,
+		writeCtx,
 		attempt,
 		model.AttemptStatusSucceeded,
 		nil,
@@ -308,23 +287,14 @@ func (r *DeploymentRunner) startAttempt(
 		return nil, nil
 	}
 
-	attemptNumber, err := r.attemptManager.GetNextAttemptNumber(
-		ctx,
-		deploymentID,
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	now := time.Now()
 
 	attempt := &model.DeploymentAttempt{
-		ID:            uuid.New(),
-		DeploymentID:  deploymentID,
-		AttemptNumber: attemptNumber,
-		Status:        model.AttemptStatusRunning,
-		StartedAt:     now,
-		CreatedAt:     now,
+		ID:           uuid.New(),
+		DeploymentID: deploymentID,
+		Status:       model.AttemptStatusRunning,
+		StartedAt:    now,
+		CreatedAt:    now,
 	}
 
 	if err := r.attemptManager.Create(
@@ -381,13 +351,13 @@ func (r *DeploymentRunner) updateStatus(
 	deploymentID uuid.UUID,
 	status model.DeploymentStatus,
 ) error {
-	_, err := r.deploymentService.Update(
-		ctx,
-		deploymentID,
-		model.UpdateDeploymentInput{
-			Status: &status,
-		},
-	)
-
-	return err
+	for {
+		_, err := r.deploymentService.Update(ctx, deploymentID, model.UpdateDeploymentInput{Status: &status})
+		if !errors.Is(err, repository.ErrDeploymentConflict) {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 }

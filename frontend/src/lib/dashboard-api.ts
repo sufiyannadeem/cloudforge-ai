@@ -1,4 +1,8 @@
-import { serviceConfig } from "@/lib/config";
+import { serviceAssertion, type Audience } from "@/lib/service-identity";
+import { serviceConfig } from "@/lib/server-config";
+import type { CloudForgeSession } from "@/lib/auth";
+import { dashboardCapabilities } from "@/lib/role-access";
+import type { FinOpsReport } from "@/types/finops";
 import {
   getDeploymentProgress,
   getErrorRate,
@@ -19,36 +23,6 @@ import type {
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
-async function requestJson<T>(
-  url: string,
-): Promise<T> {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-    cache: "no-store",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Request failed with status ${response.status}`,
-    );
-  }
-
-  return response.json() as Promise<T>;
-}
-
-async function getCount<T>(
-  url: string,
-  extractCount: (data: T) => number,
-): Promise<number> {
-  const data = await requestJson<T>(url);
-
-  return extractCount(data);
-}
-
 interface IncidentListResponse {
   items?: unknown[];
   data?: unknown[];
@@ -61,7 +35,7 @@ interface IncidentListResponse {
 
 function extractIncidentCount(
   data: IncidentListResponse,
-): number {
+): number | null {
   if (typeof data.total === "number") {
     return data.total;
   }
@@ -82,7 +56,7 @@ function extractIncidentCount(
     return data.data.length;
   }
 
-  return 0;
+  return null;
 }
 
 async function getObservabilityData(): Promise<{
@@ -134,89 +108,73 @@ async function getObservabilityData(): Promise<{
   };
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  const errors: string[] = [];
-
-  const results = await Promise.allSettled([
-    getCount<ProjectListResponse>(
-      `${serviceConfig.project}/projects?limit=100&offset=0`,
-      (data) => data.count ?? data.data.length,
-    ),
-
-    getCount<InfrastructureListResponse>(
-      `${serviceConfig.infrastructure}/api/v1/resources?limit=100&offset=0`,
-      (data) => data.items.length,
-    ),
-
-    getCount<DeploymentListResponse>(
-      `${serviceConfig.deployment}/api/v1/deployments?limit=100&offset=0`,
-      (data) => data.items.length,
-    ),
-
-    getCount<IncidentListResponse>(
-      `${serviceConfig.aiops}/api/v1/incidents?limit=100&offset=0`,
-      extractIncidentCount,
-    ),
-
-    getObservabilityData(),
-  ]);
-
-  const serviceNames = [
-    "projects",
-    "infrastructure",
-    "deployments",
-    "incidents",
-    "observability",
-  ];
-
-  const values = results.map((result, index) => {
-    if (result.status === "fulfilled") {
-      return result.value;
-    }
-
-    errors.push(
-      `Unable to load ${serviceNames[index]} data`,
-    );
-
-    return 0;
+export async function backendRequest(session: CloudForgeSession, audience: Audience, url: string, timeoutMs = REQUEST_TIMEOUT_MS) {
+  return fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-CloudForge-Identity": serviceAssertion(audience, new URL(url), "GET", session),
+    },
+    cache: "no-store",
+    redirect: "error",
+    signal: AbortSignal.timeout(timeoutMs),
   });
+}
 
-  const observabilityResult = values[4];
+async function authorizedJSON<T>(session: CloudForgeSession, audience: Audience, url: string): Promise<T> {
+  const response = await backendRequest(session, audience, url);
+  if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+  return response.json() as Promise<T>;
+}
 
-  const observability: DashboardObservability =
-    typeof observabilityResult === "object" &&
-    observabilityResult !== null &&
-    "observability" in observabilityResult
-      ? observabilityResult.observability
-      : {
-          availability: null,
-          requestRate: null,
-          errorRate: null,
-          p95Latency: null,
-          deploymentsInProgress: null,
-          requestsInFlight: null,
-        };
+export function getAccessibleProjects(session: CloudForgeSession) {
+  return authorizedJSON<ProjectListResponse>(session, "project", `${serviceConfig.project}/projects?limit=100&offset=0`);
+}
 
-  if (
-    typeof observabilityResult === "object" &&
-    observabilityResult !== null &&
-    "errors" in observabilityResult &&
-    Array.isArray(observabilityResult.errors)
-  ) {
-    errors.push(...observabilityResult.errors);
-  }
+export async function getDashboardData(session: CloudForgeSession): Promise<DashboardData> {
+  const errors: string[] = [];
+  const capabilities = dashboardCapabilities(session.role);
+  const load = async <T>(label: string, request: () => Promise<T>) => {
+    try {
+      return await request();
+    } catch {
+      errors.push(`Unable to load ${label}.`);
+      return null;
+    }
+  };
+
+  const [projects, infrastructure, deployments, incidents, telemetry, pending, report] = await Promise.all([
+    load("projects", () => getAccessibleProjects(session)),
+    load("infrastructure", () => authorizedJSON<InfrastructureListResponse>(session, "infrastructure",
+      `${serviceConfig.infrastructure}/api/v1/resources?limit=100&offset=0`)),
+    load("deployments", () => authorizedJSON<DeploymentListResponse>(session, "deployment",
+      `${serviceConfig.deployment}/api/v1/deployments?limit=100&offset=0`)),
+    capabilities.platformTelemetry ? load("incidents", () => authorizedJSON<IncidentListResponse>(session, "aiops",
+      `${serviceConfig.aiops}/api/v1/incidents?limit=100&offset=0`)) : null,
+    capabilities.platformTelemetry ? getObservabilityData() : null,
+    capabilities.approvalQueue ? load("Terraform approvals", () => authorizedJSON<InfrastructureListResponse>(session, "infrastructure",
+      `${serviceConfig.infrastructure}/api/v1/resources?limit=100&review_status=submitted`)) : null,
+    capabilities.accountCosts ? load("FinOps", () => authorizedJSON<FinOpsReport>(session, "finops",
+      `${serviceConfig.finops}/api/v1/finops/aws/report`)) : null,
+  ]);
+  if (telemetry) errors.push(...telemetry.errors);
+  const amount = report?.summary?.total_actual_monthly_cost;
+  const currency = report?.summary?.currency;
 
   return {
     metrics: {
-      projects: typeof values[0] === "number" ? values[0] : 0,
-      infrastructure:
-        typeof values[1] === "number" ? values[1] : 0,
-      deployments:
-        typeof values[2] === "number" ? values[2] : 0,
-      incidents:
-        typeof values[3] === "number" ? values[3] : 0,
+      projects: projects?.data?.length ?? null,
+      infrastructure: infrastructure?.items?.length ?? null,
+      deployments: deployments?.items?.length ?? null,
+      incidents: incidents ? extractIncidentCount(incidents) : null,
     },
-    observability,
-    errors,
+    projects: projects?.data ?? [],
+    pendingApprovals: pending?.items?.length ?? null,
+    accountCost: typeof amount === "number" && Number.isFinite(amount) && currency ? { amount, currency } : null,
+    observability: telemetry?.observability ?? {
+      availability: null, requestRate: null, errorRate: null, p95Latency: null,
+      deploymentsInProgress: null, requestsInFlight: null,
+    },
+    errors: errors.sort((left, right) => left.localeCompare(right)),
   };
 }

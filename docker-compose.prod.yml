@@ -1,0 +1,344 @@
+# =============================================================================
+# CloudForge AI — Production Docker Compose Configuration
+# =============================================================================
+# Production deployment profile ensuring:
+# 1. Zero developer credentials mounted (NO ${HOME}/.aws volumes).
+# 2. AWS SDK clients utilize standard IAM workload identity (Instance Profile,
+#    IRSA, or EKS Pod Identity).
+# 3. Secure runtime secrets (never baked into images or committed to Git).
+# 4. Enforces production environments, secure cookies, and Kubernetes executor.
+# 5. Internal backend services are bound to localhost/internal network only.
+# =============================================================================
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set a reviewed digest-pinned PostgreSQL image}
+    container_name: cloudforge-postgres-prod
+    restart: always
+    environment:
+      POSTGRES_DB: cloudforge
+      POSTGRES_USER: cloudforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided at runtime}
+    # In production, postgres port is restricted to internal container network
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudforge -d cloudforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  project-service:
+    build:
+      context: ./services/project-service
+      dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
+    image: ${PROJECT_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-project-service-prod
+    restart: always
+    environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_PROJECT_KEY:?Set CLOUDFORGE_FRONTEND_PROJECT_KEY}
+      APP_ENV: production
+      SERVER_PORT: "8080"
+      DATABASE_URL: ${PROJECT_DATABASE_URL:?Set a dedicated cf_project verify-full DSN}
+      SHUTDOWN_TIMEOUT_SECONDS: "15"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+
+  infrastructure-service:
+    build:
+      context: ./services/infrastructure-service
+      dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
+    image: ${INFRASTRUCTURE_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-infrastructure-service-prod
+    restart: always
+    environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY:?Set CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY}
+      APP_ENV: production
+      SERVER_PORT: "8081"
+      DATABASE_URL: ${INFRASTRUCTURE_DATABASE_URL:?Set a dedicated cf_infrastructure verify-full DSN}
+      SHUTDOWN_TIMEOUT_SECONDS: "15"
+
+      # Terraform Execution
+      TERRAFORM_BINARY: /usr/local/bin/terraform
+      TERRAFORM_WORKSPACE_ROOT: /var/lib/cloudforge/terraform
+      TERRAFORM_STATE_BUCKET: ${TERRAFORM_STATE_BUCKET:?Set TERRAFORM_STATE_BUCKET to the locked remote state bucket}
+      TERRAFORM_STATE_REGION: ${TERRAFORM_STATE_REGION:-}
+      TERRAFORM_PROVISIONER_ROLE_ARN: ${TERRAFORM_PROVISIONER_ROLE_ARN:-}
+      TERRAFORM_PLAN_TIMEOUT: "15m"
+      TERRAFORM_APPLY_TIMEOUT: "45m"
+
+      # AWS Region - uses IAM workload identity (Instance Profile / IRSA / Pod Identity)
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+      # Workspace volume only — ZERO developer ~/.aws credential mounts
+      - terraform_workspaces:/var/lib/cloudforge/terraform
+    depends_on:
+      project-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  deployment-service:
+    build:
+      context: ./services/deployment-service
+      dockerfile: Dockerfile
+      additional_contexts:
+        service_identity: ./services/service-identity
+    image: ${DEPLOYMENT_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-deployment-service-prod
+    restart: always
+    environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      PROMETHEUS_URL: http://prometheus:9090
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY:?Set CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY}
+      CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
+      APP_ENV: production
+      SERVER_PORT: "8082"
+      DATABASE_URL: ${DEPLOYMENT_DATABASE_URL:?Set a dedicated cf_deployment verify-full DSN}
+      SHUTDOWN_TIMEOUT_SECONDS: "15"
+
+      # Real Kubernetes execution in production (Simulated executor blocked in production)
+      DEPLOYMENT_EXECUTOR: kubernetes
+      ARGO_ROLLOUTS_ENABLED: ${ARGO_ROLLOUTS_ENABLED:-false}
+      ARGO_ANALYSIS_TEMPLATE: ${ARGO_ANALYSIS_TEMPLATE:-}
+      EKS_CLUSTER_NAME: ${EKS_CLUSTER_NAME:?Set EKS_CLUSTER_NAME in production}
+      KUBERNETES_NAMESPACE: ${KUBERNETES_NAMESPACE:-default}
+      KUBECONFIG: /var/lib/cloudforge/kube/config
+      ROLLOUT_TIMEOUT_SECONDS: ${ROLLOUT_TIMEOUT_SECONDS:-300}
+
+      # AWS Region - uses IAM workload identity (Instance Profile / IRSA / Pod Identity)
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+      # Dedicated kubeconfig storage only — ZERO developer ~/.aws credential mounts
+      - deployment_kube:/var/lib/cloudforge/kube
+    depends_on:
+      project-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8082/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  aiops-service:
+    build:
+      context: ./services/aiops-service
+    image: ${AIOPS_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-aiops-service-prod
+    restart: always
+    environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_AIOPS_KEY:?Set CLOUDFORGE_FRONTEND_AIOPS_KEY}
+      CLOUDFORGE_AIOPS_DEPLOYMENT_KEY: ${CLOUDFORGE_AIOPS_DEPLOYMENT_KEY:?Set CLOUDFORGE_AIOPS_DEPLOYMENT_KEY}
+      CLOUDFORGE_ALERTMANAGER_KEY: ${CLOUDFORGE_ALERTMANAGER_KEY:?Set CLOUDFORGE_ALERTMANAGER_KEY}
+      APP_ENV: production
+      DATABASE_URL: ${AIOPS_DATABASE_URL:?Set a dedicated cf_aiops verify-full DSN}
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_TIMEOUT_SECONDS: "5"
+      SLO_WINDOW: "7d"
+      SLO_AVAILABILITY_TARGET: "0.999"
+      SLO_ERROR_RATE_TARGET: "0.99"
+      SLO_LATENCY_TARGET: "0.95"
+      SLO_LATENCY_THRESHOLD_MS: "500"
+      DEPLOYMENT_SERVICE_URL: http://deployment-service:8082
+      DEPLOYMENT_SERVICE_TIMEOUT_SECONDS: "5"
+
+      AI_PROVIDER: ${AI_PROVIDER:-bedrock}
+      AI_MODEL: ${AI_MODEL:-anthropic.claude-3-haiku-20240307-v1:0}
+      AI_TIMEOUT_SECONDS: "30"
+
+      # AWS Region - uses IAM workload identity (Instance Profile / IRSA / Pod Identity)
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    # ZERO developer ~/.aws credential mounts
+    ports:
+      - "127.0.0.1:8090:8090"
+    depends_on:
+      project-service:
+        condition: service_healthy
+      deployment-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+
+  finops-service:
+    build:
+      context: ./services/finops-service
+    image: ${FINOPS_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-finops-service-prod
+    restart: always
+    environment:
+      PGSSLROOTCERT: /etc/cloudforge/db-ca/ca.crt
+      FINOPS_AUDIT_DATABASE_URL: ${FINOPS_AUDIT_DATABASE_URL:?Set a cf_finops_audit verify-full DSN}
+      FINOPS_PROJECT_DATABASE_URL: ${FINOPS_PROJECT_DATABASE_URL:?Set a cf_finops_project verify-full DSN}
+      CLOUDFORGE_FRONTEND_KEY: ${CLOUDFORGE_FRONTEND_FINOPS_KEY:?Set CLOUDFORGE_FRONTEND_FINOPS_KEY}
+      APP_ENV: production
+      PROMETHEUS_URL: http://prometheus:9090
+      PROMETHEUS_TIMEOUT_SECONDS: "5"
+
+      FINOPS_ALLOWED_ROLES: "platform-engineer,sre"
+
+      # AWS Region - uses IAM workload identity (Instance Profile / IRSA / Pod Identity)
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+    # ZERO developer ~/.aws credential mounts
+    ports:
+      - "127.0.0.1:8091:8091"
+    depends_on:
+      project-service:
+        condition: service_healthy
+      infrastructure-service:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+    volumes:
+      - ${POSTGRES_CA_FILE:?Set the verified database CA file}:/etc/cloudforge/db-ca/ca.crt:ro
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: ${FRONTEND_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-frontend-prod
+    restart: always
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      CLOUDFORGE_FRONTEND_PROJECT_KEY: ${CLOUDFORGE_FRONTEND_PROJECT_KEY:?Set CLOUDFORGE_FRONTEND_PROJECT_KEY}
+      CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY: ${CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY:?Set CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY}
+      CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY: ${CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY:?Set CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY}
+      CLOUDFORGE_FRONTEND_AIOPS_KEY: ${CLOUDFORGE_FRONTEND_AIOPS_KEY:?Set CLOUDFORGE_FRONTEND_AIOPS_KEY}
+      CLOUDFORGE_FRONTEND_FINOPS_KEY: ${CLOUDFORGE_FRONTEND_FINOPS_KEY:?Set CLOUDFORGE_FRONTEND_FINOPS_KEY}
+      NEXT_PUBLIC_APP_NAME: "CloudForge AI"
+      NEXT_PUBLIC_APP_ENV: "production"
+      CLOUDFORGE_SESSION_SECRET: ${CLOUDFORGE_SESSION_SECRET:?Set CLOUDFORGE_SESSION_SECRET at runtime}
+      CLOUDFORGE_AUTH_COOKIE_SECURE: "true"
+      PROJECT_SERVICE_URL: "http://project-service:8080"
+      INFRASTRUCTURE_SERVICE_URL: "http://infrastructure-service:8081"
+      DEPLOYMENT_SERVICE_URL: "http://deployment-service:8082"
+      AIOPS_SERVICE_URL: "http://aiops-service:8090"
+      FINOPS_SERVICE_URL: "http://finops-service:8091"
+      PROMETHEUS_URL: "http://prometheus:9090"
+      GRAFANA_URL: "http://grafana:3000"
+    depends_on:
+      project-service:
+        condition: service_healthy
+      infrastructure-service:
+        condition: service_healthy
+      deployment-service:
+        condition: service_healthy
+      aiops-service:
+        condition: service_healthy
+      finops-service:
+        condition: service_healthy
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-prometheus-prod
+    restart: always
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    depends_on:
+      deployment-service:
+        condition: service_healthy
+
+  alertmanager:
+    # alertmanager.yml uses ${ALERTMANAGER_SMTP_USER} / ${ALERTMANAGER_SMTP_PASSWORD}
+    # variable substitution. Run the following before starting the stack to materialise
+    # the final config WITHOUT storing real credentials in source control:
+    #
+    #   envsubst < monitoring/alertmanager/alertmanager.yml \
+    #     > monitoring/alertmanager/alertmanager.generated.yml
+    #
+    # alertmanager.generated.yml is listed in .gitignore and must NEVER be committed.
+    image: ${ALERTMANAGER_IMAGE:?Set a reviewed immutable registry digest}
+    container_name: cloudforge-alertmanager-prod
+    restart: always
+    ports:
+      - "127.0.0.1:9093:9093"
+    secrets:
+      - cloudforge_alertmanager_key
+    volumes:
+      # Mount the generated config (materialized from env-subst at deploy time — not committed)
+      - ./monitoring/alertmanager/alertmanager.generated.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.listen-address=:9093"
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  terraform_workspaces:
+  deployment_kube:
+  alertmanager_data:
+
+secrets:
+  cloudforge_alertmanager_key:
+    environment: CLOUDFORGE_ALERTMANAGER_KEY

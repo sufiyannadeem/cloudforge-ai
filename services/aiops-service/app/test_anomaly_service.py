@@ -280,7 +280,7 @@ class FakePrometheusClient:
     ) -> tuple[list[tuple[float, float]], None]:
         return (
             [
-                (float(index), value)
+                (start_timestamp + index * step_seconds, value)
                 for index, value in enumerate(self.values)
             ],
             None,

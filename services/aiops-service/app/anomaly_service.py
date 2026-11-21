@@ -12,6 +12,7 @@ from .anomaly_models import (
     AnomalySummary,
 )
 from .prometheus_client import PrometheusClient
+from .telemetry_queries import api_requests, positive_ratio, with_counter_samples
 
 
 @dataclass(frozen=True)
@@ -213,11 +214,19 @@ class AnomalyDetectionService:
                 sample_count=0,
             )
 
-        numeric_values = [
-            value
-            for _, value in values
-            if math.isfinite(value)
-        ]
+        samples = [(timestamp, value) for timestamp, value in values
+                   if math.isfinite(timestamp) and math.isfinite(value)]
+        numeric_values = [value for _, value in samples]
+
+        last_step = start_timestamp + math.floor(
+            (end_timestamp - start_timestamp + 0.001) / step_seconds
+        ) * step_seconds
+        if samples and samples[-1][0] < last_step - 0.001:
+            return AnomalyMetric(
+                name=definition.name, display_name=definition.display_name, unit=definition.unit,
+                classification=AnomalyClassification.INSUFFICIENT_DATA,
+                evidence=["No recent sample is available."], sample_count=len(numeric_values),
+            )
 
         if len(numeric_values) < self.MINIMUM_SAMPLES:
             return AnomalyMetric(
@@ -519,55 +528,48 @@ class AnomalyDetectionService:
 
     @staticmethod
     def _definitions() -> list[MetricDefinition]:
+        def fresh_up(service: str) -> str:
+            up = f'up{{job="{service}"}}'
+            return f"({up} and (time() - timestamp({up}) <= 45))"
+
+        def request_rate(service: str, extra: str = "") -> str:
+            return f"sum(rate(http_requests_total{{{api_requests(service, extra)}}}[5m]))"
+
+        def when_scraped(expression: str, service: str) -> str:
+            return f"({expression}) and on() (max({fresh_up(service)}) == 1)"
+
+        def error_rate(service: str) -> str:
+            ratio = positive_ratio(
+                request_rate(service, ',status=~"5.."'), request_rate(service),
+                missing_numerator_is_zero=True,
+            )
+            expression = with_counter_samples(f"100 * {ratio}", f"http_requests_total{{{api_requests(service)}}}", "5m")
+            return when_scraped(expression, service)
+
         return [
             MetricDefinition(
                 name="request_rate",
                 display_name="Request rate",
                 unit="requests_per_second",
                 bad_direction="both",
-                expression=lambda service: (
-                    "sum("
-                    "rate(http_requests_total{"
-                    f'job="{service}"'
-                    "}[5m])"
-                    ")"
-                ),
+                expression=lambda service: when_scraped(request_rate(service), service),
             ),
             MetricDefinition(
                 name="error_rate",
                 display_name="Error rate",
                 unit="percent",
                 bad_direction="increase",
-                expression=lambda service: (
-                    "100 * ("
-                    "("
-                    "sum(rate(http_requests_total{"
-                    f'job="{service}",status=~"5.."'
-                    "}[5m]))"
-                    " or vector(0)"
-                    ")"
-                    " / clamp_min("
-                    "sum(rate(http_requests_total{"
-                    f'job="{service}"'
-                    "}[5m])),"
-                    "0.001)"
-                    ")"
-                ),
+                expression=error_rate,
             ),
             MetricDefinition(
                 name="p95_latency",
                 display_name="P95 latency",
                 unit="seconds",
                 bad_direction="increase",
-                expression=lambda service: (
-                    "histogram_quantile("
-                    "0.95,"
-                    "sum by (le) ("
-                    "rate(http_request_duration_seconds_bucket{"
-                    f'job="{service}"'
-                    "}[5m])"
-                    ")"
-                    ")"
+                expression=lambda service: when_scraped(
+                    "histogram_quantile(0.95, sum by (le) ("
+                    f"rate(http_request_duration_seconds_bucket{{{api_requests(service)}}}[5m])))",
+                    service,
                 ),
             ),
             MetricDefinition(
@@ -575,11 +577,7 @@ class AnomalyDetectionService:
                 display_name="Service availability",
                 unit="percent",
                 bad_direction="decrease",
-                expression=lambda service: (
-                    "100 * up{"
-                    f'job="{service}"'
-                    "}"
-                ),
+                expression=lambda service: f"100 * avg({fresh_up(service)})",
             ),
         ]
 

@@ -14,11 +14,27 @@ alerting:
 scrape_configs:
   - job_name: "deployment-service"
     metrics_path: "/metrics"
-
     static_configs:
       - targets:
           - "deployment-service:8082"
-
         labels:
           service: "deployment-service"
+          environment: "local"
+
+  - job_name: "prometheus"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "localhost:9090"
+        labels:
+          service: "prometheus"
+          environment: "local"
+
+  - job_name: "alertmanager"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets:
+          - "alertmanager:9093"
+        labels:
+          service: "alertmanager"
           environment: "local"

@@ -32,23 +32,27 @@ func (s DeploymentStatus) IsValid() bool {
 }
 
 type Deployment struct {
-	ID           uuid.UUID        `json:"id"`
-	ProjectID    uuid.UUID        `json:"project_id"`
-	Environment  string           `json:"environment"`
-	Image        string           `json:"image"`
-	GitCommitSHA string           `json:"git_commit_sha"`
-	Namespace    string           `json:"namespace"`
-	Status       DeploymentStatus `json:"status"`
-	CreatedAt    time.Time        `json:"created_at"`
-	UpdatedAt    time.Time        `json:"updated_at"`
+	Strategy      DeploymentStrategy `json:"strategy"`
+	CreatedBy     string             `json:"created_by,omitempty"`
+	ID            uuid.UUID          `json:"id"`
+	ProjectID     uuid.UUID          `json:"project_id"`
+	Environment   string             `json:"environment"`
+	Image         string             `json:"image"`
+	GitCommitSHA  string             `json:"git_commit_sha"`
+	Namespace     string             `json:"namespace"`
+	Status        DeploymentStatus   `json:"status"`
+	ExecutionMode string             `json:"execution_mode,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"`
 }
 
 type CreateDeploymentInput struct {
-	ProjectID    uuid.UUID `json:"project_id"`
-	Environment  string    `json:"environment"`
-	Image        string    `json:"image"`
-	GitCommitSHA string    `json:"git_commit_sha"`
-	Namespace    string    `json:"namespace"`
+	Strategy     DeploymentStrategy `json:"strategy"`
+	ProjectID    uuid.UUID          `json:"project_id"`
+	Environment  string             `json:"environment"`
+	Image        string             `json:"image"`
+	GitCommitSHA string             `json:"git_commit_sha"`
+	Namespace    string             `json:"namespace"`
 }
 
 type UpdateDeploymentInput struct {

@@ -1,0 +1,8 @@
+{
+  "image_id": "sha256:8609eed620cb7660c35f409afeac1a4a921c781079a690b9872f4197dae714f7",
+  "upstream": "postgres:16.16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1e5c299ebb3756b4857",
+  "postgres_version": "16.16",
+  "su_exec_version": "0.3-r0",
+  "platform": "linux/amd64",
+  "scope": "Local image config digest; no registry publication or production deployment"
+}

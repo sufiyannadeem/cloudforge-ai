@@ -1,10 +1,11 @@
 # ---------- Build stage ----------
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.11-alpine@sha256:ecb67f987aa1a57794c91d19ade7ae0209f2f0f5496aaef9e6ae85ddf92d02ab AS builder
 
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
+COPY --from=service_identity . /service-identity
 COPY go.mod go.sum ./
 
 RUN go mod download

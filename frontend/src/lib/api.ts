@@ -1,4 +1,4 @@
-import { appConfig } from "@/lib/config";
+import { appConfig } from "@/lib/app-config";
 import type { ApiError } from "@/types/api";
 
 export class ApiClientError extends Error {

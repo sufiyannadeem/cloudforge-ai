@@ -1,0 +1,19 @@
+# Exact check and path exceptions for the single project-scoped deployment Role.
+# Plain Kubernetes manifests do not support Trivy inline ignore comments.
+misconfigurations:
+  - id: KSV-0048
+    paths:
+      - deploy/kubernetes/project-deployment-rbac-example.yml
+    statement: >-
+      The deployment executor must create and patch dynamically named Deployments
+      in the bound cf-PROJECT_UUID namespace. Rollout and ownership checks require
+      get/list/watch. Dedicated project namespace isolation is required; no global
+      workload-management exception is granted.
+  - id: KSV-0056
+    paths:
+      - deploy/kubernetes/project-deployment-rbac-example.yml
+    statement: >-
+      kubectl apply must get/create/patch project-local Services alongside the
+      Deployment. RBAC cannot constrain create to a dynamic resource-name prefix.
+      This RoleBinding is confined to one project namespace and grants no deletion,
+      Secrets, pod exec, node, namespace or RBAC management permissions.

@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 
 
+class _NoMonitoringRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        return None
+
+
 @dataclass
 class PrometheusQueryResult:
     value: list[dict[str, Any]]
@@ -47,6 +52,14 @@ class PrometheusClient:
             else float(configured_timeout)
         )
 
+    def _open(self, request):
+        if os.getenv("APP_ENV", "").lower() in {"prod", "production"}:
+            if urllib.parse.urlsplit(request.full_url).scheme != "https":
+                raise urllib.error.URLError("Production monitoring requires HTTPS")
+            opener = urllib.request.build_opener(_NoMonitoringRedirect())
+            return opener.open(request, timeout=self.timeout_seconds)
+        return urllib.request.urlopen(request, timeout=self.timeout_seconds)
+
     def query(self, expression: str) -> PrometheusQueryResult:
         """Execute an instant PromQL query."""
 
@@ -64,10 +77,7 @@ class PrometheusClient:
         )
 
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_seconds,
-            ) as response:
+            with self._open(request) as response:
                 payload = json.loads(
                     response.read().decode("utf-8")
                 )
@@ -151,10 +161,7 @@ class PrometheusClient:
         )
 
         try:
-            with urllib.request.urlopen(
-                request,
-                timeout=self.timeout_seconds,
-            ) as response:
+            with self._open(request) as response:
                 payload = json.loads(
                     response.read().decode("utf-8")
                 )
@@ -215,7 +222,7 @@ class PrometheusClient:
 
         result = self.query(expression)
 
-        if result.error or not result.value:
+        if result.error or len(result.value) != 1:
             return None
 
         value = self._extract_value(result.value[0])
@@ -407,10 +414,9 @@ class PrometheusClient:
         if result.error:
             return [], result.error
 
-        return (
-            self._extract_range_values(result.value),
-            None,
-        )
+        if len(result.value) > 1:
+            return [], "Expected one aggregated Prometheus series"
+        return self._extract_range_values(result.value), None
 
     @staticmethod
     def _escape_label(value: str) -> str:

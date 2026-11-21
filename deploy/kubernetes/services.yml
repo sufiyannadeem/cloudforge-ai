@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: project-service
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: project-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infrastructure-service
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: infrastructure-service
+  ports:
+  - name: http
+    port: 8081
+    targetPort: 8081
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deployment-service
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: deployment-service
+  ports:
+  - name: http
+    port: 8082
+    targetPort: 8082
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: finops-service
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: finops-service
+  ports:
+  - name: http
+    port: 8091
+    targetPort: 8091
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiops-service
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: aiops-service
+  ports:
+  - name: http
+    port: 8090
+    targetPort: 8090
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: cloudforge
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP

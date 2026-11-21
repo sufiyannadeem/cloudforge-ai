@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from .prometheus_client import PrometheusClient
+from .telemetry_queries import api_requests, positive_ratio, with_counter_samples
 from .slo_models import (
     SLODefinition,
     SLOResult,
@@ -16,6 +18,17 @@ from .slo_models import (
 
 DEFAULT_SERVICE = "deployment-service"
 DEFAULT_WINDOW = os.getenv("SLO_WINDOW", "7d")
+SCRAPE_INTERVAL_SECONDS = float(os.getenv("SLO_SCRAPE_INTERVAL_SECONDS", "15"))
+_DURATION_UNITS = {"y": 31536000, "w": 604800, "d": 86400, "h": 3600, "m": 60, "s": 1, "ms": 0.001}
+
+
+def window_seconds(window: str) -> float:
+    if not isinstance(window, str) or len(window) > 64:
+        raise ValueError("Invalid SLO window")
+    parts = re.findall(r"([0-9]{1,12})(ms|[ywdhms])", window)
+    if not parts or "".join(value + unit for value, unit in parts) != window:
+        raise ValueError("Invalid SLO window")
+    return sum(int(value) * _DURATION_UNITS[unit] for value, unit in parts)
 
 AVAILABILITY_TARGET = float(
     os.getenv("SLO_AVAILABILITY_TARGET", "0.999")
@@ -78,7 +91,7 @@ class SLOService:
                 window=DEFAULT_WINDOW,
             ),
             SLODefinition(
-                name="P95 Latency",
+                name="Latency Compliance",
                 description=(
                     "Percentage of requests completing within "
                     "the configured latency threshold."
@@ -125,10 +138,8 @@ class SLOService:
             overall_status = SLOStatus.BREACHED
         elif at_risk_count > 0:
             overall_status = SLOStatus.AT_RISK
-        elif insufficient_count == len(results):
-            overall_status = SLOStatus.INSUFFICIENT_DATA
         elif insufficient_count > 0:
-            overall_status = SLOStatus.AT_RISK
+            overall_status = SLOStatus.INSUFFICIENT_DATA
         else:
             overall_status = SLOStatus.HEALTHY
 
@@ -151,118 +162,66 @@ class SLOService:
     ) -> SLOResult:
         definition = self.definitions(service)[0]
 
-        expression = (
-            f'avg_over_time(up{{job="{self._escape_label(service)}"}}'
-            f'[{DEFAULT_WINDOW}])'
-        )
+        up = f'up{{job="{self._escape_label(service)}"}}'
+        expression = f"avg(avg_over_time({up}[{definition.window}]))"
+        return self._evaluate_ratio(definition, self._with_window_evidence(definition, expression))
 
-        sample = self.prometheus.scalar(expression)
-
-        if sample is None:
-            return self._insufficient(definition)
-
-        availability = self._clamp(
-            sample["value"],
-            0.0,
-            1.0,
-        )
-
-        return self._build_result(
-            definition=definition,
-            observed_value=availability,
-            compliance=availability,
-        )
-
-    def _evaluate_error_rate(
+    def _with_window_evidence(
         self,
-        service: str,
-    ) -> SLOResult:
+        definition: SLODefinition,
+        expression: str,
+        selector: str | None = None,
+    ) -> str:
+        up = f'up{{job="{self._escape_label(definition.service)}"}}'
+        window = definition.window
+        minimum = max(2, window_seconds(window) * 0.9 / SCRAPE_INTERVAL_SECONDS)
+        guarded = (
+            f"({expression}) "
+            f"and on() (min(count_over_time({up}[{window}])) >= {minimum:g}) "
+            f"and on() (max(time() - timestamp({up})) <= {SCRAPE_INTERVAL_SECONDS * 3:g})"
+        )
+        if selector is not None:
+            # New status/route series need two samples, while at least one
+            # measured API counter must cover the reporting window.
+            guarded += (
+                f" and on() (max(count_over_time({selector}[{window}])) >= {minimum:g})"
+                f" and on() (max(time() - timestamp({selector})) <= {SCRAPE_INTERVAL_SECONDS * 3:g})"
+            )
+        return guarded
+
+    def _evaluate_error_rate(self, service: str) -> SLOResult:
         definition = self.definitions(service)[1]
-
-        service_label = self._escape_label(service)
-
-        total_expression = (
-            f'sum(increase(http_requests_total'
-            f'{{job="{service_label}"}}[{DEFAULT_WINDOW}]))'
+        labels = api_requests(self._escape_label(service))
+        total = f"sum(increase(http_requests_total{{{labels}}}[{definition.window}]))"
+        errors = f'sum(increase(http_requests_total{{{labels},status=~"5.."}}[{definition.window}]))'
+        ratio = positive_ratio(errors, total, missing_numerator_is_zero=True)
+        expression = with_counter_samples(f"1 - {ratio}", f"http_requests_total{{{labels}}}", definition.window)
+        return self._evaluate_ratio(
+            definition,
+            self._with_window_evidence(definition, expression, f"http_requests_total{{{labels}}}"),
         )
 
-        error_expression = (
-            f'sum(increase(http_requests_total'
-            f'{{job="{service_label}",status=~"5.."}}'
-            f'[{DEFAULT_WINDOW}]))'
-        )
-
-        total = self.prometheus.scalar(total_expression)
-        errors = self.prometheus.scalar(error_expression)
-
-        if total is None or total["value"] <= 0:
-            return self._insufficient(definition)
-
-        error_count = (
-            errors["value"]
-            if errors is not None
-            else 0.0
-        )
-
-        success_ratio = self._clamp(
-            1.0 - (error_count / total["value"]),
-            0.0,
-            1.0,
-        )
-
-        return self._build_result(
-            definition=definition,
-            observed_value=success_ratio,
-            compliance=success_ratio,
-        )
-
-    def _evaluate_latency(
-        self,
-        service: str,
-    ) -> SLOResult:
+    def _evaluate_latency(self, service: str) -> SLOResult:
         definition = self.definitions(service)[2]
-
-        service_label = self._escape_label(service)
-
-        threshold_seconds = (
-            LATENCY_THRESHOLD_MS / 1000.0
+        labels = api_requests(self._escape_label(service))
+        threshold = f"{LATENCY_THRESHOLD_MS / 1000:g}"
+        good = f'sum(increase(http_request_duration_seconds_bucket{{{labels},le="{threshold}"}}[{definition.window}]))'
+        total = f"sum(increase(http_request_duration_seconds_count{{{labels}}}[{definition.window}]))"
+        expression = with_counter_samples(
+            positive_ratio(good, total), f"http_request_duration_seconds_count{{{labels}}}", definition.window,
+        )
+        return self._evaluate_ratio(
+            definition,
+            self._with_window_evidence(
+                definition, expression, f"http_request_duration_seconds_count{{{labels}}}",
+            ),
         )
 
-        bucket_expression = (
-            f'sum(increase(http_request_duration_seconds_bucket'
-            f'{{job="{service_label}",'
-            f'le="{threshold_seconds}"}}'
-            f'[{DEFAULT_WINDOW}]))'
-        )
-
-        total_expression = (
-            f'sum(increase(http_request_duration_seconds_count'
-            f'{{job="{service_label}"}}'
-            f'[{DEFAULT_WINDOW}]))'
-        )
-
-        good = self.prometheus.scalar(bucket_expression)
-        total = self.prometheus.scalar(total_expression)
-
-        if good is None or total is None or total["value"] <= 0:
+    def _evaluate_ratio(self, definition: SLODefinition, expression: str) -> SLOResult:
+        sample = self.prometheus.scalar(expression)
+        if sample is None or not 0.0 <= sample["value"] <= 1.0:
             return self._insufficient(definition)
-
-        good_requests = max(
-            0.0,
-            min(good["value"], total["value"]),
-        )
-
-        compliance = self._clamp(
-            good_requests / total["value"],
-            0.0,
-            1.0,
-        )
-
-        return self._build_result(
-            definition=definition,
-            observed_value=compliance,
-            compliance=compliance,
-        )
+        return self._build_result(definition, observed_value=sample["value"], compliance=sample["value"])
 
     def _build_result(
         self,
@@ -285,11 +244,7 @@ class SLOService:
                 / allowed_bad_fraction
             )
 
-            budget_consumed = self._clamp(
-                burn_rate,
-                0.0,
-                1.0,
-            )
+            budget_consumed = burn_rate
 
             budget_remaining = self._clamp(
                 1.0 - budget_consumed,

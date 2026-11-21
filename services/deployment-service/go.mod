@@ -1,6 +1,6 @@
 module github.com/sufiyannadeem/cloudforge-ai-deployment-service
 
-go 1.25.14
+go 1.26.11
 
 require (
 	github.com/google/uuid v1.6.0
@@ -19,8 +19,11 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
+	github.com/sufiyannadeem/cloudforge-service-identity v0.0.0
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/sufiyannadeem/cloudforge-service-identity => ../service-identity

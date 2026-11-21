@@ -1,0 +1,25 @@
+groups:
+  - name: cloudforge-scheduled-drift
+    rules:
+      - alert: CloudForgeDriftBatchRequiresReview
+        expr: kube_job_status_failed{namespace="cloudforge",job_name=~"cloudforge-drift-[0-9]+"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure-service
+        annotations:
+          summary: Scheduled drift batch needs review
+          description: A bounded drift batch failed, detected changes, or lacked evidence. Inspect its persisted scan history and job logs; no remediation was applied.
+      - alert: CloudForgeDriftSchedulerStale
+        expr: |
+          ((time() - kube_cronjob_status_last_successful_time{namespace="cloudforge",cronjob="cloudforge-drift"} > 7200)
+          or ((time() - kube_cronjob_created{namespace="cloudforge",cronjob="cloudforge-drift"} > 7200)
+          unless on(namespace,cronjob) kube_cronjob_status_last_successful_time{namespace="cloudforge",cronjob="cloudforge-drift"}))
+          and on(namespace,cronjob) (kube_cronjob_spec_suspend{namespace="cloudforge",cronjob="cloudforge-drift"} == 0)
+        for: 10m
+        labels:
+          severity: warning
+          service: infrastructure-service
+        annotations:
+          summary: Scheduled drift has no recent successful batch
+          description: Check job execution and evidence availability. A successful batch is not full-fleet compliance.

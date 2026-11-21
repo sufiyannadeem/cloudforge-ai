@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
 import AppShell from "@/components/layout/AppShell";
+import IncidentCostEvidence from "@/components/incidents/IncidentCostEvidence";
 import OperatorBriefing from "@/components/incidents/OperatorBriefing";
 import IncidentTimeline from "@/components/incidents/IncidentTimeline";
 import RemediationPanel from "@/components/incidents/RemediationPanel";
@@ -1040,6 +1041,7 @@ export default function IncidentDetailsPage() {
           onAnalyze={() => void handleAnalyze()}
         />
 
+<IncidentCostEvidence incidentId={incident.id} />
 	<OperatorBriefing
 	  analysis={incident.ai_analysis}
 	/>

@@ -1,0 +1,36 @@
+rule_files:
+  - ../rules/cloudforge-drift-alerts.yml
+evaluation_interval: 1m
+tests:
+  - name: no-success-ever-is-not-silently-healthy
+    interval: 1m
+    input_series:
+      - series: 'kube_cronjob_created{namespace="cloudforge",cronjob="cloudforge-drift"}'
+        values: '0+0x140'
+      - series: 'kube_cronjob_spec_suspend{namespace="cloudforge",cronjob="cloudforge-drift"}'
+        values: '0+0x140'
+    alert_rule_test:
+      - eval_time: 131m
+        alertname: CloudForgeDriftSchedulerStale
+        exp_alerts:
+          - exp_labels:
+              namespace: cloudforge
+              cronjob: cloudforge-drift
+              severity: warning
+              service: infrastructure-service
+            exp_annotations:
+              summary: Scheduled drift has no recent successful batch
+              description: Check job execution and evidence availability. A successful batch is not full-fleet compliance.
+  - name: recent-success-is-not-stale
+    interval: 1m
+    input_series:
+      - series: 'kube_cronjob_created{namespace="cloudforge",cronjob="cloudforge-drift"}'
+        values: '0+0x140'
+      - series: 'kube_cronjob_spec_suspend{namespace="cloudforge",cronjob="cloudforge-drift"}'
+        values: '0+0x140'
+      - series: 'kube_cronjob_status_last_successful_time{namespace="cloudforge",cronjob="cloudforge-drift"}'
+        values: '0+0x119 7200+0x21'
+    alert_rule_test:
+      - eval_time: 131m
+        alertname: CloudForgeDriftSchedulerStale
+        exp_alerts: []

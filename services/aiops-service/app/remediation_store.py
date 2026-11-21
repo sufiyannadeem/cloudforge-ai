@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
@@ -15,8 +15,10 @@ from .remediation_models import (
 )
 
 
-class RemediationStore:
+APPROVAL_TTL_MINUTES = 30
 
+
+class RemediationStore:
     def create(
         self,
         *,
@@ -29,10 +31,16 @@ class RemediationStore:
         target_deployment_id: str | None,
         proposed_by: str,
     ) -> RemediationProposal:
-
         now = datetime.now(timezone.utc)
+
         proposal_id = (
-            f"rem-{now.strftime('%Y%m%d%H%M%S%f')}"
+            f"rem-{now.strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
+        )
+
+        expires_at = (
+            now + timedelta(minutes=APPROVAL_TTL_MINUTES)
+            if status == RemediationStatus.PENDING_APPROVAL
+            else None
         )
 
         with get_connection() as connection:
@@ -49,11 +57,14 @@ class RemediationStore:
                     target_deployment_id,
                     proposed_by,
                     created_at,
-                    updated_at
+                    updated_at,
+                    expires_at,
+                    verification_result
                 )
                 VALUES (
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s,
+                    %s, %s
                 )
                 RETURNING *
                 """,
@@ -69,6 +80,8 @@ class RemediationStore:
                     proposed_by,
                     now,
                     now,
+                    expires_at,
+                    Jsonb({}),
                 ),
             ).fetchone()
 
@@ -87,6 +100,11 @@ class RemediationStore:
                     "policy_decision": policy_decision.value,
                     "target_deployment_id": target_deployment_id,
                     "proposed_by": proposed_by,
+                    "expires_at": (
+                        expires_at.isoformat()
+                        if expires_at
+                        else None
+                    ),
                 },
                 now,
             )
@@ -97,7 +115,6 @@ class RemediationStore:
         self,
         proposal_id: str,
     ) -> RemediationProposal | None:
-
         with get_connection() as connection:
             row = connection.execute(
                 """
@@ -117,7 +134,6 @@ class RemediationStore:
         self,
         incident_id: str,
     ) -> list[RemediationProposal]:
-
         with get_connection() as connection:
             rows = connection.execute(
                 """
@@ -138,8 +154,10 @@ class RemediationStore:
         self,
         proposal_id: str,
         approved_by: str,
+        approved_role: str,
     ) -> RemediationProposal | None:
-
+        if not approved_by.strip() or approved_role not in {"sre", "platform-engineer"}:
+            raise PermissionError("verified SRE or Platform Engineer approval required")
         now = datetime.now(timezone.utc)
 
         with get_connection() as connection:
@@ -156,10 +174,68 @@ class RemediationStore:
             if existing is None:
                 return None
 
-            if existing["status"] != RemediationStatus.PENDING_APPROVAL.value:
+            if existing["status"] != (
+                RemediationStatus.PENDING_APPROVAL.value
+            ):
                 raise ValueError(
                     "only PENDING_APPROVAL proposals can be approved"
                 )
+
+            if (
+                existing["expires_at"] is not None
+                and existing["expires_at"] <= now
+            ):
+                row = connection.execute(
+                    """
+                    UPDATE aiops_remediation_proposals
+                    SET
+                        status = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (
+                        RemediationStatus.EXPIRED.value,
+                        now,
+                        proposal_id,
+                    ),
+                ).fetchone()
+
+                self._event(
+                    connection,
+                    row["incident_id"],
+                    "remediation_expired",
+                    (
+                        f"Remediation proposal {proposal_id} "
+                        "expired before approval."
+                    ),
+                    row["status"],
+                    {
+                        "proposal_id": proposal_id,
+                        "action": row["action"],
+                    },
+                    now,
+                )
+
+                return self._row_to_model(row)
+
+            environment = None
+            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value:
+                if existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value or existing["expires_at"] is None:
+                    raise PermissionError("proposal lacks an expiring remediation policy approval")
+                try:
+                    target_id = UUID(existing["target_deployment_id"])
+                except (ValueError, TypeError, AttributeError):
+                    raise ValueError("invalid deployment target") from None
+                if str(target_id) != existing["target_deployment_id"]:
+                    raise ValueError("deployment target must be a canonical UUID")
+                target = connection.execute(
+                    "SELECT environment FROM deployments WHERE id = %s AND status = 'pending'",
+                    (target_id,),
+                ).fetchone()
+                if target is None:
+                    raise ValueError("remediation requires a pending deployment target")
+                environment = target["environment"]
 
             row = connection.execute(
                 """
@@ -167,6 +243,8 @@ class RemediationStore:
                 SET
                     status = %s,
                     approved_by = %s,
+                    approved_role = %s,
+                    approved_environment = %s,
                     approved_at = %s,
                     updated_at = %s
                 WHERE id = %s
@@ -175,6 +253,8 @@ class RemediationStore:
                 (
                     RemediationStatus.APPROVED.value,
                     approved_by,
+                    approved_role,
+                    environment,
                     now,
                     now,
                     proposal_id,
@@ -193,6 +273,8 @@ class RemediationStore:
                 {
                     "proposal_id": proposal_id,
                     "approved_by": approved_by,
+                    "approved_role": approved_role,
+                    "environment": environment,
                     "action": row["action"],
                 },
                 now,
@@ -206,7 +288,6 @@ class RemediationStore:
         rejected_by: str,
         reason: str,
     ) -> RemediationProposal | None:
-
         now = datetime.now(timezone.utc)
 
         with get_connection() as connection:
@@ -223,10 +304,51 @@ class RemediationStore:
             if existing is None:
                 return None
 
-            if existing["status"] != RemediationStatus.PENDING_APPROVAL.value:
+            if existing["status"] not in {
+                RemediationStatus.PENDING_APPROVAL.value,
+                RemediationStatus.APPROVED.value,
+            }:
                 raise ValueError(
-                    "only PENDING_APPROVAL proposals can be rejected"
+                    "only pending or unclaimed approved proposals can be rejected"
                 )
+
+            if (
+                existing["expires_at"] is not None
+                and existing["expires_at"] <= now
+            ):
+                row = connection.execute(
+                    """
+                    UPDATE aiops_remediation_proposals
+                    SET
+                        status = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (
+                        RemediationStatus.EXPIRED.value,
+                        now,
+                        proposal_id,
+                    ),
+                ).fetchone()
+
+                self._event(
+                    connection,
+                    row["incident_id"],
+                    "remediation_expired",
+                    (
+                        f"Remediation proposal {proposal_id} "
+                        "expired before rejection."
+                    ),
+                    row["status"],
+                    {
+                        "proposal_id": proposal_id,
+                        "action": row["action"],
+                    },
+                    now,
+                )
+
+                return self._row_to_model(row)
 
             row = connection.execute(
                 """
@@ -270,14 +392,13 @@ class RemediationStore:
 
             return self._row_to_model(row)
 
-    def mark_executing(
+    def claim_execution(
         self,
         proposal_id: str,
         requested_by: str,
+        idempotency_key: str,
+        dispatch_token_hash: str | None,
     ) -> RemediationProposal | None:
-
-        now = datetime.now(timezone.utc)
-
         with get_connection() as connection:
             existing = connection.execute(
                 """
@@ -292,10 +413,25 @@ class RemediationStore:
             if existing is None:
                 return None
 
+            if existing["execution_idempotency_key"] is not None:
+                raise ValueError("proposal execution already claimed")
             if existing["status"] != RemediationStatus.APPROVED.value:
-                raise ValueError(
-                    "only APPROVED proposals can be executed"
-                )
+                raise ValueError("only APPROVED proposals can be executed")
+            now = datetime.now(timezone.utc)
+            if existing["expires_at"] is not None and existing["expires_at"] <= now:
+                raise PermissionError("remediation approval has expired")
+            if existing["rejected_at"] is not None or existing["policy_decision"] == PolicyDecision.BLOCKED.value:
+                raise PermissionError("remediation is rejected or blocked")
+            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value and (
+                not dispatch_token_hash
+                or not existing["approved_by"]
+                or not existing["approved_at"]
+                or existing["approved_role"] not in {"sre", "platform-engineer"}
+                or not existing["approved_environment"]
+                or not existing["expires_at"]
+                or existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value
+            ):
+                raise PermissionError("verified deployment approval required")
 
             row = connection.execute(
                 """
@@ -303,17 +439,27 @@ class RemediationStore:
                 SET
                     status = %s,
                     execution_requested_by = %s,
+                    execution_idempotency_key = %s,
+                    dispatch_token_hash = %s,
                     updated_at = %s
                 WHERE id = %s
+                  AND status = %s
+                  AND execution_idempotency_key IS NULL
                 RETURNING *
                 """,
                 (
                     RemediationStatus.EXECUTING.value,
                     requested_by,
+                    idempotency_key,
+                    dispatch_token_hash,
                     now,
                     proposal_id,
+                    RemediationStatus.APPROVED.value,
                 ),
             ).fetchone()
+
+            if row is None:
+                raise ValueError("proposal execution already claimed")
 
             self._event(
                 connection,
@@ -321,13 +467,189 @@ class RemediationStore:
                 "remediation_executing",
                 (
                     f"Remediation proposal {proposal_id} "
-                    f"entered execution."
+                    "entered execution."
                 ),
                 row["status"],
                 {
                     "proposal_id": proposal_id,
                     "requested_by": requested_by,
                     "action": row["action"],
+                    "idempotency_key": idempotency_key,
+                },
+                now,
+            )
+
+            return self._row_to_model(row)
+
+    def mark_verifying(
+        self,
+        proposal_id: str,
+        result: dict[str, Any] | None,
+    ) -> RemediationProposal | None:
+        now = datetime.now(timezone.utc)
+        result = result or {}
+
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_remediation_proposals
+                SET
+                    status = %s,
+                    result = %s,
+                    verification_result = %s,
+                    verification_started_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND status = %s
+                RETURNING *
+                """,
+                (
+                    RemediationStatus.VERIFYING.value,
+                    Jsonb(result.get("execution", {})),
+                    Jsonb(result),
+                    now,
+                    now,
+                    proposal_id,
+                    RemediationStatus.EXECUTING.value,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._event(
+                connection,
+                row["incident_id"],
+                "remediation_verifying",
+                (
+                    f"Remediation proposal {proposal_id} "
+                    "entered verification."
+                ),
+                row["status"],
+                {
+                    "proposal_id": proposal_id,
+                    "action": row["action"],
+                    "result": result,
+                },
+                now,
+            )
+
+            return self._row_to_model(row)
+
+    def record_verification_attempt(
+        self,
+        proposal_id: str,
+        verification_result: dict[str, Any],
+    ) -> RemediationProposal | None:
+        now = datetime.now(timezone.utc)
+
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_remediation_proposals
+                SET
+                    verification_result = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND status = %s
+                RETURNING *
+                """,
+                (
+                    Jsonb(verification_result),
+                    now,
+                    proposal_id,
+                    RemediationStatus.VERIFYING.value,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._event(
+                connection,
+                row["incident_id"],
+                "remediation_verification_retryable",
+                (
+                    f"Remediation proposal {proposal_id} "
+                    "verification is temporarily unavailable."
+                ),
+                row["status"],
+                {
+                    "proposal_id": proposal_id,
+                    "action": row["action"],
+                    "verification_result": verification_result,
+                },
+                now,
+            )
+
+            return self._row_to_model(row)
+
+    def mark_verified(
+        self,
+        proposal_id: str,
+        *,
+        succeeded: bool,
+        verification_result: dict[str, Any] | None,
+        error: str | None = None,
+    ) -> RemediationProposal | None:
+        now = datetime.now(timezone.utc)
+
+        status = (
+            RemediationStatus.SUCCEEDED
+            if succeeded
+            else RemediationStatus.FAILED
+        )
+
+        with get_connection() as connection:
+            row = connection.execute(
+                """
+                UPDATE aiops_remediation_proposals
+                SET
+                    status = %s,
+                    verification_result = %s,
+                    verified_at = %s,
+                    error = %s,
+                    executed_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND status = %s
+                RETURNING *
+                """,
+                (
+                    status.value,
+                    Jsonb(verification_result or {}),
+                    now,
+                    error,
+                    now,
+                    now,
+                    proposal_id,
+                    RemediationStatus.VERIFYING.value,
+                ),
+            ).fetchone()
+
+            if row is None:
+                return None
+
+            self._event(
+                connection,
+                row["incident_id"],
+                (
+                    "remediation_verified"
+                    if succeeded
+                    else "remediation_verification_failed"
+                ),
+                (
+                    f"Remediation proposal {proposal_id} "
+                    f"{status.value.lower()} after verification."
+                ),
+                row["status"],
+                {
+                    "proposal_id": proposal_id,
+                    "action": row["action"],
+                    "verification_result": (
+                        verification_result or {}
+                    ),
+                    "error": error,
                 },
                 now,
             )
@@ -342,8 +664,8 @@ class RemediationStore:
         result: dict[str, Any] | None,
         error: str | None,
     ) -> RemediationProposal | None:
-
         now = datetime.now(timezone.utc)
+
         status = (
             RemediationStatus.SUCCEEDED
             if succeeded
@@ -412,7 +734,6 @@ class RemediationStore:
         metadata: dict[str, Any],
         created_at: datetime,
     ) -> None:
-
         connection.execute(
             """
             INSERT INTO aiops_incident_events (
@@ -439,7 +760,6 @@ class RemediationStore:
     def _row_to_model(
         row: dict[str, Any],
     ) -> RemediationProposal:
-
         return RemediationProposal(
             id=row["id"],
             incident_id=row["incident_id"],
@@ -467,6 +787,17 @@ class RemediationStore:
             approved_at=row["approved_at"],
             rejected_at=row["rejected_at"],
             executed_at=row["executed_at"],
+            expires_at=row["expires_at"],
+            verification_started_at=row[
+                "verification_started_at"
+            ],
+            verified_at=row["verified_at"],
+            verification_result=(
+                row["verification_result"] or {}
+            ),
+            execution_idempotency_key=row[
+                "execution_idempotency_key"
+            ],
         )
 
 

@@ -24,4 +24,7 @@ receivers:
 
     webhook_configs:
       - url: "http://aiops-service:8090/api/v1/alerts"
+        http_config:
+          authorization:
+            credentials_file: /run/secrets/cloudforge_alertmanager_key
         send_resolved: true

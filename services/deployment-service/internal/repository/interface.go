@@ -26,12 +26,20 @@ type DeploymentStore interface {
 	Update(
 		ctx context.Context,
 		deployment model.Deployment,
+		expected model.Deployment,
 	) error
 
 	Delete(
 		ctx context.Context,
 		id uuid.UUID,
 	) error
+
+	GetPreviousSuccessfulDeployment(
+		ctx context.Context,
+		projectID uuid.UUID,
+		environment string,
+		excludeDeploymentID uuid.UUID,
+	) (model.Deployment, error)
 }
 
 type DeploymentQueueStore interface {

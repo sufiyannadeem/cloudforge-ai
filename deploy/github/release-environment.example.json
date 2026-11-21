@@ -1,0 +1,9 @@
+{
+  "can_admins_bypass": false,
+  "prevent_self_review": false,
+  "reviewers": [],
+  "deployment_branch_policy": {
+    "protected_branches": true,
+    "custom_branch_policies": false
+  }
+}

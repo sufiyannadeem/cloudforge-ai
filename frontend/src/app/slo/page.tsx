@@ -103,7 +103,7 @@ function burnClass(value: number | null): string {
 
 function burnLabel(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
-    return "No data";
+    return "Insufficient Data";
   }
 
   if (value >= 14.4) {

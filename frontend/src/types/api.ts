@@ -1,3 +1,6 @@
+import type { Deployment, DeploymentAttemptStatus } from "./deployments";
+export type { Deployment, DeploymentStatus, DeploymentAttemptStatus } from "./deployments";
+
 export interface ApiError {
   message: string;
   code?: string;
@@ -12,6 +15,8 @@ export interface Pagination {
 
 export interface Project {
   id: string;
+  created_by?: string;
+  access_level?: "owner" | "maintainer" | "viewer";
   name: string;
   description?: string | null;
   repository_url: string;
@@ -54,6 +59,7 @@ export type InfrastructureStatus =
   | "inactive"
   | "provisioning"
   | "destroying"
+  | "destroy_failed"
   | "failed";
 
 export interface InfrastructureResource {
@@ -64,6 +70,8 @@ export interface InfrastructureResource {
   region: string;
   environment: string;
   status: InfrastructureStatus;
+  status_source?: "terraform_workflow";
+  aws_live_status?: "unverified";
   terraform_directory: string;
   created_at: string;
   updated_at: string;
@@ -94,37 +102,12 @@ export interface InfrastructureListResponse {
   offset: number;
 }
 
-export type DeploymentStatus =
-  | "pending"
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export type DeploymentAttemptStatus =
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
-
-export interface Deployment {
-  id: string;
-  project_id: string;
-  environment: string;
-  image: string;
-  git_commit_sha: string;
-  namespace: string;
-  status: DeploymentStatus;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface DeploymentAttempt {
   id: string;
   deployment_id: string;
   attempt_number: number;
   status: DeploymentAttemptStatus;
+  execution_mode?: "simulated" | "kubernetes" | "unknown";
   error_message?: string | null;
   started_at: string;
   completed_at?: string | null;

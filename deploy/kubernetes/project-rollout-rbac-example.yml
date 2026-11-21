@@ -1,0 +1,32 @@
+# Optional addition to the existing project deployer Role. Never bind cluster-wide.
+# Replace PROJECT_UUID and, if changed, the reviewed AnalysisTemplate resource name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudforge-rollout-deployer
+  namespace: cf-PROJECT_UUID
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["rollouts"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["rollouts/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["analysistemplates"]
+    resourceNames: ["cloudforge-release-health"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudforge-rollout-deployer
+  namespace: cf-PROJECT_UUID
+subjects:
+  - kind: ServiceAccount
+    name: cloudforge-deployment-service
+    namespace: cloudforge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudforge-rollout-deployer

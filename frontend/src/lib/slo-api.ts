@@ -77,15 +77,16 @@ async function queryPrometheusMetric(
     };
   };
 
-  const value = payload.data?.result?.[0]?.value?.[1];
+  const series = payload.data?.result;
+  const value = series?.length === 1 ? series[0].value?.[1] : undefined;
 
-  if (value === undefined) {
+  if (typeof value !== "string" || value.trim() === "") {
     return null;
   }
 
   const parsed = Number(value);
 
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 export async function getSLOSummary(
@@ -108,6 +109,21 @@ export async function getSLOSummary(
   }
 
   return (await response.json()) as SLOSummary;
+}
+
+// Require raw scrape coverage even when Prometheus still serves older recording rules.
+function availabilityBurnQuery(window: SLOBurnWindow) {
+  const minimumSamples = { "5m": 18, "30m": 108, "1h": 216, "6h": 1296 }[window];
+  const labels = '{job="deployment-service",service="deployment-service"}';
+  const up = `up${labels}`;
+  const burn = `cloudforge:slo_availability_burn:${window}${labels}`;
+  const group = "(job, service, environment)";
+  return [
+    burn,
+    `and on ${group} (min by ${group} (count_over_time(${up}[${window}])) >= ${minimumSamples})`,
+    `and on ${group} (max by ${group} (time() - timestamp(${up})) <= 45)`,
+    `and on ${group} (time() - timestamp(${burn}) <= 60)`,
+  ].join(" ");
 }
 
 export async function getSLOBurnRates(): Promise<SLOBurnRates> {
@@ -151,7 +167,7 @@ export async function getSLOBurnRates(): Promise<SLOBurnRates> {
   await Promise.all(
     windows.flatMap((window) => [
       queryPrometheusMetric(
-        `cloudforge:slo_availability_burn:${window}`,
+        availabilityBurnQuery(window),
       ).then((value) => {
         availability[window] = value;
       }),
