@@ -11,6 +11,7 @@ import yaml
 _review = runpy.run_path(str(Path(__file__).with_name('review_workspace.py')))
 read_review_json = _review['read_review_json']
 output_directory = _review['output_directory']
+write_review_directory = _review['write_review_directory']
 
 
 
@@ -88,10 +89,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     try:
         values, trust, policy = prepare(args.config)
-        args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
-        (args.output_dir / 'values.yml').write_text(yaml.safe_dump(values, sort_keys=False))
-        (args.output_dir / 'iam-trust.json').write_text(json.dumps(trust, indent=2) + '\n')
-        (args.output_dir / 'iam-policy.json').write_text(json.dumps(policy, indent=2) + '\n')
         # The reviewed upstream chart has liveness only; use standard Kustomize
         # patches for the missing startup/readiness and termination budget.
         patch = [
@@ -101,11 +98,17 @@ if __name__ == '__main__':
             {'op': 'add', 'path': '/spec/template/spec/containers/0/readinessProbe', 'value': {
                 'httpGet': {'path': '/health-check', 'port': 8085}, 'periodSeconds': 10, 'timeoutSeconds': 3}},
         ]
-        (args.output_dir / 'reliability-patch.yml').write_text(yaml.safe_dump(patch, sort_keys=False))
-        (args.output_dir / 'kustomization.yml').write_text(yaml.safe_dump({
+        kustomization = {
             'apiVersion': 'kustomize.config.k8s.io/v1beta1', 'kind': 'Kustomization',
             'resources': ['upstream.yml'], 'patches': [{'path': 'reliability-patch.yml',
                 'target': {'group': 'apps', 'version': 'v1', 'kind': 'Deployment', 'labelSelector': 'cloudforge.ai/component=node-autoscaler'}}],
-        }, sort_keys=False))
+        }
+        write_review_directory(args.output_dir, {
+            'values.yml': yaml.safe_dump(values, sort_keys=False),
+            'iam-trust.json': json.dumps(trust, indent=2) + '\n',
+            'iam-policy.json': json.dumps(policy, indent=2) + '\n',
+            'reliability-patch.yml': yaml.safe_dump(patch, sort_keys=False),
+            'kustomization.yml': yaml.safe_dump(kustomization, sort_keys=False),
+        })
     except (ValueError, KeyError, TypeError, OSError):
         parser.exit(2, 'Invalid node autoscaler inputs or output directory; no deployment performed.\n')

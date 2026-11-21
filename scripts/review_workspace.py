@@ -59,3 +59,39 @@ def output_directory(value):
     if not match:
         raise argparse.ArgumentTypeError('Output must be a new directory name in the review workspace')
     return Path.cwd() / match.group(0)
+
+
+def write_review_directory(value, files):
+    """Create new review artifacts without following replaced directory/file paths."""
+    directory = output_directory(value)
+    if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', name)
+           or not isinstance(content, str) for name, content in files.items()):
+        raise ValueError('Invalid review artifact name or content')
+    root_fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory_fd = None
+    try:
+        workspace = os.fstat(root_fd)
+        if workspace.st_uid != os.geteuid() or workspace.st_mode & 0o022:
+            raise ValueError('Review workspace must be caller-owned and not group/world writable')
+        os.mkdir(directory.name, mode=0o700, dir_fd=root_fd)
+        directory_fd = os.open(directory.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+        created = os.fstat(directory_fd)
+        if created.st_uid != os.geteuid() or created.st_mode & 0o077:
+            raise ValueError('Review output directory must remain private')
+
+        def check_directory():
+            current = os.stat(directory.name, dir_fd=root_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != (created.st_dev, created.st_ino):
+                raise OSError('Review output directory was replaced')
+
+        for name, content in files.items():
+            check_directory()
+            fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=directory_fd)
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                stream.write(content)
+        check_directory()
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+        os.close(root_fd)

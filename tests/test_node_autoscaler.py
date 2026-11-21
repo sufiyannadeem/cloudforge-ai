@@ -60,7 +60,9 @@ def test_preparation_creates_review_artifacts_and_cannot_overwrite(tmp_path, inp
     assert len(patch) == 3
     assert patch[1]['path'].endswith('/startupProbe') and patch[2]['path'].endswith('/readinessProbe')
     assert 'unused-patch-name' not in (output / 'reliability-patch.yml').read_text()
-    assert subprocess.run(command, capture_output=True).returncode != 0
+    saved={p.name:p.read_bytes() for p in output.iterdir()}
+    assert subprocess.run(command, cwd=tmp_path, capture_output=True).returncode != 0
+    assert {p.name:p.read_bytes() for p in output.iterdir()}==saved
 
 
 def test_cli_config_and_output_cannot_escape_workspace(tmp_path, monkeypatch):
