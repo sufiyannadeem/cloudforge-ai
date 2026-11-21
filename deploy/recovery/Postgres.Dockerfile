@@ -3,7 +3,7 @@ FROM postgres:16.16-alpine@sha256:1d5b02d3a9941fbd52437db4107f8c52d6297dac553ca1
 # The official image bundles gosu built with vulnerable Go stdlib. Native Alpine
 # su-exec implements the user/group switch used by docker-entrypoint.sh without
 # that Go runtime. Preserve both executable names expected by the upstream image.
-RUN apk add --no-cache su-exec=0.3-r0 \
+RUN apk add --no-cache su-exec=0.3-r0 libxml2=2.13.9-r3 \
     && rm /usr/local/bin/gosu /usr/local/bin/su-exec \
     && ln -s /sbin/su-exec /usr/local/bin/gosu \
     && ln -s /sbin/su-exec /usr/local/bin/su-exec \
