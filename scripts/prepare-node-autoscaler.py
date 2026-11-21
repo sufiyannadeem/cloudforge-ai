@@ -4,7 +4,15 @@ import argparse
 import json
 from pathlib import Path
 import re
+import runpy
 import yaml
+
+# Load the trusted sibling, independent of caller cwd/PYTHONPATH.
+_review = runpy.run_path(str(Path(__file__).with_name('review_workspace.py')))
+read_review_json = _review['read_review_json']
+output_directory = _review['output_directory']
+
+
 
 
 def checked(pattern, value, field):
@@ -73,21 +81,13 @@ def prepare(config):
     return values, trust, policy
 
 
-def workspace_path(value):
-    path = Path(value)
-    resolved = path.resolve()
-    if path.is_symlink() or not resolved.is_relative_to(Path.cwd().resolve()) or resolved == Path.cwd().resolve():
-        raise argparse.ArgumentTypeError('Path must stay within the current workspace, without symlinks')
-    return resolved
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=workspace_path, required=True)
-    parser.add_argument('--output-dir', type=workspace_path, required=True)
+    parser.add_argument('--config', type=read_review_json, required=True)
+    parser.add_argument('--output-dir', type=output_directory, required=True)
     args = parser.parse_args()
     try:
-        values, trust, policy = prepare(json.loads(args.config.read_text()))
+        values, trust, policy = prepare(args.config)
         args.output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
         (args.output_dir / 'values.yml').write_text(yaml.safe_dump(values, sort_keys=False))
         (args.output_dir / 'iam-trust.json').write_text(json.dumps(trust, indent=2) + '\n')

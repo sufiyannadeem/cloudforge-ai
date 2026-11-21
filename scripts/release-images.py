@@ -7,7 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import subprocess
+
+# Load the trusted sibling, independent of caller cwd/PYTHONPATH.
+_review = runpy.run_path(str(Path(__file__).with_name('review_workspace.py')))
+read_review_json = _review['read_review_json']
+
+
 
 SERVICES = {'project-service','infrastructure-service','deployment-service','aiops-service','finops-service','frontend','postgres'}
 DIGEST = re.compile(r'[a-z0-9][a-z0-9.:/_-]*@sha256:[0-9a-f]{64}')
@@ -184,8 +191,8 @@ if __name__=='__main__':
     parser.add_argument('--run-id')
     parser.add_argument('--run-attempt')
     parser.add_argument('--publish',action='store_true')
-    parser.add_argument('--config',type=workspace_path)
-    parser.add_argument('--manifest',type=workspace_path)
+    parser.add_argument('--config',type=read_review_json)
+    parser.add_argument('--manifest',type=read_review_json)
     parser.add_argument('--output',type=workspace_path,required=True)
     args=parser.parse_args()
     if args.output.exists(): parser.error('Refusing to overwrite an existing output')
@@ -193,8 +200,8 @@ if __name__=='__main__':
     else:
         if not all([args.repository,args.revision,args.run_id,args.run_attempt]):
             parser.error('Trusted --repository, --revision, --run-id and --run-attempt are required')
-        manifest=json.loads(args.manifest.read_text())
+        manifest=args.manifest
         verify_manifest(manifest,args.repository,args.revision,args.run_id,args.run_attempt)
-        config=select_images(json.loads(args.config.read_text()),manifest)
+        config=select_images(args.config,manifest)
         with args.output.open('x') as stream:
             stream.write(json.dumps(config,indent=2)+'\n')

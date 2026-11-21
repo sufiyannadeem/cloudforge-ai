@@ -43,6 +43,8 @@ def test_deployer_permissions_remain_project_scoped_and_minimal():
     ))
     role, binding = documents
     assert role["kind"] == "Role" and binding["kind"] == "RoleBinding"
+    assert binding["subjects"] == [{"kind":"ServiceAccount", "name":"cloudforge-deployment-service", "namespace":"cloudforge"}]
+    assert binding["roleRef"] == {"apiGroup":"rbac.authorization.k8s.io", "kind":"Role", "name":role["metadata"]["name"]}
     assert role["metadata"]["namespace"] == binding["metadata"]["namespace"] == "cf-PROJECT_UUID"
     permissions = {(tuple(rule["apiGroups"]), tuple(rule["resources"])): set(rule["verbs"]) for rule in role["rules"]}
     assert permissions[(("apps",), ("replicasets",))] == {"list"}

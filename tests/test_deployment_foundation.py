@@ -22,6 +22,7 @@ def config():
              provisioner_role_arn='arn:aws:iam::123456789012:role/fixture-provisioner',
              monitoring_namespace='monitoring', ingress_namespace='ingress', ingress_app='gateway')
     c['database_ca_configmap'] = 'fixture-db-ca'
+    c['monitoring_tls'] = {'prometheus_url':'https://prometheus.monitoring.svc:9090', 'grafana_url':'https://grafana.monitoring.svc:3000', 'ca_configmap':'fixture-monitoring-ca', 'prometheus_pod_port':9090, 'grafana_pod_port':3000}
     c['storage'] = {'class': 'fixture-rwx', 'size': '10Gi'}
     c['images'] = {name: 'example.invalid/' + name + '@sha256:' + 'a' * 64 for name in c['images']}
     c['roles'] = {name: 'arn:aws:iam::123456789012:role/fixture-' + name for name in c['roles']}
@@ -256,3 +257,47 @@ def test_bedrock_renderer_rejects_missing_or_draft_guardrail(config):
     with pytest.raises(ValueError):renderer.render(config)
     config['ai'].update(guardrail_id='fixture123',guardrail_version='DRAFT')
     with pytest.raises(ValueError):renderer.render(config)
+
+
+@pytest.mark.parametrize('field,value',[
+    ('prometheus_url','http://prometheus.monitoring.svc:9090'),
+    ('grafana_url','http://grafana.monitoring.svc:3000'),
+    ('prometheus_url','https://attacker.invalid:9090'),
+    ('prometheus_url','https://user:password@prometheus.monitoring.svc:9090'),
+    ('prometheus_url','https://prometheus.monitoring.svc:9090/?query=other'),
+    ('prometheus_url','https://prometheus.monitoring.svc:0'),
+    ('ca_configmap',None),
+    ('prometheus_pod_port',None),
+    ('grafana_pod_port',True),
+])
+def test_production_monitoring_requires_approved_https_origins_and_ca(config,field,value):
+    config['monitoring_tls'][field]=value
+    with pytest.raises(ValueError):renderer.render(config)
+
+
+def test_production_monitoring_has_no_plaintext_fallback(config):
+    del config['monitoring_tls']
+    with pytest.raises(ValueError):renderer.render(config)
+
+
+def test_monitoring_tls_mounts_trust_and_binds_network_policy_ports(config):
+    config['monitoring_tls']['prometheus_url']='https://prometheus.monitoring.svc:443'
+    config['monitoring_tls']['prometheus_pod_port']=9443
+    config['monitoring_tls']['grafana_url']='https://grafana.monitoring.svc:443'
+    config['monitoring_tls']['grafana_pod_port']=3443
+    docs=renderer.render(config)
+    for dep in (d for d in docs if d['kind']=='Deployment'):
+        name=dep['metadata']['name'];pod=dep['spec']['template']['spec'];c=pod['containers'][0]
+        env={e['name']:e.get('value') for e in c['env']}
+        if name in {'frontend','deployment-service','aiops-service','finops-service'}:
+            assert env['PROMETHEUS_URL']==config['monitoring_tls']['prometheus_url']
+            trust='NODE_EXTRA_CA_CERTS' if name=='frontend' else 'SSL_CERT_FILE'
+            assert env[trust]=='/etc/cloudforge/monitoring-ca/ca.crt'
+            assert next(v for v in pod['volumes'] if v['name']=='monitoring-ca')['configMap']['name']=='fixture-monitoring-ca'
+            assert next(v for v in c['volumeMounts'] if v['name']=='monitoring-ca')['readOnly'] is True
+            policy=next(d for d in docs if d['kind']=='NetworkPolicy' and d['metadata']['name']==name+'-egress')
+            assert {'to':[renderer.peer('prometheus','monitoring')],'ports':[renderer.tcp(9443)]} in policy['spec']['egress']
+            assert {'to':[renderer.peer('prometheus','monitoring')],'ports':[renderer.tcp(9090)]} not in policy['spec']['egress']
+            if name=='frontend':
+                assert env['GRAFANA_URL']==config['monitoring_tls']['grafana_url']
+                assert {'to':[renderer.peer('grafana','monitoring')],'ports':[renderer.tcp(3443)]} in policy['spec']['egress']

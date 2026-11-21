@@ -158,3 +158,40 @@ Frontend probes use TCP so no session/CSRF bypass endpoint is introduced.
 Terraform remains `TERRAFORM_READ_ONLY=true`; changing that requires separate approval
 of backend, role chain, locking and live acceptance prerequisites. No project RBAC
 or Terraform approval requirement is removed by this renderer.
+
+
+## Monitoring transport prerequisite
+
+Production rendering requires `monitoring_tls.prometheus_url` and
+`monitoring_tls.grafana_url` as reviewed HTTPS origins for the respective
+`prometheus` and `grafana` Services in `monitoring_namespace` (`.svc` or
+`.svc.cluster.local`). There is no generated HTTPS URL or plaintext fallback.
+Supply the actual `prometheus_pod_port` and `grafana_pod_port` from the reviewed
+Service targetPorts: NetworkPolicy uses pod ports, which may differ from the URL's
+Service ports. Only those selected peer/port pairs are allowed.
+
+Enable and verify real server TLS before using these inputs. [Prometheus supports native TLS](https://prometheus.io/docs/prometheus/latest/configuration/https/)
+with `--web.config.file` with `tls_server_config.cert_file` and `key_file`; [Grafana HTTPS](https://grafana.com/docs/grafana/latest/setup-grafana/set-up-https/)
+uses `GF_SERVER_PROTOCOL=https`, `GF_SERVER_CERT_FILE` and
+`GF_SERVER_CERT_KEY`. These server settings/certificate Secrets belong to the
+existing monitoring installation and are **not installed or verified** here.
+Do not point HTTPS at a plaintext listener to complete a checklist.
+
+`monitoring_tls.ca_configmap` must name an approved ConfigMap containing `ca.crt`:
+a PEM trust bundle with required public roots plus the approved monitoring CA.
+It contains no private key. The renderer mounts it read-only and sets
+`SSL_CERT_FILE` for Python/Go and `NODE_EXTRA_CA_CERTS` for Node before startup.
+Certificate and hostname verification stay enabled. Restart/roll workloads after
+trust rotation; do not assume cached clients reload trust. NetworkPolicy alone
+does not encrypt traffic. A missing CA mount or failed TLS handshake must remain
+an unavailable metric/health state, never a healthy zero.
+
+Python production monitoring rejects plaintext and redirects; frontend monitoring
+fetches reject redirects. Development defaults and local HTTP tests remain.
+Other service HTTP links are outside these four monitoring findings and retain
+their existing signed authentication; broader service transport remains a separate
+production acceptance prerequisite.
+
+Separately approved cluster acceptance must verify server TLS, SANs, bundle trust,
+Service-to-targetPort mappings, CNI enforcement and real metrics/health responses.
+No such external acceptance is claimed by local loopback tests.

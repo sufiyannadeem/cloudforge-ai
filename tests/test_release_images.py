@@ -246,6 +246,7 @@ def test_failed_signing_never_emits_release_manifest(tmp_path,monkeypatch):
 
 
 def test_cli_selection_requires_trusted_release_coordinates(tmp_path):
+    (tmp_path/'unused').write_text('{}')
     result=m.subprocess.run(['python3',str(ROOT/'scripts/release-images.py'),'--config','unused','--manifest','unused','--output',str(tmp_path/'out.json')],cwd=tmp_path,capture_output=True)
     assert result.returncode!=0 and b'Trusted --repository' in result.stderr
     assert not (tmp_path/'out.json').exists()

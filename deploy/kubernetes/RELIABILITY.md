@@ -42,7 +42,8 @@ Use upstream Cluster Autoscaler, not a custom controller. Copy
 account, region, cluster version, reviewed chart version, matching image digest,
 exact ASG ARNs and a dedicated IRSA role/OIDC provider. No resources are invented.
 CLI paths must stay in the current private review directory (no symlinks or
-outside paths). From the repository root:
+outside paths). Inputs are read through bounded no-follow descriptors; the
+output must be a new single child directory in that workspace. From the repository root:
 
 ```sh
 REPO_ROOT="$PWD"

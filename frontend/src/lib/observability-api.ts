@@ -50,6 +50,7 @@ async function queryPrometheus(
       {
         method: "GET",
         cache: "no-store",
+        redirect: "error",
         signal: controller.signal,
       },
     );

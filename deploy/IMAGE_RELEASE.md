@@ -48,7 +48,8 @@ keyless execution still require separately authorized acceptance.
 
 After an approved hosted run, use its immutable manifest with real non-secret
 release inputs in an existing private review workspace. CLI paths must remain
-inside the current directory; symlinks/outside paths are rejected. From repo root:
+inside the current directory; JSON inputs use bounded no-follow descriptors,
+and symlinked files/directories or outside paths are rejected. From repo root:
 
 ```sh
 REPO_ROOT="$PWD"

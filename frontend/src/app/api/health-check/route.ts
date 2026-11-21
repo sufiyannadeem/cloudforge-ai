@@ -73,6 +73,7 @@ async function checkHealth(
     const response = await fetch(target.url, {
       method: "GET",
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(3_000),
     });
 

@@ -67,6 +67,6 @@ def test_cli_config_and_output_cannot_escape_workspace(tmp_path, monkeypatch):
     import argparse
     monkeypatch.chdir(tmp_path)
     for value in ['../outside', '/etc/passwd']:
-        with pytest.raises(argparse.ArgumentTypeError): module.workspace_path(value)
+        with pytest.raises(argparse.ArgumentTypeError): module.read_review_json(value)
     link=tmp_path/'link';link.symlink_to(tmp_path/'config')
-    with pytest.raises(argparse.ArgumentTypeError): module.workspace_path(link)
+    with pytest.raises(argparse.ArgumentTypeError): module.read_review_json(link)

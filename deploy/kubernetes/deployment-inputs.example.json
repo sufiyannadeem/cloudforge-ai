@@ -21,6 +21,13 @@
     "size": null
   },
   "monitoring_namespace": null,
+  "monitoring_tls": {
+    "prometheus_url": null,
+    "prometheus_pod_port": null,
+    "grafana_url": null,
+    "grafana_pod_port": null,
+    "ca_configmap": null
+  },
   "ingress_namespace": null,
   "ingress_app": null,
   "egress_cidrs": {

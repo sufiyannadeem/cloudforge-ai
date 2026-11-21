@@ -49,3 +49,16 @@ test("deduplicated dashboard cards preserve role filtering", () => {
     assert.equal(html.includes('href="/project-costs"'), role === "developer");
   }
 });
+
+test("monitoring requests reject redirects and preserve honest unavailable data", async (t) => {
+  const original = process.env.PROMETHEUS_URL;
+  process.env.PROMETHEUS_URL = "https://prometheus.fixture.invalid";
+  t.after(() => { if (original === undefined) delete process.env.PROMETHEUS_URL; else process.env.PROMETHEUS_URL = original; });
+  const api = load("../src/lib/observability-api.ts");
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(new URL(url).protocol, "https:");
+    assert.equal(options.redirect, "error");
+    throw new TypeError("redirect rejected");
+  });
+  assert.equal(await api.getServiceAvailability(), null);
+});

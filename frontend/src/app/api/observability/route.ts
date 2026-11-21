@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
         Accept: "application/json",
       },
       cache: "no-store",
+      redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 

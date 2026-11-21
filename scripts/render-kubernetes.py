@@ -6,6 +6,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -32,6 +33,22 @@ def peer(app, namespace='cloudforge'):
 
 def tcp(port):
     return {'protocol': 'TCP', 'port': port}
+
+
+def monitoring_endpoint(value, service, namespace):
+    """Only reviewed native-TLS monitoring Services; no invented HTTPS fallback."""
+    if not isinstance(value, str) or any(ord(char) <= 32 for char in value):
+        raise ValueError('Configure a reviewed TLS endpoint for ' + service)
+    endpoint = urlsplit(value)
+    try:
+        port = endpoint.port if endpoint.port is not None else 443
+    except ValueError as exc:
+        raise ValueError('Invalid monitoring TLS port') from exc
+    if (endpoint.scheme != 'https' or endpoint.hostname not in {f'{service}.{namespace}.svc', f'{service}.{namespace}.svc.cluster.local'}
+            or endpoint.username or endpoint.password or endpoint.path not in {'', '/'}
+            or endpoint.query or endpoint.fragment or not 1 <= port <= 65535):
+        raise ValueError('Monitoring requires the approved Service HTTPS origin')
+    return value.rstrip('/'), port
 
 
 def render(config):
@@ -76,6 +93,14 @@ def render(config):
     checked(r'[a-z0-9][a-z0-9.-]*', storage['class'], 'storage.class')
     checked(r'[1-9][0-9]*(Gi|Ti)', storage['size'], 'storage.size')
     monitor_ns = checked(r'[a-z0-9][a-z0-9-]*', config['monitoring_namespace'], 'monitoring_namespace')
+    monitoring_tls = config.get('monitoring_tls', {})
+    ca_name = checked(r'[a-z0-9][a-z0-9.-]*', monitoring_tls.get('ca_configmap'), 'monitoring_tls.ca_configmap')
+    prometheus_url, _ = monitoring_endpoint(monitoring_tls.get('prometheus_url'), 'prometheus', monitor_ns)
+    grafana_url, _ = monitoring_endpoint(monitoring_tls.get('grafana_url'), 'grafana', monitor_ns)
+    prometheus_port = monitoring_tls.get('prometheus_pod_port')
+    grafana_port = monitoring_tls.get('grafana_pod_port')
+    if any(type(port) is not int or not 1 <= port <= 65535 for port in (prometheus_port, grafana_port)):
+        raise ValueError('Configure reviewed monitoring Service target pod TLS ports')
     ingress_ns = checked(r'[a-z0-9][a-z0-9-]*', config['ingress_namespace'], 'ingress_namespace')
     ingress_app = checked(r'[a-z0-9][a-z0-9-]*', config['ingress_app'], 'ingress_app')
     networks = {}
@@ -173,7 +198,11 @@ def render(config):
         if name in {'project-service', 'deployment-service', 'infrastructure-service'}:
             additional['SHUTDOWN_TIMEOUT_SECONDS'] = '90' if name == 'infrastructure-service' else '20'
         if name in {'frontend', 'deployment-service', 'aiops-service', 'finops-service'}:
-            additional['PROMETHEUS_URL'] = f'http://prometheus.{monitor_ns}.svc:9090'
+            additional['PROMETHEUS_URL'] = prometheus_url
+            ca_file = '/etc/cloudforge/monitoring-ca/ca.crt'
+            additional['NODE_EXTRA_CA_CERTS' if name == 'frontend' else 'SSL_CERT_FILE'] = ca_file
+            spec.setdefault('volumes', []).append({'name': 'monitoring-ca', 'configMap': {'name': ca_name}})
+            container.setdefault('volumeMounts', []).append({'name': 'monitoring-ca', 'mountPath': '/etc/cloudforge/monitoring-ca', 'readOnly': True})
         if name == 'deployment-service':
             additional['ARGO_ROLLOUTS_ENABLED'] = str(rollouts['enabled']).lower()
             if rollouts['enabled']:
@@ -186,7 +215,7 @@ def render(config):
                 additional['AI_BEDROCK_GUARDRAIL_ID'] = ai['guardrail_id']
                 additional['AI_BEDROCK_GUARDRAIL_VERSION'] = ai['guardrail_version']
         if name == 'frontend':
-            additional['GRAFANA_URL'] = f'http://grafana.{monitor_ns}.svc:3000'
+            additional['GRAFANA_URL'] = grafana_url
         container['env'] = [e for e in container.get('env', []) if e['name'] not in additional]
         container['env'] += [{'name': k, 'value': v} for k, v in additional.items()]
     # envFrom must be explicitly mapped, not unrestricted extraction of remote JSON.
@@ -290,9 +319,9 @@ def render(config):
         if name == 'aiops-service':
             egress += [{'to': [peer('deployment-service')], 'ports': [tcp(8082)]}]
         if name in {'frontend', 'deployment-service', 'aiops-service', 'finops-service'}:
-            egress += [{'to': [peer('prometheus', monitor_ns)], 'ports': [tcp(9090)]}]
+            egress += [{'to': [peer('prometheus', monitor_ns)], 'ports': [tcp(prometheus_port)]}]
         if name == 'frontend':
-            egress += [{'to': [peer('grafana', monitor_ns)], 'ports': [tcp(3000)]}]
+            egress += [{'to': [peer('grafana', monitor_ns)], 'ports': [tcp(grafana_port)]}]
         if name != 'frontend':
             egress += [{'to': networks['database'], 'ports': [tcp(5432)]}]
         if name in {'infrastructure-service', 'finops-service', 'aiops-service'}:
