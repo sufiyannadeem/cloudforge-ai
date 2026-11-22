@@ -49,13 +49,10 @@ resource "aws_security_group" "rds" {
     cidr_blocks = module.vpc.private_subnets_cidr_blocks
   }
 
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # Mount targets/database do not initiate client connections. Security-group
+  # statefulness permits replies to the narrowly allowed inbound connections.
+  # Explicit empty list also revokes previously managed allow-all egress.
+  egress = []
 
   tags = merge(local.common_tags, {
     Name = "${local.name_prefix}-rds-sg"

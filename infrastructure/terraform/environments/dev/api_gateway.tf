@@ -14,7 +14,7 @@
 
 # -----------------------------------------------------------------------------
 # 1. Security Group: Internal ALB
-#    Allows HTTPS from the VPC Link ENIs (VPC CIDR) and all outbound to nodes.
+#    Allows private HTTP only from VPC Link ENIs; pod egress is port3000 only.
 # -----------------------------------------------------------------------------
 resource "aws_security_group" "internal_alb" {
   name        = "${local.name_prefix}-internal-alb-sg"
@@ -75,11 +75,12 @@ resource "aws_vpc_security_group_ingress_rule" "alb_frontend" {
 #    scheme = "internal" → never internet-facing; serves VPC-internal traffic only.
 # -----------------------------------------------------------------------------
 resource "aws_lb" "internal" {
-  name               = "${local.name_prefix}-internal-alb"
-  internal           = true # Non-internet-facing — mandatory requirement.
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.internal_alb.id]
-  subnets            = module.vpc.private_subnets
+  name                       = "${local.name_prefix}-internal-alb"
+  internal                   = true # Non-internet-facing — mandatory requirement.
+  load_balancer_type         = "application"
+  drop_invalid_header_fields = true
+  security_groups            = [aws_security_group.internal_alb.id]
+  subnets                    = module.vpc.private_subnets
 
   # Access logging bucket is optional; set var.alb_access_log_bucket to enable.
   dynamic "access_logs" {
@@ -131,6 +132,11 @@ resource "aws_lb_target_group" "frontend" {
 # -----------------------------------------------------------------------------
 # 4. ALB HTTP Listener (port 80, internal only — API Gateway terminates TLS)
 # -----------------------------------------------------------------------------
+# API Gateway's public endpoint terminates HTTPS. This single listener is private:
+# internal ALB + private subnets + ingress only from the VPC Link security group.
+# No ACM/private-TLS service is introduced. See PRIVATE_NETWORK_SECURITY.md for
+# the plaintext risk, exact scope, guard tests and mandatory review conditions.
+#trivy:ignore:AVD-AWS-0054:exp:2026-12-22
 resource "aws_lb_listener" "internal_http" {
   load_balancer_arn = aws_lb.internal.arn
   port              = 80

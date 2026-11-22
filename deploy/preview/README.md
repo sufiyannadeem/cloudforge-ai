@@ -30,3 +30,9 @@ thresholds must be derived from the actual balance and costs, retaining cleanup
 and billing-lag buffers. No historical price/balance is a current quote or hard
 AWS cap. Real account eligibility, quotas, capacity, load behavior, certificates,
 controller/CSI/network acceptance and teardown remain operator prerequisites.
+
+EKS management API is private-only. Bind `eks_operator_security_group_id` to
+the real reviewed SG of an existing VPC-connected operator alongside its IAM
+role. The deprecated public-endpoint toggle/CIDR inputs reject public access.
+See `../../infrastructure/terraform/environments/dev/PRIVATE_NETWORK_SECURITY.md`
+for traffic requirements and the single expiring private-HTTP exception.

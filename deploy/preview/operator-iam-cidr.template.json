@@ -61,7 +61,7 @@
   },
   "binding_requirements": {
     "operator_role": "Existing reviewed IAM role, not an invented role/user/session ARN; verify trust and same intended account",
-    "cidrs": "Actual operator egress CIDRs, never 0.0.0.0/0 or inferred workstation LAN IP",
+    "cidrs": "EKS API is private-only; eks_public_access_cidrs stays empty. Supply the reviewed SG of an existing VPC-connected operator and verify private DNS/routing. No bastion/VPN or public API is created.",
     "irsa": "Substitute verified issuer keys and exact system:serviceaccount:namespace:name per controller; never use namespace wildcards",
     "cluster_access": "API access entry plus explicit EKS ClusterAdminPolicy for reviewed operator; creator admin remains off",
     "kubernetes_operator_minimum": "After access bootstrap, use least privilege for reviewed namespace/CRD/controller installation; no raw Secret logging",
@@ -69,5 +69,6 @@
     "target_registration_policy": "Replace null Resource with actual frontend target group ARN before validation/attachment. Minimal TGB-only candidate requires acceptance with this chart/controller; no CreateLoadBalancer, no SG mutation. Do not silently broaden on AccessDenied."
   },
   "node_role_arn": null,
-  "cluster_role_arn": null
+  "cluster_role_arn": null,
+  "eks_operator_security_group_id": null
 }

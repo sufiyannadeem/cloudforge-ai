@@ -97,15 +97,33 @@ variable "eks_node_max_size" {
 }
 
 variable "eks_endpoint_public_access" {
-  description = "Enable public API server endpoint access."
+  description = "Deprecated compatibility input; EKS API is private-only."
   type        = bool
-  default     = true
+  default     = false
+  validation {
+    condition     = var.eks_endpoint_public_access == false
+    error_message = "Public EKS API access is prohibited; use the reviewed VPC-connected operator path."
+  }
 }
 
 variable "eks_public_access_cidrs" {
-  description = "CIDR blocks that can access the Amazon EKS public API server endpoint."
+  description = "Deprecated compatibility input; leave empty for private-only EKS."
   type        = list(string)
   default     = []
+  validation {
+    condition     = length(var.eks_public_access_cidrs) == 0
+    error_message = "Public endpoint CIDRs must remain empty; private API access uses the operator SG."
+  }
+}
+
+variable "eks_operator_security_group_id" {
+  description = "Existing reviewed SG of the VPC-connected operator; no public access path is created."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.eks_operator_security_group_id == "" || can(regex("^sg-([0-9a-f]{8}|[0-9a-f]{17})$", var.eks_operator_security_group_id))
+    error_message = "Provide an actual reviewed operator security group ID."
+  }
 }
 
 variable "rds_instance_class" {

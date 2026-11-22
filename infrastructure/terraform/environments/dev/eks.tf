@@ -57,12 +57,27 @@ resource "aws_security_group" "eks_cluster" {
   description = "Security group for CloudForge AI EKS control plane communication"
   vpc_id      = module.vpc.vpc_id
 
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  # Control-plane API/kubelet, LBC admission and metrics-server aggregated API.
+  # No registry/image-pull or arbitrary internet egress belongs on this extra SG.
+  dynamic "egress" {
+    for_each = toset([443, 10250, 9443, 10251])
+    content {
+      description = "Control plane to private node and admission endpoints"
+      protocol    = "tcp"
+      from_port   = egress.value
+      to_port     = egress.value
+      cidr_blocks = module.vpc.private_subnets_cidr_blocks
+    }
+  }
+  dynamic "egress" {
+    for_each = toset(["tcp", "udp"])
+    content {
+      description = "DNS within private node subnets"
+      protocol    = egress.value
+      from_port   = 53
+      to_port     = 53
+      cidr_blocks = module.vpc.private_subnets_cidr_blocks
+    }
   }
 
   tags = merge(local.common_tags, {
@@ -89,19 +104,19 @@ resource "aws_eks_cluster" "main" {
       error_message = "Provide the existing reviewed operator role before creating EKS."
     }
     precondition {
-      condition = !var.eks_endpoint_public_access || (length(var.eks_public_access_cidrs) > 0 && alltrue([
-        for cidr in var.eks_public_access_cidrs : can(cidrnetmask(cidr)) && !contains(["0.0.0.0/0", "::/0"], cidr)
-      ]))
-      error_message = "Public EKS access requires explicit restricted operator IPv4 CIDRs."
+      condition     = var.eks_operator_security_group_id != ""
+      error_message = "Provide the reviewed SG of an existing VPC-connected operator before creating private EKS."
     }
   }
 
   vpc_config {
     subnet_ids              = module.vpc.private_subnets
     endpoint_private_access = true
-    endpoint_public_access  = var.eks_endpoint_public_access
-    public_access_cidrs     = var.eks_public_access_cidrs
-    security_group_ids      = [aws_security_group.eks_cluster.id]
+    endpoint_public_access  = false
+    # Inert while public access is disabled; never inherit the AWS 0.0.0.0/0 default.
+    # This is NOT the access control for the private endpoint (SGs enforce that).
+    public_access_cidrs = [var.vpc_cidr]
+    security_group_ids  = [aws_security_group.eks_cluster.id]
   }
 
   encryption_config {
@@ -123,6 +138,16 @@ resource "aws_eks_cluster" "main" {
     aws_iam_role_policy_attachment.eks_vpc_resource_controller,
     aws_cloudwatch_log_group.eks
   ]
+}
+
+# Existing VPC-connected operator identity, not a new bastion/VPN or public CIDR.
+resource "aws_vpc_security_group_ingress_rule" "operator_api" {
+  security_group_id            = aws_security_group.eks_cluster.id
+  referenced_security_group_id = var.eks_operator_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "Private EKS API from reviewed operator SG only"
 }
 
 # -----------------------------------------------------------------------------
