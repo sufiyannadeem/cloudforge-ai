@@ -1,12 +1,14 @@
 package terraform
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -450,5 +452,45 @@ func TestPartialApplyReturnsObservedIDWithoutClaimingSuccess(t *testing.T) {
 		if strings.Contains(call, "-refresh-only") {
 			t.Fatal("partial apply continued into success verification")
 		}
+	}
+}
+
+func TestProcessGroupTerminatesOnContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-terraform.sh")
+	content := "#!/bin/sh\nsh -c 'sleep 60' &\nsleep 60\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &Runner{
+		TerraformBin: script,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	start := time.Now()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runner.runWithEnvironment(ctx, dir, os.Environ())
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error on cancellation, got nil")
+		}
+		if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "cancelled") {
+			t.Fatalf("expected context cancellation error, got %v", err)
+		}
+		if time.Since(start) > 4*time.Second {
+			t.Fatalf("shutdown took too long: %v", time.Since(start))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("process group cancellation timed out; child processes leaked")
 	}
 }

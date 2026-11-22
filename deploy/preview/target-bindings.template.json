@@ -1,0 +1,66 @@
+{
+  "status": "UNBOUND_NOT_APPLICABLE",
+  "source": "Actual reviewed Terraform outputs / read-only target metadata, never guessed names",
+  "vpc_id": null,
+  "private_subnet_ids": [],
+  "internal_alb_arn": null,
+  "internal_alb_listener_arn": null,
+  "frontend_target_group_arn": null,
+  "internal_alb_subnet_cidrs": [],
+  "api_gateway_endpoint": null,
+  "efs_file_system_id": null,
+  "efs_storage_class": null,
+  "monitoring_ebs_storage_class": null,
+  "state_bucket": null,
+  "state_access_log_bucket": null,
+  "rds_address": null,
+  "rds_port": null,
+  "rds_database_name": null,
+  "rds_ca_certificate_identifier": null,
+  "rds_master_secret_arn": null,
+  "rds_public_bundle": {
+    "file": null,
+    "sha256": null,
+    "configmap": "cloudforge-rds-ca",
+    "key": "ca.crt",
+    "verification": "Verify created DB CA identifier and hostname chain against bundle; sslmode=verify-full; master secret is not a runtime DSN"
+  },
+  "secrets": {
+    "metadata_template": "deployment-bindings.template.json",
+    "values": "NEVER CHECK IN. Preseed exact keys via separately approved operator secret channel. No ESO, no shared runtime/migrator identity.",
+    "readiness_receipts": []
+  },
+  "monitoring_tls": {
+    "prometheus_url": null,
+    "grafana_url": null,
+    "ca_configmap": null,
+    "public_ca_sha256": null
+  },
+  "storage_class_templates": {
+    "efs_workspaces": {
+      "provisioner": "efs.csi.aws.com",
+      "parameters": {
+        "provisioningMode": "efs-ap",
+        "fileSystemId": null,
+        "uid": "1000",
+        "gid": "1000",
+        "directoryPerms": "700"
+      },
+      "mountOptions": [
+        "tls"
+      ],
+      "reclaimPolicy": "Retain",
+      "source_uid_gid": "Existing infrastructure-service pod runAsUser/fsGroup=1000"
+    },
+    "monitoring_gp3": {
+      "provisioner": "ebs.csi.aws.com",
+      "parameters": {
+        "type": "gp3",
+        "encrypted": "true"
+      },
+      "volumeBindingMode": "WaitForFirstConsumer",
+      "reclaimPolicy": "Delete",
+      "note": "20Gi total: Prometheus16/Grafana2/Alertmanager2; actual volume AZ/IO/load and retention remain unverified"
+    }
+  }
+}

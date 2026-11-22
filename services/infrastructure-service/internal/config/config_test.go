@@ -2,7 +2,10 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func TestConfigValidateSuccess(t *testing.T) {
@@ -147,5 +150,47 @@ func TestReadOnlyModeRejectsMalformedFlag(t *testing.T) {
 	t.Setenv("TERRAFORM_READ_ONLY", "not-a-boolean")
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid read-only configuration accepted")
+	}
+}
+
+func TestInfrastructureServiceStartupDatabaseValidationDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://cloudforge:secret@postgres:5432/cloudforge?sslmode=disable")
+	t.Setenv("SERVER_PORT", "8081")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected valid development config, got: %v", err)
+	}
+
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "infrastructure", false); err != nil {
+		t.Fatalf("expected development database validation to succeed, got: %v", err)
+	}
+}
+
+func TestInfrastructureServiceStartupDatabaseValidationProductionFailClosed(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	// Local Compose settings in production must fail closed
+	t.Setenv("DATABASE_URL", "postgres://cloudforge:secret@postgres:5432/cloudforge?sslmode=disable")
+	t.Setenv("SERVER_PORT", "8081")
+	t.Setenv("TERRAFORM_READ_ONLY", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected config.Load to succeed with read-only in production, got: %v", err)
+	}
+
+	err = identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "infrastructure", false)
+	if err == nil {
+		t.Fatal("expected production database validation to fail with local Compose credentials, got nil")
+	}
+	if !strings.Contains(err.Error(), "production requires a dedicated database principal and hostname-verified TLS") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Dedicated production principal and verify-full TLS succeeds
+	prodDSN := "postgres://cf_infrastructure:secret@db.prod.internal:5432/cloudforge?sslmode=verify-full"
+	if err := identity.ValidateDatabase(cfg.AppEnv, prodDSN, "infrastructure", false); err != nil {
+		t.Fatalf("expected production database validation to succeed for cf_infrastructure verify-full, got: %v", err)
 	}
 }

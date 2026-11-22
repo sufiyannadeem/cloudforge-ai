@@ -12,11 +12,17 @@ import (
 )
 
 type mockResourceStore struct {
-	createCalled bool
-	created      model.InfrastructureResource
-	resource     model.InfrastructureResource
-	updated      model.InfrastructureResource
-	updateCalled bool
+	createCalled      bool
+	created           model.InfrastructureResource
+	resource          model.InfrastructureResource
+	updated           model.InfrastructureResource
+	updateCalled      bool
+	transitionErr     error
+	claimPlanErr      error
+	lease             model.ExecutionLease
+	acquireLeaseErr   error
+	heartbeatLeaseErr error
+	releaseLeaseErr   error
 }
 
 func (m *mockResourceStore) GetByID(
@@ -64,7 +70,12 @@ func (m *mockResourceStore) TransitionStatus(
 	from []model.ResourceStatus,
 	to model.ResourceStatus,
 ) error {
-	_ = ctx
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.transitionErr != nil {
+		return m.transitionErr
+	}
 	if m.resource.ID != id {
 		return repository.ErrResourceNotFound
 	}
@@ -79,6 +90,37 @@ func (m *mockResourceStore) TransitionStatus(
 		return repository.ErrResourceConflict
 	}
 	m.resource.Status = to
+	m.resource.UpdatedAt = m.resource.UpdatedAt.Add(time.Microsecond)
+	m.updated = m.resource
+	m.updateCalled = true
+	return nil
+}
+
+func (m *mockResourceStore) ClaimPlan(ctx context.Context, resource model.InfrastructureResource) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.claimPlanErr != nil {
+		return m.claimPlanErr
+	}
+	if m.resource.ID != resource.ID {
+		return repository.ErrResourceNotFound
+	}
+	if !m.resource.UpdatedAt.IsZero() && !resource.UpdatedAt.IsZero() && !m.resource.UpdatedAt.Equal(resource.UpdatedAt) {
+		return repository.ErrResourceConflict
+	}
+	allowed := false
+	for _, st := range []model.ResourceStatus{model.ResourceStatusPending, model.ResourceStatusFailed, model.ResourceStatusPlanning, model.ResourceStatusActive} {
+		if m.resource.Status == st {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return repository.ErrResourceConflict
+	}
+	m.resource.Status = model.ResourceStatusPlanning
+	m.resource.UpdatedAt = m.resource.UpdatedAt.Add(time.Microsecond)
 	m.updated = m.resource
 	m.updateCalled = true
 	return nil
@@ -149,6 +191,80 @@ func (m *mockResourceStore) DeleteIfStatusAllowed(
 	id uuid.UUID,
 ) error {
 	return nil
+}
+
+func (m *mockResourceStore) AcquireExecutionLease(ctx context.Context, resourceID uuid.UUID, ownerID string, operation string, ttl time.Duration) (model.ExecutionLease, error) {
+	if err := ctx.Err(); err != nil {
+		return model.ExecutionLease{}, err
+	}
+	if m.acquireLeaseErr != nil {
+		return model.ExecutionLease{}, m.acquireLeaseErr
+	}
+	now := time.Now().UTC()
+	if m.lease.ResourceID == resourceID && m.lease.LeaseExpiresAt.After(now) {
+		return model.ExecutionLease{}, repository.ErrResourceConflict
+	}
+	m.lease = model.ExecutionLease{
+		ResourceID:     resourceID,
+		OwnerID:        ownerID,
+		Operation:      operation,
+		FencingToken:   m.lease.FencingToken + 1,
+		LeaseExpiresAt: now.Add(ttl),
+		AcquiredAt:     now,
+		HeartbeatAt:    now,
+	}
+	return m.lease, nil
+}
+
+func (m *mockResourceStore) HeartbeatExecutionLease(ctx context.Context, resourceID uuid.UUID, ownerID string, fencingToken int64, ttl time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m.heartbeatLeaseErr != nil {
+		return m.heartbeatLeaseErr
+	}
+	now := time.Now().UTC()
+	if m.lease.ResourceID != resourceID || m.lease.OwnerID != ownerID || m.lease.FencingToken != fencingToken || !m.lease.LeaseExpiresAt.After(now) {
+		return repository.ErrLeaseLost
+	}
+	m.lease.HeartbeatAt = now
+	m.lease.LeaseExpiresAt = now.Add(ttl)
+	return nil
+}
+
+func (m *mockResourceStore) ReleaseExecutionLease(ctx context.Context, resourceID uuid.UUID, ownerID string, fencingToken int64) error {
+	if m.releaseLeaseErr != nil {
+		return m.releaseLeaseErr
+	}
+	if m.lease.ResourceID != resourceID || m.lease.OwnerID != ownerID || m.lease.FencingToken != fencingToken {
+		return repository.ErrLeaseLost
+	}
+	m.lease = model.ExecutionLease{}
+	return nil
+}
+
+func (m *mockResourceStore) GetExecutionLease(ctx context.Context, resourceID uuid.UUID) (model.ExecutionLease, error) {
+	if m.lease.ResourceID != resourceID {
+		return model.ExecutionLease{}, repository.ErrResourceNotFound
+	}
+	return m.lease, nil
+}
+
+// WithLease variants delegate to base methods; fencing is exercised in integration tests.
+func (m *mockResourceStore) TransitionStatusWithLease(ctx context.Context, id uuid.UUID, from []model.ResourceStatus, to model.ResourceStatus, ownerID string, fencingToken int64) error {
+	return m.TransitionStatus(ctx, id, from, to)
+}
+
+func (m *mockResourceStore) SavePlanWithLease(ctx context.Context, resource model.InfrastructureResource, ownerID string, fencingToken int64) error {
+	return m.SavePlan(ctx, resource)
+}
+
+func (m *mockResourceStore) SaveDestroyPlanWithLease(ctx context.Context, resource model.InfrastructureResource, ownerID string, fencingToken int64) error {
+	return m.SaveDestroyPlan(ctx, resource)
+}
+
+func (m *mockResourceStore) FinishReviewedPlanWithLease(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, succeeded bool, ownerID string, fencingToken int64) error {
+	return m.FinishReviewedPlan(ctx, resource, operation, next, succeeded)
 }
 
 func TestCreateResourceSuccess(t *testing.T) {

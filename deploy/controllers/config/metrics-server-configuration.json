@@ -1,0 +1,12 @@
+{
+  "replicas": 1,
+  "addonResizer": {
+    "enabled": false
+  },
+  "resources": {
+    "requests": {
+      "cpu": "100m",
+      "memory": "200Mi"
+    }
+  }
+}

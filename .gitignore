@@ -54,3 +54,9 @@ crash.*.log
 # Local AWS credentials
 .cloudforge-aws/
 .cloudforge-aws-container/
+
+# Local deployment audits/captures are not release source.
+/deploy/evidence/
+/deploy/preflight-*/
+/deploy/BATCH37_*.md
+/deploy/AWS_EKS_DEPLOYMENT_GUIDE.md

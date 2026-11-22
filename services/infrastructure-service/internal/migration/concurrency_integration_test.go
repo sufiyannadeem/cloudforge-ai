@@ -59,7 +59,7 @@ func TestConcurrentStartupMigrationsWithOneConnection(t *testing.T) {
 	}
 	group.Wait()
 	var count int
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 11 {
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 13 {
 		t.Fatalf("migration receipts: %d, error %v", count, err)
 	}
 }

@@ -16,6 +16,7 @@ import DriftHistory from "@/components/infrastructure/DriftHistory";
 import InfrastructureFields from "@/components/infrastructure/InfrastructureFields";
 import { defaultInfrastructureValues, infrastructureConfiguration } from "@/lib/infrastructure-form";
 import Link from "next/link";
+import { waitForTerraformJob } from "@/lib/terraform-jobs";
 import type {
   InfrastructureFormData,
   InfrastructureResource,
@@ -416,7 +417,7 @@ return () => {
       setPlanningId(resource.id);
       setError("");
 
-      const response = await fetch(
+      let response = await fetch(
         `${RESOURCES_API}/${resource.id}/plan`,
         {
           method: "POST",
@@ -426,6 +427,8 @@ return () => {
           },
         },
       );
+
+      response = await waitForTerraformJob(response, `${RESOURCES_API}/${resource.id}`);
 
       if (!response.ok) {
         throw new Error(
@@ -511,7 +514,7 @@ return () => {
       setApplyingId(resource.id);
       setError("");
 
-      const response = await fetch(
+      let response = await fetch(
         `${RESOURCES_API}/${resource.id}/apply`,
         {
           method: "POST",
@@ -527,6 +530,8 @@ return () => {
           }),
         },
       );
+
+      response = await waitForTerraformJob(response, `${RESOURCES_API}/${resource.id}`);
 
       if (!response.ok) {
         throw new Error(
@@ -559,7 +564,7 @@ return () => {
       setDestroyPlanningId(resource.id);
       setError("");
 
-      const response = await fetch(
+      let response = await fetch(
         `${RESOURCES_API}/${resource.id}/destroy/plan`,
         {
           method: "POST",
@@ -569,6 +574,8 @@ return () => {
           },
         },
       );
+
+      response = await waitForTerraformJob(response, `${RESOURCES_API}/${resource.id}`);
 
       if (!response.ok) {
         throw new Error(
@@ -611,7 +618,7 @@ return () => {
       setDestroyingId(resource.id);
       setError("");
 
-      const response = await fetch(
+      let response = await fetch(
         `${RESOURCES_API}/${resource.id}/destroy/apply`,
         {
           method: "POST",
@@ -627,6 +634,8 @@ return () => {
           }),
         },
       );
+
+      response = await waitForTerraformJob(response, `${RESOURCES_API}/${resource.id}`);
 
       if (!response.ok) {
         throw new Error(
@@ -1137,7 +1146,9 @@ return () => {
                                 {canManageRequest(resource) && (resource.status ===
                                   "pending" ||
                                   resource.status ===
-                                    "failed") && (
+                                    "failed" ||
+                                  resource.status ===
+                                    "planning") && (
                                   <button
                                     type="button"
                                     disabled={
@@ -1154,7 +1165,9 @@ return () => {
                                     {planningId ===
                                     resource.id
                                       ? "Planning..."
-                                      : "Generate Plan"}
+                                      : resource.status === "planning"
+                                        ? "Retry plan"
+                                        : "Generate Plan"}
                                   </button>
                                 )}
 
@@ -1223,12 +1236,14 @@ return () => {
                                     Review history
                                   </button>
                                 )}
-                                {operator && resource.status !==
-                                  "active" &&
-                                  resource.status !==
-                                    "awaiting_destroy_approval" &&
-                                  resource.status !==
-                                    "destroying" && resource.status !== "destroy_failed" && (
+                                {operator && (resource.status ===
+                                  "pending" ||
+                                  resource.status ===
+                                    "failed" ||
+                                  resource.status ===
+                                    "destroyed" ||
+                                  resource.status ===
+                                    "inactive") && (
                                 <button
                                   type="button"
                                   disabled={

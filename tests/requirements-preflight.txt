@@ -1,0 +1,4 @@
+# Offline source/preflight tests; no production runtime dependency changes.
+pytest>=8,<10
+PyYAML>=6,<7
+jsonschema>=4,<5

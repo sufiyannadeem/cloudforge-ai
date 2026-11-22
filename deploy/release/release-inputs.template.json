@@ -1,0 +1,31 @@
+{
+  "status": "UNBOUND_NOT_AUTHORIZED",
+  "repository": "sufiyannadeem/cloudforge-ai",
+  "approved_revision": null,
+  "run_id": null,
+  "run_attempt": null,
+  "source_snapshot_sha256": null,
+  "workflow": ".github/workflows/release-images.yml",
+  "ref": "refs/heads/main",
+  "event": "workflow_dispatch",
+  "inputs": {
+    "publish": false
+  },
+  "environment": "release",
+  "identity": "https://github.com/sufiyannadeem/cloudforge-ai/.github/workflows/release-images.yml@refs/heads/main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "services": [
+    "project-service",
+    "infrastructure-service",
+    "deployment-service",
+    "aiops-service",
+    "finops-service",
+    "frontend",
+    "postgres"
+  ],
+  "required_future_authorizations": [
+    "clean-source approval and commit/push by user",
+    "separate explicit signed-release publication approval",
+    "separate deployment authorization after every prerequisite passes"
+  ]
+}

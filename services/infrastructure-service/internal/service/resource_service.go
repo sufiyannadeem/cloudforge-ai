@@ -232,8 +232,9 @@ func (s *ResourceService) Delete(
 		model.ResourceStatusAwaitingDestroyApproval,
 		model.ResourceStatusDestroying,
 		model.ResourceStatusDestroyFailed:
-		return errors.New(
-			"cannot delete an infrastructure resource while it is active or provisioning",
+		return fmt.Errorf(
+			"cannot delete an infrastructure resource in %s status",
+			resource.Status,
 		)
 	}
 

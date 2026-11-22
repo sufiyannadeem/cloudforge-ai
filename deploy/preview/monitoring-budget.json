@@ -1,0 +1,58 @@
+{
+  "kube-state-metrics": {
+    "replicas": 1,
+    "immutable_image": "registry.k8s.io/kube-state-metrics/kube-state-metrics@sha256:01171220c7c059afc85034ffe687bfe7249e41c0cc46fbe9a5128503ceee3016",
+    "resources": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "128Mi"
+      }
+    },
+    "storage_gi": 0,
+    "namespace": "monitoring",
+    "native_tls": "REQUIRED for Prometheus/Grafana; verified target CA/keys remain unbound",
+    "status": "RESOURCE_BUDGET_ONLY; workload/service/TLS configuration requires reviewed render"
+  },
+  "prometheus": {
+    "replicas": 1,
+    "immutable_image": "docker.io/prom/prometheus@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24",
+    "resources": {
+      "requests": {
+        "cpu": "200m",
+        "memory": "512Mi"
+      }
+    },
+    "storage_gi": 16,
+    "namespace": "monitoring",
+    "native_tls": "REQUIRED for Prometheus/Grafana; verified target CA/keys remain unbound",
+    "status": "RESOURCE_BUDGET_ONLY; workload/service/TLS configuration requires reviewed render"
+  },
+  "grafana": {
+    "replicas": 1,
+    "immutable_image": "docker.io/grafana/grafana@sha256:5749a0e982878aedaa2d320ed14d3bdce7a040a938f482258670009d419a597f",
+    "resources": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "256Mi"
+      }
+    },
+    "storage_gi": 2,
+    "namespace": "monitoring",
+    "native_tls": "REQUIRED for Prometheus/Grafana; verified target CA/keys remain unbound",
+    "status": "RESOURCE_BUDGET_ONLY; workload/service/TLS configuration requires reviewed render"
+  },
+  "alertmanager": {
+    "replicas": 1,
+    "immutable_image": "docker.io/prom/alertmanager@sha256:220da6995a919b9ee6e0d3da7ca5f09802f3088007af56be22160314d2485b54",
+    "resources": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "128Mi"
+      }
+    },
+    "storage_gi": 2,
+    "namespace": "monitoring",
+    "native_tls": "REQUIRED for Prometheus/Grafana; verified target CA/keys remain unbound",
+    "status": "RESOURCE_BUDGET_ONLY; workload/service/TLS configuration requires reviewed render"
+  }
+}

@@ -1,0 +1,548 @@
+{
+  "$schema": "https://json-schema.org/draft/2019-09/schema",
+  "additionalProperties": false,
+  "description": "Configurable parameters for the aws-efs-csi-driver",
+  "properties": {
+    "controller": {
+      "additionalProperties": false,
+      "description": "Configuration for the CSI controller. clusterTagIsolation backfill and enforce require non-empty clusterName and clusterTagKey",
+      "not": {
+        "not": {
+          "properties": {
+            "clusterName": {
+              "minLength": 1
+            },
+            "clusterTagKey": {
+              "minLength": 1
+            }
+          },
+          "required": [
+            "clusterName",
+            "clusterTagKey"
+          ]
+        },
+        "properties": {
+          "clusterTagIsolation": {
+            "enum": [
+              "backfill",
+              "enforce"
+            ]
+          }
+        },
+        "required": [
+          "clusterTagIsolation"
+        ]
+      },
+      "properties": {
+        "adaptiveRetryMode": {
+          "default": true,
+          "description": "Control if adaptive retry mode will be used to more heavily client side rate limit EFS API requests",
+          "type": "boolean"
+        },
+        "affinity": {
+          "default": {},
+          "description": "Affinity scheduling rules for the CSI controller service Deployment",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "clusterName": {
+          "default": "",
+          "description": "Name of the EKS cluster. With clusterTagKey, every access point the controller creates is tagged <clusterTagKey>=<clusterName>. The tag-based IAM policies require the EKS cluster name.",
+          "type": "string"
+        },
+        "clusterTagIsolation": {
+          "default": "disable",
+          "description": "Cluster tag isolation state. disable: no isolation. backfill: tag existing access points this cluster owns, at startup and every hour. enforce: ignore access points that lack this cluster's tag. backfill and enforce require non-empty clusterName and clusterTagKey, and an IAM policy that matches the state.",
+          "enum": [
+            "disable",
+            "backfill",
+            "enforce"
+          ],
+          "type": "string"
+        },
+        "clusterTagKey": {
+          "default": "",
+          "description": "Tag key whose value is clusterName. With clusterName, it is added to every access point the controller creates. The tag-based IAM policies use eks:eks-cluster-name. Cannot be efs.csi.aws.com/cluster or start with aws:. Not allowed by AmazonEFSCSIDriverPolicy.",
+          "pattern": "^(?!aws:)(?!efs\\.csi\\.aws\\.com/cluster$).*$",
+          "type": "string"
+        },
+        "containerSecurityContext": {
+          "default": {
+            "privileged": true
+          },
+          "description": "securityContext on the controller container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "deleteAccessPointRootDir": {
+          "description": "For dynamic provisioning, control whether the access point directory is deleted on unmount",
+          "type": "boolean"
+        },
+        "enableMetrics": {
+          "default": false,
+          "description": "Enable the Prometheus metrics endpoint on the controller. When true, the driver exposes metrics on port 3301 and the csi-provisioner sidecar on port 3302.",
+          "type": "boolean"
+        },
+        "enablePrometheusAnnotations": {
+          "default": true,
+          "description": "Add prometheus.io scrape annotations to the controller pod when metrics are enabled.",
+          "type": "boolean"
+        },
+        "env": {
+          "default": [],
+          "type": "array"
+        },
+        "livenessProbe": {
+          "default": {
+            "failureThreshold": 5,
+            "httpGet": {
+              "path": "/healthz",
+              "port": "healthz"
+            },
+            "initialDelaySeconds": 10,
+            "periodSeconds": 10,
+            "timeoutSeconds": 3
+          },
+          "description": "Liveness probe configuration for the CSI controller container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "logLevel": {
+          "description": "The log level of the driver's controller service",
+          "maximum": 6,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeSelector": {
+          "default": null,
+          "description": "The nodeSelector Schema for the CSI controller service Deployment",
+          "properties": {},
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "podAnnotations": {
+          "default": {},
+          "description": "The podAnnotations Schema for the CSI controller service Deployment",
+          "properties": {},
+          "type": "object"
+        },
+        "podDisruptionBudget": {
+          "additionalProperties": false,
+          "description": "PodDisruptionBudget configuration for the CSI controller Deployment. Set only one of minAvailable and maxUnavailable; if neither is set, minAvailable defaults to 1",
+          "not": {
+            "required": [
+              "minAvailable",
+              "maxUnavailable"
+            ]
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "The option to enable a managed PodDisruptionBudget for the controller",
+              "type": "boolean"
+            },
+            "maxUnavailable": {
+              "anyOf": [
+                {
+                  "pattern": ".*%$",
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "description": "maxUnavailable value for the managed PDB, can be either string or integer; if it's a string, it should end with %"
+            },
+            "minAvailable": {
+              "anyOf": [
+                {
+                  "pattern": ".*%$",
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "description": "minAvailable value for the managed PDB, can be either string or integer; if it's a string, it should end with %"
+            },
+            "unhealthyPodEvictionPolicy": {
+              "description": "Defines the criteria for when unhealthy pods should be considered for eviction",
+              "enum": [
+                "IfHealthyBudget",
+                "AlwaysAllow"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "podLabels": {
+          "default": {},
+          "description": "The podLabels Schema for the CSI controller service Deployment",
+          "properties": {},
+          "type": "object"
+        },
+        "priorityClassName": {
+          "default": "system-cluster-critical",
+          "description": "Priority class name for the CSI controller pods, influencing scheduling and preemption order",
+          "type": "string"
+        },
+        "readinessProbe": {
+          "default": {},
+          "description": "Readiness probe configuration for the CSI controller container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "replicaCount": {
+          "description": "The number of replicas for the CSI controller service Deployment",
+          "type": "integer"
+        },
+        "resources": {
+          "default": {},
+          "description": "Resource requests/limits of the controller pod",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "rollingUpdate": {
+          "default": {},
+          "description": "Rolling update configuration for the CSI controller service Deployment strategy",
+          "properties": {},
+          "type": "object"
+        },
+        "serviceAccount": {
+          "additionalProperties": false,
+          "description": "Service account configuration for the CSI controller",
+          "properties": {
+            "annotations": {
+              "default": {},
+              "description": "Annotations to add to the controller service account (e.g., eks.amazonaws.com/role-arn for IRSA)",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "serviceMonitor": {
+          "additionalProperties": false,
+          "description": "Controls creation of a Prometheus Operator ServiceMonitor resource. Requires the Prometheus Operator CRDs to be installed.",
+          "properties": {
+            "enabled": {
+              "default": false,
+              "description": "The option to create a ServiceMonitor for the controller metrics endpoint",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "startupProbe": {
+          "default": {},
+          "description": "Startup probe configuration for the CSI controller container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "timeout": {
+          "default": "15s",
+          "description": "Timeout for Create/DeleteVolume calls to Controller",
+          "type": "string"
+        },
+        "tolerations": {
+          "default": [
+            {
+              "key": "",
+              "operator": "Exists"
+            }
+          ],
+          "items": {},
+          "title": "The tolerations Schema for the CSI controller service Deployment",
+          "type": "array"
+        },
+        "topologySpreadConstraints": {
+          "default": [],
+          "description": "Topology spread constraints for the controller pod",
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "volumeMounts": {
+          "default": [],
+          "description": "Add additional volume mounts on the controller",
+          "type": "array"
+        },
+        "volumes": {
+          "default": [],
+          "description": "Add additional volumes to be mounted onto the controller",
+          "type": "array"
+        },
+        "workerThreads": {
+          "default": 100,
+          "description": "Number of concurrent threads controller will handle at once",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "debugLogs": {
+      "default": false,
+      "description": "Set klog verbosity to level 5 and enable debug logging in efs-utils.",
+      "type": "boolean"
+    },
+    "node": {
+      "additionalProperties": false,
+      "properties": {
+        "efsCloudWatchLogEnabled": {
+          "description": "Enable CloudWatch logging for EFS in efs-utils.conf.",
+          "type": "boolean"
+        },
+        "efsUtilsConfOverrides": {
+          "default": "",
+          "description": "Comma-separated section:key=value pairs to override settings in efs-utils.conf. For example, --efs-utils-conf-overrides=mount-watchdog:stunnel_health_check_interval_min=1. If a key already exists in the specified section it is updated in place; otherwise it is appended to that section. These overrides take precedence over other flags that control the same config (e.g., efs-cloudwatch-log-enabled). Invalid entries (missing : or =) cause the driver to return an error on startup.",
+          "pattern": "^(?![\\s\\S]*[:,]\\s*(?:dns_name_suffix|dns_name_format|stunnel_check_cert_hostname|stunnel_check_cert_validity|stunnel_cafile)\\s*=)[\\s\\S]*$",
+          "type": "string"
+        },
+        "env": {
+          "default": [],
+          "type": "array"
+        },
+        "forceUnmountAfterTimeout": {
+          "description": "Enable force unmount if normal unmount times out during NodeUnpublishVolume unmount",
+          "type": "boolean"
+        },
+        "kubeletPath": {
+          "default": "/var/lib/kubelet",
+          "description": "Kubelet path of the node",
+          "type": "string"
+        },
+        "livenessProbe": {
+          "default": {
+            "failureThreshold": 5,
+            "httpGet": {
+              "path": "/healthz",
+              "port": "healthz"
+            },
+            "initialDelaySeconds": 10,
+            "periodSeconds": 2,
+            "timeoutSeconds": 3
+          },
+          "description": "Liveness probe configuration for the CSI node container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "logLevel": {
+          "description": "The log level of the driver's node service",
+          "maximum": 6,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxInflightMountCalls": {
+          "default": -1,
+          "description": "New NodePublishVolume operation will be blocked if maximum number of inflight calls is reached. If maxInflightMountCallsOptIn is true, it has to be set to a positive value.",
+          "type": "integer"
+        },
+        "maxInflightMountCallsOptIn": {
+          "default": false,
+          "description": "Opt in to use max inflight mount calls limit.",
+          "type": "boolean"
+        },
+        "nodeSelector": {
+          "default": null,
+          "description": "The nodeSelector Schema for the CSI node service Dameonset",
+          "properties": {},
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "podAnnotations": {
+          "default": {},
+          "description": "The podAnnotations Schema for the CSI node service Dameonset",
+          "properties": {},
+          "type": "object"
+        },
+        "podLabels": {
+          "default": {},
+          "description": "The podLabels Schema for the CSI node service DaemonSet",
+          "properties": {},
+          "type": "object"
+        },
+        "priorityClassName": {
+          "default": "system-node-critical",
+          "description": "Priority class name for the CSI node pods, influencing scheduling and preemption order",
+          "type": "string"
+        },
+        "readinessProbe": {
+          "default": {},
+          "description": "Readiness probe configuration for the CSI node container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "resources": {
+          "default": {},
+          "description": "Resource requests/limits of the node DaemonSet",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "rollingUpdate": {
+          "default": {},
+          "description": "Rolling update configuration for the CSI node service DaemonSet updateStrategy",
+          "properties": {},
+          "type": "object"
+        },
+        "s3filesCloudWatchLogEnabled": {
+          "default": true,
+          "description": "Enable CloudWatch logging for S3Files in s3files-utils.conf.",
+          "type": "boolean"
+        },
+        "s3filesCloudWatchMetricsEnabled": {
+          "default": true,
+          "description": "Enable CloudWatch metrics emission for S3 files in s3files-utils.conf.",
+          "type": "boolean"
+        },
+        "s3filesUtilsConfOverrides": {
+          "default": "",
+          "description": "Comma-separated section:key=value pairs to override settings in s3files-utils.conf. Follows the same format and validation rules as efs-utils-conf-overrides. These overrides take precedence over other flags that control the same config (e.g., s3files-cloudwatch-log-enabled, s3files-cloudwatch-metrics-enabled).",
+          "pattern": "^(?![\\s\\S]*[:,]\\s*(?:dns_name_suffix|dns_name_format|stunnel_check_cert_hostname|stunnel_check_cert_validity|stunnel_cafile)\\s*=)[\\s\\S]*$",
+          "type": "string"
+        },
+        "serviceAccount": {
+          "additionalProperties": false,
+          "description": "Service account configuration for the CSI node DaemonSet",
+          "properties": {
+            "annotations": {
+              "default": {},
+              "description": "Annotations to add to the node service account (e.g., eks.amazonaws.com/role-arn for a dedicated node IRSA role)",
+              "properties": {},
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "startupProbe": {
+          "default": {},
+          "description": "Startup probe configuration for the CSI node container",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "tolerations": {
+          "default": [
+            {
+              "key": "",
+              "operator": "Exists"
+            }
+          ],
+          "items": {},
+          "title": "The tolerations Schema for the CSI node service Deployment",
+          "type": "array"
+        },
+        "unmountTimeout": {
+          "default": "30s",
+          "description": "Timeout for unmounting a volume during NodeUnpublishVolume when forceUnmountAfterTimeout is true. If the timeout is reached, the volume will be forcibly unmounted. The default value is 30 seconds.",
+          "type": "string"
+        },
+        "volMetricsOptIn": {
+          "default": false,
+          "description": "Control whether or not to expose CSI volume usage metrics",
+          "type": "boolean"
+        },
+        "volumeAttachLimit": {
+          "default": -1,
+          "description": "Maximum number of volumes that can be attached to a node. If volumeAttachLimitOptIn is true, it has to be set to a positive value.",
+          "type": "integer"
+        },
+        "volumeAttachLimitOptIn": {
+          "default": false,
+          "description": "Opt in to use volume attach limit.",
+          "type": "boolean"
+        },
+        "volumeMounts": {
+          "default": [],
+          "type": "array"
+        },
+        "volumes": {
+          "default": [],
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "sidecars": {
+      "additionalProperties": false,
+      "description": "Resource configuration for sidecar containers shared across controller and node pods",
+      "properties": {
+        "csiProvisioner": {
+          "additionalProperties": false,
+          "description": "Configuration for the csi-provisioner sidecar container",
+          "properties": {
+            "resources": {
+              "default": {},
+              "description": "Resource requests/limits for the csi-provisioner sidecar",
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "livenessProbe": {
+          "additionalProperties": false,
+          "description": "Configuration for the liveness-probe sidecar container",
+          "properties": {
+            "resources": {
+              "default": {},
+              "description": "Resource requests/limits for the liveness-probe sidecar",
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "nodeDriverRegistrar": {
+          "additionalProperties": false,
+          "description": "Configuration for the csi-node-driver-registrar sidecar container",
+          "properties": {
+            "resources": {
+              "default": {},
+              "description": "Resource requests/limits for the csi-node-driver-registrar sidecar",
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "useFIPS": {
+      "description": "Assert whether or not the driver uses FIPS enabled endpoints",
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}

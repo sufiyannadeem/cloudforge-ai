@@ -1,0 +1,74 @@
+{
+  "status": "UNBOUND_NOT_APPLICABLE",
+  "expected_account_id": null,
+  "region": "eu-west-1",
+  "eks_operator_role_arn": null,
+  "operator_trusted_principal_arn": null,
+  "eks_public_access_cidrs": [],
+  "cluster_name": null,
+  "cluster_arn": null,
+  "oidc_provider_arn": null,
+  "oidc_issuer_hostpath": null,
+  "controller_roles": {
+    "load_balancer_controller": {
+      "role_arn": null,
+      "namespace": "kube-system",
+      "service_account": "aws-load-balancer-controller",
+      "policy": "../controllers/policies/lbc-target-group.template.json",
+      "service_account_annotations": {
+        "eks.amazonaws.com/role-arn": null,
+        "eks.amazonaws.com/sts-regional-endpoints": "true"
+      }
+    },
+    "efs_csi": {
+      "role_arn": null,
+      "namespace": "kube-system",
+      "service_account": "efs-csi-controller-sa",
+      "policy": "arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy",
+      "service_account_annotations": {
+        "eks.amazonaws.com/role-arn": null,
+        "eks.amazonaws.com/sts-regional-endpoints": "true"
+      }
+    },
+    "ebs_csi": {
+      "role_arn": null,
+      "namespace": "kube-system",
+      "service_account": "ebs-csi-controller-sa",
+      "policy": "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy",
+      "service_account_annotations": {
+        "eks.amazonaws.com/role-arn": null,
+        "eks.amazonaws.com/sts-regional-endpoints": "true"
+      }
+    }
+  },
+  "irsa_trust_template": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": null
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "OIDC_ISSUER_HOSTPATH:aud": "sts.amazonaws.com",
+            "OIDC_ISSUER_HOSTPATH:sub": null
+          }
+        }
+      }
+    ]
+  },
+  "binding_requirements": {
+    "operator_role": "Existing reviewed IAM role, not an invented role/user/session ARN; verify trust and same intended account",
+    "cidrs": "EKS API is private-only; eks_public_access_cidrs stays empty. Supply the reviewed SG of an existing VPC-connected operator and verify private DNS/routing. No bastion/VPN or public API is created.",
+    "irsa": "Substitute verified issuer keys and exact system:serviceaccount:namespace:name per controller; never use namespace wildcards",
+    "cluster_access": "API access entry plus explicit EKS ClusterAdminPolicy for reviewed operator; creator admin remains off",
+    "kubernetes_operator_minimum": "After access bootstrap, use least privilege for reviewed namespace/CRD/controller installation; no raw Secret logging",
+    "policy_pin": "Review the current AWS-managed default policy version/document before attachment, or approve an immutable policy copy. A source ARN is not current policy approval or an immutable pin.",
+    "target_registration_policy": "Replace null Resource with actual frontend target group ARN before validation/attachment. Minimal TGB-only candidate requires acceptance with this chart/controller; no CreateLoadBalancer, no SG mutation. Do not silently broaden on AccessDenied."
+  },
+  "node_role_arn": null,
+  "cluster_role_arn": null,
+  "eks_operator_security_group_id": null
+}

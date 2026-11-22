@@ -1,0 +1,13 @@
+{
+  "purpose": "DENY_ONLY_NOT_CURRENT_RELEASE",
+  "revision": "f7024b3d8f4f819a2950ec5381d3cb3988f80855",
+  "images": {
+    "aiops-service": "ghcr.io/sufiyannadeem/cloudforge-ai/aiops-service@sha256:75c2724ef05d4c0f67102995d499495cc7d577fbbeffe30640f2e16a48870db1",
+    "deployment-service": "ghcr.io/sufiyannadeem/cloudforge-ai/deployment-service@sha256:f99489c5b83e21d9f41352fffa3b0df81480efde8a3351eaa807aa176418f3a2",
+    "finops-service": "ghcr.io/sufiyannadeem/cloudforge-ai/finops-service@sha256:45deaf51a32468d87eb086c3b06805012d1e44630304c7a4379fa18955a3b114",
+    "frontend": "ghcr.io/sufiyannadeem/cloudforge-ai/frontend@sha256:2ee21559e2a1cdb178311c004f7c9b271a2492514cb40e5a3807164e8c2dd048",
+    "infrastructure-service": "ghcr.io/sufiyannadeem/cloudforge-ai/infrastructure-service@sha256:132ddd5a677d9d0c70fc06123cefaaae0ea0b18ed65a10f41a373bd0ca27803c",
+    "postgres": "ghcr.io/sufiyannadeem/cloudforge-ai/postgres@sha256:5e5faa7a35070eee3a146f9337cc880b785ba8aa4fbf0a9d3de167515b778404",
+    "project-service": "ghcr.io/sufiyannadeem/cloudforge-ai/project-service@sha256:6963370a6c757634e92bee9afbf0715619ae4a44b6c7cce49f26ef90a4f80744"
+  }
+}

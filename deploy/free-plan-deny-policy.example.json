@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "NeverUpgradeOrJoinAutoUpgradePrograms",
+      "Effect": "Deny",
+      "Action": ["freetier:UpgradeAccountPlan", "organizations:*", "controltower:*", "supportplans:*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ExcludeUnapprovedPaidDependencies",
+      "Effect": "Deny",
+      "Action": ["kafka:*", "kafka-cluster:*", "kafkaconnect:*", "aws-marketplace:Subscribe", "aws-marketplace:AcceptAgreementRequest", "ec2:PurchaseReservedInstancesOffering", "rds:PurchaseReservedDBInstancesOffering", "savingsplans:CreateSavingsPlan"],
+      "Resource": "*"
+    }
+  ]
+}

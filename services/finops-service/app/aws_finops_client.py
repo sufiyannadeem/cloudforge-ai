@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from math import isfinite
 from typing import Any
 
+import os
+
 import boto3
 from botocore.exceptions import (
     BotoCoreError,
@@ -53,6 +55,9 @@ class AWSFinOpsClient:
         region: str = "eu-west-1",
         client_config=None,
     ) -> None:
+        # Free-plan preview excludes metered/global billing calls until separately reviewed.
+        if os.getenv("CLOUDFORGE_AWS_BILLING_ENABLED", "true") != "true":
+            raise AWSFinOpsError("AWS billing integration is disabled by deployment policy")
         self.region = region
         options = {"config": client_config} if client_config is not None else {}
 
@@ -117,6 +122,7 @@ class AWSFinOpsClient:
         end_date: str,
         granularity: str = "DAILY",
         group_by: list[dict[str, str]] | None = None,
+        filter_record_type: str | None = "Usage",
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         next_token: str | None = None
@@ -133,6 +139,14 @@ class AWSFinOpsClient:
 
             if group_by:
                 request["GroupBy"] = group_by
+
+            if filter_record_type:
+                request["Filter"] = {
+                    "Dimensions": {
+                        "Key": "RECORD_TYPE",
+                        "Values": [filter_record_type],
+                    }
+                }
 
             if next_token:
                 request["NextPageToken"] = next_token

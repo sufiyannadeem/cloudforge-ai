@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,35 +35,173 @@ var (
 	)
 )
 
+type ExecutionLocker struct {
+	mu     sync.Mutex
+	active map[uuid.UUID]string
+}
+
+func NewExecutionLocker() *ExecutionLocker {
+	return &ExecutionLocker{
+		active: make(map[uuid.UUID]string),
+	}
+}
+
+func (l *ExecutionLocker) TryLock(id uuid.UUID, op string) (func(), bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, exists := l.active[id]; exists {
+		return nil, false
+	}
+	l.active[id] = op
+	return func() {
+		l.mu.Lock()
+		delete(l.active, id)
+		l.mu.Unlock()
+	}, true
+}
+
+const (
+	defaultLeaseTTL          = 30 * time.Second
+	defaultHeartbeatInterval = 5 * time.Second
+)
+
 type ProvisioningService struct {
-	store  repository.ResourceStore
-	runner terraform.Provisioner
-	clock  func() time.Time
+	store             repository.ResourceStore
+	runner            terraform.Provisioner
+	clock             func() time.Time
+	locker            *ExecutionLocker
+	replicaID         string
+	leaseTTL          time.Duration
+	heartbeatInterval time.Duration
 }
 
 func NewProvisioningService(
 	store repository.ResourceStore,
 	runner terraform.Provisioner,
 ) *ProvisioningService {
-	return &ProvisioningService{
-		store:  store,
-		runner: runner,
-		clock:  time.Now,
+	replicaID, err := os.Hostname()
+	if err != nil || replicaID == "" {
+		replicaID = uuid.NewString()
 	}
+	return &ProvisioningService{
+		store:             store,
+		runner:            runner,
+		clock:             time.Now,
+		locker:            NewExecutionLocker(),
+		replicaID:         replicaID,
+		leaseTTL:          defaultLeaseTTL,
+		heartbeatInterval: defaultHeartbeatInterval,
+	}
+}
+
+func (s *ProvisioningService) tryLock(id uuid.UUID, op string) (func(), bool) {
+	if s.locker == nil {
+		return func() {}, true
+	}
+	return s.locker.TryLock(id, op)
+}
+
+// acquireExecutionOwnership acquires an in-process lock and a distributed
+// PostgreSQL execution lease for (id, op). It returns:
+//   - execCtx: cancelled automatically if the heartbeat lease is lost
+//   - cleanup: releases the lease and local lock (idempotent via sync.Once)
+//   - ownerID / fencingToken: passed to lease-validated write methods so stale
+//     workers cannot overwrite state after losing ownership
+func (s *ProvisioningService) acquireExecutionOwnership(
+	ctx context.Context,
+	id uuid.UUID,
+	op string,
+) (execCtx context.Context, cleanup func(), ownerID string, fencingToken int64, err error) {
+	unlockLocal, ok := s.tryLock(id, op)
+	if !ok {
+		return nil, nil, "", 0, fmt.Errorf("%w: operation already active on resource %s", repository.ErrResourceConflict, id)
+	}
+
+	if s.store == nil {
+		return ctx, unlockLocal, "", 0, nil
+	}
+
+	ttl := s.leaseTTL
+	if ttl <= 0 {
+		ttl = defaultLeaseTTL
+	}
+	hbInterval := s.heartbeatInterval
+	if hbInterval <= 0 {
+		hbInterval = defaultHeartbeatInterval
+	}
+
+	ownerID = fmt.Sprintf("%s:%s", s.replicaID, uuid.NewString())
+	lease, leaseErr := s.store.AcquireExecutionLease(ctx, id, ownerID, op, ttl)
+	if leaseErr != nil {
+		unlockLocal()
+		return nil, nil, "", 0, fmt.Errorf("%w: acquire distributed execution lease: %v", repository.ErrResourceConflict, leaseErr)
+	}
+	fencingToken = lease.FencingToken
+
+	var cancelExec context.CancelFunc
+	execCtx, cancelExec = context.WithCancel(ctx)
+	stopHeartbeat := make(chan struct{})
+	var heartbeatWg sync.WaitGroup
+	heartbeatWg.Add(1)
+
+	go func() {
+		defer heartbeatWg.Done()
+		ticker := time.NewTicker(hbInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stopHeartbeat:
+				return
+			case <-execCtx.Done():
+				return
+			case <-ticker.C:
+				hbCtx, hbCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				hbErr := s.store.HeartbeatExecutionLease(hbCtx, id, ownerID, fencingToken, ttl)
+				hbCancel()
+				if hbErr != nil {
+					cancelExec()
+					return
+				}
+			}
+		}
+	}()
+
+	var once sync.Once
+	cleanup = func() {
+		once.Do(func() {
+			close(stopHeartbeat)
+			heartbeatWg.Wait()
+			cancelExec()
+
+			relCtx, relCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer relCancel()
+			_ = s.store.ReleaseExecutionLease(relCtx, id, ownerID, fencingToken)
+			unlockLocal()
+		})
+	}
+
+	return execCtx, cleanup, ownerID, fencingToken, nil
 }
 
 func (s *ProvisioningService) Plan(
 	ctx context.Context,
 	id uuid.UUID,
 ) (model.InfrastructureResource, error) {
-	resource, err := s.store.GetByID(ctx, id)
+	execCtx, releaseOwnership, ownerID, fencingToken, err := s.acquireExecutionOwnership(ctx, id, "plan")
+	if err != nil {
+		return model.InfrastructureResource{}, err
+	}
+	defer releaseOwnership()
+
+	resource, err := s.store.GetByID(execCtx, id)
 	if err != nil {
 		return model.InfrastructureResource{}, err
 	}
 
 	expired := resource.Status == model.ResourceStatusAwaitingApproval &&
 		resource.ApprovalExpiresAt != nil && !resource.ApprovalExpiresAt.After(s.clock())
-	caller := identity.FromContext(ctx)
+	caller := identity.FromContext(execCtx)
 	reconciliation := resource.Status == model.ResourceStatusActive && caller.Human() && caller.Role == "platform-engineer"
 	if !canStartPlan(resource.Status) && !expired && !reconciliation {
 		return model.InfrastructureResource{}, fmt.Errorf(
@@ -73,28 +212,31 @@ func (s *ProvisioningService) Plan(
 	}
 
 	if expired {
-		err = s.store.InvalidatePlan(ctx, resource, "apply", model.ResourceStatusPlanning)
+		err = s.store.InvalidatePlan(execCtx, resource, "apply", model.ResourceStatusPlanning)
 	} else {
-		err = s.store.TransitionStatus(ctx, id, []model.ResourceStatus{resource.Status}, model.ResourceStatusPlanning)
+		err = s.store.ClaimPlan(execCtx, resource)
 	}
 	if err != nil {
 		return model.InfrastructureResource{}, fmt.Errorf("claim resource for planning: %w", err)
 	}
-	resource, err = s.store.GetByID(ctx, id)
+	resource, err = s.store.GetByID(execCtx, id)
 	if err != nil {
-		_ = s.store.TransitionStatus(ctx, id, []model.ResourceStatus{model.ResourceStatusPlanning}, model.ResourceStatusFailed)
+		_ = s.store.TransitionStatusWithLease(execCtx, id, []model.ResourceStatus{model.ResourceStatusPlanning}, model.ResourceStatusFailed, ownerID, fencingToken)
 		return model.InfrastructureResource{}, err
 	}
 	resource.Status = model.ResourceStatusPlanning
 
-	result, err := s.runner.Plan(ctx, resource)
+	result, err := s.runner.Plan(execCtx, resource)
 	if err != nil {
 		next := model.ResourceStatusFailed
 		if reconciliation {
 			next = model.ResourceStatusActive
 		}
-		if updateErr := s.store.TransitionStatus(ctx, id,
-			[]model.ResourceStatus{model.ResourceStatusPlanning}, next); updateErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		updateErr := s.store.TransitionStatusWithLease(cleanupCtx, id,
+			[]model.ResourceStatus{model.ResourceStatusPlanning}, next, ownerID, fencingToken)
+		cleanupCancel()
+		if updateErr != nil {
 			return model.InfrastructureResource{}, fmt.Errorf("terraform plan failed: %v; persist failed status: %w", err, updateErr)
 		}
 
@@ -116,7 +258,7 @@ func (s *ProvisioningService) Plan(
 	resource.ApprovalExpiresAt = &approvalExpiresAt
 	resource.Status = model.ResourceStatusAwaitingApproval
 
-	if err := s.store.SavePlan(ctx, resource); err != nil {
+	if err := s.store.SavePlanWithLease(ctx, resource, ownerID, fencingToken); err != nil {
 		return model.InfrastructureResource{}, fmt.Errorf("persist terraform plan metadata: %w", err)
 	}
 
@@ -128,7 +270,13 @@ func (s *ProvisioningService) Apply(
 	id uuid.UUID,
 	approvedPlanHash string,
 ) (model.InfrastructureResource, error) {
-	resource, err := s.store.GetByID(ctx, id)
+	execCtx, releaseOwnership, ownerID, fencingToken, err := s.acquireExecutionOwnership(ctx, id, "apply")
+	if err != nil {
+		return model.InfrastructureResource{}, err
+	}
+	defer releaseOwnership()
+
+	resource, err := s.store.GetByID(execCtx, id)
 	if err != nil {
 		return model.InfrastructureResource{}, err
 	}
@@ -199,7 +347,7 @@ func (s *ProvisioningService) Apply(
 	if applyErr != nil {
 		err := applyErr
 		resource.LastExecutionError = "Apply did not complete or could not be verified. Reconciliation required."
-		if updateErr := s.finishPlan(ctx, resource, "apply", model.ResourceStatusFailed, false); updateErr != nil {
+		if updateErr := s.finishPlan(ctx, resource, "apply", model.ResourceStatusFailed, false, ownerID, fencingToken); updateErr != nil {
 			return model.InfrastructureResource{}, fmt.Errorf("terraform apply failed: %v; persist failed status: %w", err, updateErr)
 		}
 
@@ -211,7 +359,7 @@ func (s *ProvisioningService) Apply(
 	}); ok {
 		resource.EC2Attribution = provider.EC2Attribution(ctx, resource)
 	}
-	if err := s.finishPlan(ctx, resource, "apply", model.ResourceStatusActive, true); err != nil {
+	if err := s.finishPlan(ctx, resource, "apply", model.ResourceStatusActive, true, ownerID, fencingToken); err != nil {
 		return model.InfrastructureResource{}, fmt.Errorf("persist active status: %w", err)
 	}
 	resource.Status = model.ResourceStatusActive
@@ -227,7 +375,13 @@ func (s *ProvisioningService) PlanDestroy(
 	ctx context.Context,
 	id uuid.UUID,
 ) (model.InfrastructureResource, error) {
-	resource, err := s.store.GetByID(ctx, id)
+	execCtx, releaseOwnership, ownerID, fencingToken, err := s.acquireExecutionOwnership(ctx, id, "plan_destroy")
+	if err != nil {
+		return model.InfrastructureResource{}, err
+	}
+	defer releaseOwnership()
+
+	resource, err := s.store.GetByID(execCtx, id)
 	if err != nil {
 		return model.InfrastructureResource{}, err
 	}
@@ -260,8 +414,11 @@ func (s *ProvisioningService) PlanDestroy(
 
 	result, err := s.runner.PlanDestroy(ctx, resource)
 	if err != nil {
-		if updateErr := s.store.TransitionStatus(ctx, id,
-			[]model.ResourceStatus{model.ResourceStatusPlanning}, restoreStatus); updateErr != nil {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		updateErr := s.store.TransitionStatusWithLease(cleanupCtx, id,
+			[]model.ResourceStatus{model.ResourceStatusPlanning}, restoreStatus, ownerID, fencingToken)
+		cleanupCancel()
+		if updateErr != nil {
 			return model.InfrastructureResource{}, fmt.Errorf("terraform destroy plan failed: %v; restore prior status: %w", err, updateErr)
 		}
 
@@ -281,7 +438,7 @@ func (s *ProvisioningService) PlanDestroy(
 	resource.ApprovalExpiresAt = &approvalExpiresAt
 	resource.Status = model.ResourceStatusAwaitingDestroyApproval
 
-	if err := s.store.SaveDestroyPlan(ctx, resource); err != nil {
+	if err := s.store.SaveDestroyPlanWithLease(ctx, resource, ownerID, fencingToken); err != nil {
 		return model.InfrastructureResource{}, fmt.Errorf("persist terraform destroy plan metadata: %w", err)
 	}
 
@@ -296,7 +453,13 @@ func (s *ProvisioningService) ApplyDestroy(
 	id uuid.UUID,
 	approvedPlanHash string,
 ) (model.InfrastructureResource, error) {
-	resource, err := s.store.GetByID(ctx, id)
+	execCtx, releaseOwnership, ownerID, fencingToken, err := s.acquireExecutionOwnership(ctx, id, "apply_destroy")
+	if err != nil {
+		return model.InfrastructureResource{}, err
+	}
+	defer releaseOwnership()
+
+	resource, err := s.store.GetByID(execCtx, id)
 	if err != nil {
 		return model.InfrastructureResource{}, err
 	}
@@ -346,14 +509,14 @@ func (s *ProvisioningService) ApplyDestroy(
 	resource.LastExecutionError = ""
 	if err := s.runner.ApplyDestroy(ctx, resource); err != nil {
 		resource.LastExecutionError = "Destroy did not complete or state is not empty. Reconciliation required."
-		if updateErr := s.finishPlan(ctx, resource, "destroy", model.ResourceStatusDestroyFailed, false); updateErr != nil {
+		if updateErr := s.finishPlan(ctx, resource, "destroy", model.ResourceStatusDestroyFailed, false, ownerID, fencingToken); updateErr != nil {
 			return model.InfrastructureResource{}, fmt.Errorf("terraform destroy failed: %v; persist reconciliation-required status: %w", err, updateErr)
 		}
 
 		return model.InfrastructureResource{}, err
 	}
 
-	if err := s.finishPlan(ctx, resource, "destroy", model.ResourceStatusDestroyed, true); err != nil {
+	if err := s.finishPlan(ctx, resource, "destroy", model.ResourceStatusDestroyed, true, ownerID, fencingToken); err != nil {
 		return model.InfrastructureResource{}, fmt.Errorf("persist destroyed status: %w", err)
 	}
 	resource.Status = model.ResourceStatusDestroyed
@@ -361,10 +524,10 @@ func (s *ProvisioningService) ApplyDestroy(
 	return resource, nil
 }
 
-func (s *ProvisioningService) finishPlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, succeeded bool) error {
+func (s *ProvisioningService) finishPlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, succeeded bool, ownerID string, fencingToken int64) error {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	return s.store.FinishReviewedPlan(writeCtx, resource, operation, next, succeeded)
+	return s.store.FinishReviewedPlanWithLease(writeCtx, resource, operation, next, succeeded, ownerID, fencingToken)
 }
 
 func (s *ProvisioningService) Review(ctx context.Context, id uuid.UUID, input model.PlanReviewInput) error {
@@ -464,7 +627,8 @@ func (s *ProvisioningService) GetPlan(
 func canStartPlan(status model.ResourceStatus) bool {
 	switch status {
 	case model.ResourceStatusPending,
-		model.ResourceStatusFailed:
+		model.ResourceStatusFailed,
+		model.ResourceStatusPlanning:
 		return true
 	default:
 		return false

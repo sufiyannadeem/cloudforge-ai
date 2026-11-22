@@ -1,0 +1,17 @@
+{
+  "free_plan": true,
+  "namespace": "monitoring",
+  "app_namespace": "cloudforge",
+  "storage_class": null,
+  "ca_configmap": null,
+  "api_server_cidrs": [],
+  "tls_secrets": {
+    "prometheus": null,
+    "grafana": null,
+    "alertmanager": null,
+    "kube-state-metrics": null
+  },
+  "grafana_admin_secret": null,
+  "alertmanager_identity_secret": null,
+  "preseeded_secret_keys": {}
+}

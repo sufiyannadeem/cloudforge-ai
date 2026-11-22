@@ -1,0 +1,19 @@
+# Separate Helm release values, NOT a Kubernetes manifest. No install performed.
+# Review exact supported chart/image digests and IRSA roles before installation.
+# aws-load-balancer-controller values: TGB registration only; no paid add-ons.
+enableShield: false
+enableWaf: false
+enableWafv2: false
+# Set clusterName, region, vpcId and serviceAccount.annotations role ARN explicitly.
+# No Internet-facing Ingress/LoadBalancer Service, ACM, Cognito or custom DNS.
+
+# Pin chart 1.14.1 and the image/CRDs/IAM inventory in ../controllers/.
+# AGAController defaults on in this controller: explicitly exclude it in preview.
+enableServiceMutatorWebhook: false
+controllerConfig:
+  featureGates:
+    AGAController: false
+    ALBGatewayAPI: false
+    NLBGatewayAPI: false
+    LBCapacityReservation: false
+    EnableServiceController: false

@@ -101,6 +101,7 @@ func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 	}
 
 	mux.HandleFunc("GET /health", resourceHandler.Health)
+	mux.HandleFunc("GET /api/v1/resources/{id}/jobs/{job}", resourceHandler.JobStatus)
 
 	mux.HandleFunc(
 		"POST /api/v1/resources",
@@ -129,7 +130,7 @@ func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/plan",
-		terraformOperation(resourceHandler.Plan),
+		terraformOperation(resourceHandler.asyncTerraform(resourceHandler.Plan)),
 	)
 
 	mux.HandleFunc(
@@ -143,17 +144,17 @@ func newResourceMux(resourceHandler *ResourceHandler) http.Handler {
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/apply",
-		terraformOperation(resourceHandler.Apply),
+		terraformOperation(resourceHandler.asyncTerraform(resourceHandler.Apply)),
 	)
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/destroy/plan",
-		terraformOperation(resourceHandler.PlanDestroy),
+		terraformOperation(resourceHandler.asyncTerraform(resourceHandler.PlanDestroy)),
 	)
 
 	mux.HandleFunc(
 		"POST /api/v1/resources/{id}/destroy/apply",
-		terraformOperation(resourceHandler.ApplyDestroy),
+		terraformOperation(resourceHandler.asyncTerraform(resourceHandler.ApplyDestroy)),
 	)
 
 	return mux

@@ -9,6 +9,7 @@
     "finops-service": null,
     "frontend": null
   },
+  "image_pull_secret": null,
   "roles": {
     "infrastructure-service": null,
     "finops-service": null,

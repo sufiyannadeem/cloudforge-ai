@@ -1,0 +1,18 @@
+# Terraform owns the internal ALB, listener and target group.
+# The controller owns only pod IP registration through TargetGroupBinding.
+# Replace FRONTEND_TG_ARN with frontend_target_group_arn; do not apply an Ingress.
+# Delete this binding and wait for its finalizer BEFORE removing the controller,
+# Service, node group or Terraform target group. No ALB is deleted by this binding.
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: cloudforge-frontend-internal
+  namespace: cloudforge
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  targetGroupARN: FRONTEND_TG_ARN
+  targetType: ip
+  serviceRef:
+    name: frontend
+    port: 3000

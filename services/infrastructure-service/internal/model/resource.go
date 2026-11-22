@@ -164,3 +164,13 @@ func (r InfrastructureResource) MarshalJSON() ([]byte, error) {
 		AWSLiveStatus string `json:"aws_live_status,omitempty"`
 	}{resource(r), "terraform_workflow", awsStatus})
 }
+
+type ExecutionLease struct {
+	ResourceID     uuid.UUID `json:"resource_id"`
+	OwnerID        string    `json:"owner_id"`
+	Operation      string    `json:"operation"`
+	FencingToken   int64     `json:"fencing_token"`
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+	AcquiredAt     time.Time `json:"acquired_at"`
+	HeartbeatAt    time.Time `json:"heartbeat_at"`
+}
