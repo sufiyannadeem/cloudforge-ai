@@ -1,0 +1,86 @@
+{
+  "controller": {
+    "replicaCount": 2,
+    "resources": {
+      "requests": {
+        "cpu": "100m",
+        "memory": "256Mi"
+      }
+    },
+    "volumeModificationFeature": {
+      "enabled": false
+    }
+  },
+  "node": {
+    "resources": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "128Mi"
+      }
+    },
+    "hostNetwork": false,
+    "metadataSources": "kubernetes"
+  },
+  "sidecars": {
+    "attacher": {
+      "resources": {
+        "requests": {
+          "cpu": "25m",
+          "memory": "128Mi"
+        }
+      }
+    },
+    "provisioner": {
+      "resources": {
+        "requests": {
+          "cpu": "50m",
+          "memory": "128Mi"
+        }
+      }
+    },
+    "resizer": {
+      "resources": {
+        "requests": {
+          "cpu": "25m",
+          "memory": "128Mi"
+        }
+      }
+    },
+    "livenessProbe": {
+      "resources": {
+        "requests": {
+          "cpu": "10m",
+          "memory": "32Mi"
+        }
+      }
+    },
+    "nodeDriverRegistrar": {
+      "resources": {
+        "requests": {
+          "cpu": "10m",
+          "memory": "32Mi"
+        }
+      }
+    },
+    "healthMonitor": {
+      "enabled": false
+    },
+    "snapshotter": {
+      "forceEnable": false,
+      "resources": {
+        "requests": {
+          "cpu": "25m",
+          "memory": "128Mi"
+        }
+      }
+    },
+    "volumemodifier": {
+      "resources": {
+        "requests": {
+          "cpu": "25m",
+          "memory": "128Mi"
+        }
+      }
+    }
+  }
+}

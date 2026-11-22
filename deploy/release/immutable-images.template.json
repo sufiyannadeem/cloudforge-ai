@@ -1,0 +1,24 @@
+{
+  "status": "UNBOUND_NO_CURRENT_APPROVED_RELEASE",
+  "repository": "sufiyannadeem/cloudforge-ai",
+  "revision": null,
+  "run_id": null,
+  "run_attempt": null,
+  "images": {
+    "aiops-service": null,
+    "deployment-service": null,
+    "finops-service": null,
+    "frontend": null,
+    "infrastructure-service": null,
+    "postgres": null,
+    "project-service": null
+  },
+  "provenance": {},
+  "requirements": [
+    "Clean approved main commit includes tracked and currently untracked changes",
+    "Never substitute Docker image IDs or tags for registry manifest digests",
+    "Verify all seven exact signatures/predicates against independently approved SHA/run/attempt",
+    "Controller/monitoring pins are separate from application release signatures"
+  ],
+  "retired_release_policy": "../security/retired-release-denylist.json"
+}

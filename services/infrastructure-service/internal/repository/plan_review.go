@@ -159,6 +159,23 @@ func (r *ResourceRepository) InvalidatePlan(ctx context.Context, resource model.
 	return err
 }
 
+func (r *ResourceRepository) ClaimPlan(ctx context.Context, resource model.InfrastructureResource) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE infrastructure_resources
+		SET status = 'planning',
+		    plan_started_active = CASE WHEN status = 'active' THEN true ELSE plan_started_active END,
+		    updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
+		WHERE id = $1 AND updated_at = $2 AND status IN ('pending', 'failed', 'planning', 'active')
+	`, resource.ID, resource.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrResourceConflict
+	}
+	return nil
+}
+
 func (r *ResourceRepository) ClaimReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation, actor string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -216,20 +233,48 @@ func (r *ResourceRepository) ClaimReviewedPlan(ctx context.Context, resource mod
 	return tx.Commit(ctx)
 }
 
-func (r *ResourceRepository) FinishReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, succeeded bool) error {
+func (r *ResourceRepository) FinishReviewedPlanWithLease(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+	operation string,
+	next model.ResourceStatus,
+	succeeded bool,
+	ownerID string,
+	fencingToken int64,
+) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `
+
+	query := `
 		UPDATE infrastructure_resources SET status = $3,
 		    terraform_resource_id = COALESCE(NULLIF($4, ''), terraform_resource_id),
 		    last_execution_error = $5,
 		    aws_last_verified_at = COALESCE($6::timestamptz, aws_last_verified_at),
 		    updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
 		WHERE id = $1 AND status = $2
-	`, resource.ID, executingStatus(operation), next, resource.TerraformResourceID, resource.LastExecutionError, resource.AWSLastVerifiedAt)
+	`
+	args := []any{
+		resource.ID,
+		executingStatus(operation),
+		next,
+		resource.TerraformResourceID,
+		resource.LastExecutionError,
+		resource.AWSLastVerifiedAt,
+	}
+	if ownerID != "" && fencingToken > 0 {
+		query += ` AND EXISTS (
+			SELECT 1 FROM infrastructure_execution_leases l
+			WHERE l.resource_id = infrastructure_resources.id
+			  AND l.owner_id = $7
+			  AND l.fencing_token = $8
+			  AND l.lease_expires_at > clock_timestamp()
+		)`
+		args = append(args, ownerID, fencingToken)
+	}
+	tag, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -263,4 +308,8 @@ func (r *ResourceRepository) FinishReviewedPlan(ctx context.Context, resource mo
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func (r *ResourceRepository) FinishReviewedPlan(ctx context.Context, resource model.InfrastructureResource, operation string, next model.ResourceStatus, succeeded bool) error {
+	return r.FinishReviewedPlanWithLease(ctx, resource, operation, next, succeeded, "", 0)
 }

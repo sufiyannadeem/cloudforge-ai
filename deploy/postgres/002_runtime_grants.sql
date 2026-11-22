@@ -25,7 +25,7 @@ GRANT SELECT ON projects,project_members TO cf_infrastructure,cf_deployment;
 GRANT SELECT(id,created_by) ON projects TO cf_finops_project;
 GRANT SELECT(project_id,username) ON project_members TO cf_finops_project;
 GRANT SELECT(username,role,active) ON auth_users TO cf_deployment;
-GRANT SELECT,INSERT,UPDATE,DELETE ON infrastructure_resources,infrastructure_approval_assertions,infrastructure_plan_reviews,infrastructure_ec2_attribution,terraform_drift_scans TO cf_infrastructure;
+GRANT SELECT,INSERT,UPDATE,DELETE ON infrastructure_resources,infrastructure_approval_assertions,infrastructure_plan_reviews,infrastructure_ec2_attribution,terraform_drift_scans,infrastructure_execution_leases,infrastructure_jobs TO cf_infrastructure;
 GRANT USAGE ON SEQUENCE terraform_drift_scans_id_seq TO cf_infrastructure;
 GRANT SELECT,INSERT,UPDATE,DELETE ON deployments,deployment_attempts,deployment_promotions TO cf_deployment;
 GRANT SELECT,INSERT ON deployment_diagnostics TO cf_deployment;

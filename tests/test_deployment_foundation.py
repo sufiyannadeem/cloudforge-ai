@@ -301,3 +301,155 @@ def test_monitoring_tls_mounts_trust_and_binds_network_policy_ports(config):
             if name=='frontend':
                 assert env['GRAFANA_URL']==config['monitoring_tls']['grafana_url']
                 assert {'to':[renderer.peer('grafana','monitoring')],'ports':[renderer.tcp(3443)]} in policy['spec']['egress']
+
+
+def test_optional_image_pull_secret_injected_across_workloads(config):
+    config['image_pull_secret'] = 'ghcr-registry-secret'
+    config['drift'] = {'enabled': True}
+    config['roles']['drift'] = 'arn:aws:iam::123456789012:role/fixture-drift'
+    config['secrets']['cloudforge-drift-db'] = dict(config['secrets']['cloudforge-migration-db'])
+    docs = renderer.render(config)
+    expected = [{'name': 'ghcr-registry-secret'}]
+    for dep in (d for d in docs if d['kind'] == 'Deployment'):
+        assert dep['spec']['template']['spec']['imagePullSecrets'] == expected
+    for job in (d for d in docs if d['kind'] == 'Job'):
+        assert job['spec']['template']['spec']['imagePullSecrets'] == expected
+    cronjob = next(d for d in docs if d['kind'] == 'CronJob')
+    assert cronjob['spec']['jobTemplate']['spec']['template']['spec']['imagePullSecrets'] == expected
+
+
+@pytest.mark.parametrize('invalid_secret', ['INVALID_UPPERCASE', 'secret with space', 'secret/with/slash', 123])
+def test_invalid_image_pull_secret_fails_closed(config, invalid_secret):
+    config['image_pull_secret'] = invalid_secret
+    with pytest.raises(ValueError):
+        renderer.render(config)
+
+
+def test_scaffold_deployment_inputs_generates_valid_config(tmp_path, config):
+    scaffold_spec = importlib.util.spec_from_file_location('scaffold_deployment_inputs', ROOT / 'scripts/scaffold-deployment-inputs.py')
+    scaffolder = importlib.util.module_from_spec(scaffold_spec)
+    scaffold_spec.loader.exec_module(scaffolder)
+
+    tf_outputs = {
+        'vpc_cidr_block': {'value': '10.0.0.0/16'},
+        'internal_alb_subnet_cidrs': {'value': ['10.0.1.0/24', '10.0.2.0/24']},
+        'api_gateway_endpoint': {'value': 'https://fixture.execute-api.eu-west-1.amazonaws.com'},
+        'eks_cluster_name': {'value': 'cloudforge-dev-eks'},
+        'eks_oidc_provider_arn': {'value': 'arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE'},
+        'rds_master_user_secret_arn': {'value': 'arn:aws:secretsmanager:us-east-1:123456789012:secret:rds-db-123456'},
+        'efs_file_system_id': {'value': 'fs-12345678'},
+    }
+    manifest = {
+        'images': {name: f'ghcr.io/cloudforge-ai/{name}@sha256:' + 'b' * 64 for name in scaffolder.SERVICES}
+    }
+
+    bindings = {k: copy.deepcopy(config[k]) for k in ('roles', 'provisioner_role_arn', 'state_bucket', 'secrets', 'egress_cidrs')}
+    for entry in bindings['secrets'].values():
+        entry['arn'] = entry['arn'].replace('eu-west-1', 'us-east-1')
+    config = scaffolder.scaffold(
+        tf_outputs=tf_outputs,
+        images_manifest=manifest,
+        env='dev',
+        image_pull_secret='ghcr-secret',
+        bindings=bindings,
+    )
+
+    assert config['account_id'] == '123456789012'
+    assert config['region'] == 'us-east-1'
+    assert config['image_pull_secret'] == 'ghcr-secret'
+    assert config['egress_cidrs']['database'] == bindings['egress_cidrs']['database']
+    assert len(config['secrets']) == 15
+
+    # Verify no secret payloads or plaintext credentials exist anywhere in config
+    raw_json = json.dumps(config)
+    assert 'password' not in raw_json.lower()
+    assert 'secret_key' not in raw_json.lower()
+
+    # Verify dry-run render against renderer
+    docs = renderer.render(config)
+    assert len(docs) > 0
+
+    # Test CLI invocation
+    bindings_file = tmp_path / 'bindings.json'
+    bindings_file.write_text(json.dumps(bindings))
+    tf_file = tmp_path / 'tf.json'
+    img_file = tmp_path / 'images.json'
+    out_file = tmp_path / 'deployment-inputs.json'
+    tf_file.write_text(json.dumps(tf_outputs))
+    img_file.write_text(json.dumps(manifest))
+
+    res = subprocess.run([
+        sys.executable, str(ROOT / 'scripts/scaffold-deployment-inputs.py'),
+        '--terraform-outputs', str(tf_file),
+        '--images', str(img_file),
+        '--bindings', str(bindings_file),
+        '--output', str(out_file),
+        '--image-pull-secret', 'ghcr-secret',
+    ], capture_output=True, text=True)
+    assert res.returncode == 0
+    assert out_file.exists()
+    scaffolded = json.loads(out_file.read_text())
+    assert scaffolded['account_id'] == '123456789012'
+
+
+def test_alb_data_plane_uses_subnets_instead_of_controller_pods(config):
+    config['public_origin'] = 'https://fixture.execute-api.eu-west-1.amazonaws.com'
+    config['alb_subnet_cidrs'] = ['10.40.10.0/24', '10.40.20.0/24']
+    docs = renderer.render(config)
+    policy = next(d for d in docs if d['kind'] == 'NetworkPolicy' and d['metadata']['name'] == 'frontend-ingress')
+    assert policy['spec']['ingress'] == [{'from': [
+        {'ipBlock': {'cidr': '10.40.10.0/24'}}, {'ipBlock': {'cidr': '10.40.20.0/24'}}],
+        'ports': [renderer.tcp(3000)]}]
+    config['alb_subnet_cidrs'] = ['0.0.0.0/0']
+    with pytest.raises(ValueError):
+        renderer.render(config)
+
+
+def test_free_plan_preview_has_no_eso_or_workload_aws_credentials(config):
+    config.update(free_plan=True, secret_delivery='preseeded', roles={}, provisioner_role_arn='')
+    config['reliability'] = {'min_replicas': 2, 'max_replicas': 2}
+    config['preseeded_secret_keys'] = {name: list(entry['properties']) for name, entry in config['secrets'].items()}
+    docs = renderer.render(config)
+    assert not any(d['kind'] in {'SecretStore', 'ExternalSecret', 'Secret'} for d in docs)
+    for d in docs:
+        if d['kind'] == 'ServiceAccount':
+            assert 'eks.amazonaws.com/role-arn' not in d['metadata'].get('annotations', {})
+        if d['kind'] == 'Deployment' and d['metadata']['name'] == 'finops-service':
+            assert {'name': 'CLOUDFORGE_AWS_BILLING_ENABLED', 'value': 'false'} in d['spec']['template']['spec']['containers'][0]['env']
+    config['preseeded_secret_keys'].pop('cloudforge-migration-db')
+    with pytest.raises(ValueError):
+        renderer.render(config)
+
+
+def test_free_plan_cannot_silently_enable_unsupported_dependencies(config):
+    config['free_plan'] = True
+    with pytest.raises(ValueError):
+        renderer.render(config)
+
+
+def test_preview_no_surge_is_opt_in_and_keeps_security_and_requests(config):
+    baseline = renderer.render(config)
+    config.update(free_plan=True, secret_delivery='preseeded', roles={}, provisioner_role_arn='',
+                  preview_rollout_mode='serialized-no-surge')
+    config['reliability'] = {'min_replicas':2, 'max_replicas':2}
+    config['preseeded_secret_keys'] = {name: list(entry['properties']) for name, entry in config['secrets'].items()}
+    preview = renderer.render(config)
+    old = {d['metadata']['name']:d for d in baseline if d['kind']=='Deployment'}
+    for dep in (d for d in preview if d['kind']=='Deployment'):
+        assert dep['spec']['strategy']['rollingUpdate'] == {'maxSurge':0,'maxUnavailable':1}
+        pod = dep['spec']['template']['spec']
+        before = old[dep['metadata']['name']]['spec']['template']['spec']
+        assert pod['containers'][0]['resources'] == before['containers'][0]['resources']
+        assert pod['securityContext'] == before['securityContext']
+        assert pod['topologySpreadConstraints'] == before['topologySpreadConstraints']
+    assert all(d['spec']['strategy']['rollingUpdate']=={'maxSurge':1,'maxUnavailable':0}
+               for d in baseline if d['kind']=='Deployment')
+
+
+def test_preview_no_surge_rejects_full_architecture_and_unknown_modes(config):
+    config['preview_rollout_mode'] = 'serialized-no-surge'
+    with pytest.raises(ValueError, match='restricted'):
+        renderer.render(config)
+    config.update(free_plan=True, preview_rollout_mode='guess')
+    with pytest.raises(ValueError, match='restricted'):
+        renderer.render(config)

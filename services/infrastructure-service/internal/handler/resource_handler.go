@@ -20,6 +20,7 @@ import (
 )
 
 type ResourceHandler struct {
+	Jobs                TerraformJobStore
 	TerraformReadOnly   bool
 	DriftStore          *repository.ResourceRepository
 	DriftRunner         *terraform.Runner

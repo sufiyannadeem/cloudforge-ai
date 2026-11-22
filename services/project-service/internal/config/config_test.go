@@ -1,7 +1,10 @@
 package config
 
 import (
+	"strings"
 	"testing"
+
+	identity "github.com/sufiyannadeem/cloudforge-service-identity"
 )
 
 func TestConfigDevelopmentDefaults(t *testing.T) {
@@ -72,5 +75,46 @@ func TestConfigRejectsInvalidPort(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid port")
+	}
+}
+
+func TestProjectServiceStartupDatabaseValidationDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://cloudforge:secret@postgres:5432/cloudforge?sslmode=disable")
+	t.Setenv("SERVER_PORT", "8080")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected valid development config, got: %v", err)
+	}
+
+	if err := identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "project", false); err != nil {
+		t.Fatalf("expected development database validation to succeed, got: %v", err)
+	}
+}
+
+func TestProjectServiceStartupDatabaseValidationProductionFailClosed(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	// Local Compose settings in production must fail closed
+	t.Setenv("DATABASE_URL", "postgres://cloudforge:secret@postgres:5432/cloudforge?sslmode=disable")
+	t.Setenv("SERVER_PORT", "8080")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected config.Load to succeed for non-localhost URL, got: %v", err)
+	}
+
+	err = identity.ValidateDatabase(cfg.AppEnv, cfg.DatabaseURL, "project", false)
+	if err == nil {
+		t.Fatal("expected production database validation to fail with local Compose credentials, got nil")
+	}
+	if !strings.Contains(err.Error(), "production requires a dedicated database principal and hostname-verified TLS") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// Dedicated production principal and verify-full TLS succeeds
+	prodDSN := "postgres://cf_project:secret@db.prod.internal:5432/cloudforge?sslmode=verify-full"
+	if err := identity.ValidateDatabase(cfg.AppEnv, prodDSN, "project", false); err != nil {
+		t.Fatalf("expected production database validation to succeed for cf_project verify-full, got: %v", err)
 	}
 }

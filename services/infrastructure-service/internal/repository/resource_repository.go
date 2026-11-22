@@ -434,11 +434,13 @@ func (r *ResourceRepository) Update(
 
 // TransitionStatus performs a compare-and-set transition so concurrent requests
 // cannot both claim the same provisioning state.
-func (r *ResourceRepository) TransitionStatus(
+func (r *ResourceRepository) TransitionStatusWithLease(
 	ctx context.Context,
 	id uuid.UUID,
 	from []model.ResourceStatus,
 	to model.ResourceStatus,
+	ownerID string,
+	fencingToken int64,
 ) error {
 	if len(from) == 0 {
 		return ErrResourceConflict
@@ -459,6 +461,19 @@ func (r *ResourceRepository) TransitionStatus(
 		WHERE id = $3 AND status IN (%s)
 	`, strings.Join(placeholders, ", "))
 
+	if ownerID != "" && fencingToken > 0 {
+		leaseOwnerIdx := len(args) + 1
+		leaseTokenIdx := len(args) + 2
+		query += fmt.Sprintf(` AND EXISTS (
+			SELECT 1 FROM infrastructure_execution_leases l
+			WHERE l.resource_id = infrastructure_resources.id
+			  AND l.owner_id = $%d
+			  AND l.fencing_token = $%d
+			  AND l.lease_expires_at > clock_timestamp()
+		)`, leaseOwnerIdx, leaseTokenIdx)
+		args = append(args, ownerID, fencingToken)
+	}
+
 	result, err := r.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("transition infrastructure resource status: %w", err)
@@ -469,12 +484,23 @@ func (r *ResourceRepository) TransitionStatus(
 	return nil
 }
 
+func (r *ResourceRepository) TransitionStatus(
+	ctx context.Context,
+	id uuid.UUID,
+	from []model.ResourceStatus,
+	to model.ResourceStatus,
+) error {
+	return r.TransitionStatusWithLease(ctx, id, from, to, "", 0)
+}
+
 // SavePlan writes plan metadata and opens the approval window atomically.
-func (r *ResourceRepository) SavePlan(
+func (r *ResourceRepository) SavePlanWithLease(
 	ctx context.Context,
 	resource model.InfrastructureResource,
+	ownerID string,
+	fencingToken int64,
 ) error {
-	const query = `
+	query := `
 		UPDATE infrastructure_resources
 		SET terraform_directory = $1,
 		    plan_path = $2,
@@ -485,8 +511,7 @@ func (r *ResourceRepository) SavePlan(
 		    updated_at = GREATEST($7::timestamptz, updated_at + interval '1 microsecond')
 		WHERE id = $8 AND status = $9
 	`
-	result, err := r.pool.Exec(
-		ctx, query,
+	args := []any{
 		resource.TerraformDirectory,
 		nullableString(resource.PlanPath),
 		nullableString(resource.PlanHash),
@@ -496,7 +521,20 @@ func (r *ResourceRepository) SavePlan(
 		time.Now().UTC(),
 		resource.ID,
 		model.ResourceStatusPlanning,
-	)
+	}
+
+	if ownerID != "" && fencingToken > 0 {
+		query += ` AND EXISTS (
+			SELECT 1 FROM infrastructure_execution_leases l
+			WHERE l.resource_id = infrastructure_resources.id
+			  AND l.owner_id = $10
+			  AND l.fencing_token = $11
+			  AND l.lease_expires_at > clock_timestamp()
+		)`
+		args = append(args, ownerID, fencingToken)
+	}
+
+	result, err := r.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("persist terraform plan: %w", err)
 	}
@@ -506,13 +544,22 @@ func (r *ResourceRepository) SavePlan(
 	return nil
 }
 
-// SaveDestroyPlan persists the destroy plan artifact and opens the destroy
-// approval window. It only succeeds while the resource is claimed in planning.
-func (r *ResourceRepository) SaveDestroyPlan(
+func (r *ResourceRepository) SavePlan(
 	ctx context.Context,
 	resource model.InfrastructureResource,
 ) error {
-	const query = `
+	return r.SavePlanWithLease(ctx, resource, "", 0)
+}
+
+// SaveDestroyPlan persists the destroy plan artifact and opens the destroy
+// approval window. It only succeeds while the resource is claimed in planning.
+func (r *ResourceRepository) SaveDestroyPlanWithLease(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+	ownerID string,
+	fencingToken int64,
+) error {
+	query := `
 		UPDATE infrastructure_resources
 		SET destroy_plan_path = $1,
 		    destroy_plan_hash = $2,
@@ -522,8 +569,7 @@ func (r *ResourceRepository) SaveDestroyPlan(
 		    destroy_requested_by = NULLIF($8, '')
 		WHERE id = $6 AND status = $7
 	`
-	result, err := r.pool.Exec(
-		ctx, query,
+	args := []any{
 		nullableString(resource.DestroyPlanPath),
 		nullableString(resource.DestroyPlanHash),
 		resource.ApprovalExpiresAt,
@@ -532,7 +578,20 @@ func (r *ResourceRepository) SaveDestroyPlan(
 		resource.ID,
 		model.ResourceStatusPlanning,
 		resource.DestroyRequestedBy,
-	)
+	}
+
+	if ownerID != "" && fencingToken > 0 {
+		query += ` AND EXISTS (
+			SELECT 1 FROM infrastructure_execution_leases l
+			WHERE l.resource_id = infrastructure_resources.id
+			  AND l.owner_id = $9
+			  AND l.fencing_token = $10
+			  AND l.lease_expires_at > clock_timestamp()
+		)`
+		args = append(args, ownerID, fencingToken)
+	}
+
+	result, err := r.pool.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("persist terraform destroy plan: %w", err)
 	}
@@ -540,6 +599,13 @@ func (r *ResourceRepository) SaveDestroyPlan(
 		return ErrResourceConflict
 	}
 	return nil
+}
+
+func (r *ResourceRepository) SaveDestroyPlan(
+	ctx context.Context,
+	resource model.InfrastructureResource,
+) error {
+	return r.SaveDestroyPlanWithLease(ctx, resource, "", 0)
 }
 
 // UpdateEditable updates only fields present in the request. The expected

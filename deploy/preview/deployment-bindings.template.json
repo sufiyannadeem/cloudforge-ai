@@ -1,0 +1,195 @@
+{
+  "account_id": null,
+  "region": null,
+  "images": {
+    "project-service": null,
+    "infrastructure-service": null,
+    "deployment-service": null,
+    "aiops-service": null,
+    "finops-service": null,
+    "frontend": null
+  },
+  "image_pull_secret": null,
+  "roles": {},
+  "provisioner_role_arn": "",
+  "state_bucket": null,
+  "storage": {
+    "class": null,
+    "size": null
+  },
+  "monitoring_namespace": null,
+  "monitoring_tls": {
+    "prometheus_url": null,
+    "prometheus_pod_port": null,
+    "grafana_url": null,
+    "grafana_pod_port": null,
+    "ca_configmap": null
+  },
+  "ingress_namespace": null,
+  "ingress_app": null,
+  "egress_cidrs": {
+    "database": [],
+    "kubernetes_api": [],
+    "aws_https": []
+  },
+  "ai": {
+    "provider": "disabled"
+  },
+  "secrets": {
+    "cloudforge-frontend-project": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_PROJECT_KEY": "CLOUDFORGE_FRONTEND_PROJECT_KEY"
+      }
+    },
+    "cloudforge-frontend-infrastructure": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY": "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY"
+      }
+    },
+    "cloudforge-frontend-deployment": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY": "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY"
+      }
+    },
+    "cloudforge-aiops-deployment": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY": "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY"
+      }
+    },
+    "cloudforge-finops-audit-db": {
+      "arn": null,
+      "properties": {
+        "FINOPS_AUDIT_DATABASE_URL": "FINOPS_AUDIT_DATABASE_URL"
+      }
+    },
+    "cloudforge-finops-project-db": {
+      "arn": null,
+      "properties": {
+        "FINOPS_PROJECT_DATABASE_URL": "FINOPS_PROJECT_DATABASE_URL"
+      }
+    },
+    "cloudforge-frontend-finops": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_FINOPS_KEY": "CLOUDFORGE_FRONTEND_FINOPS_KEY"
+      }
+    },
+    "cloudforge-frontend-aiops": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_FRONTEND_AIOPS_KEY": "CLOUDFORGE_FRONTEND_AIOPS_KEY"
+      }
+    },
+    "cloudforge-alertmanager-identity": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_ALERTMANAGER_KEY": "CLOUDFORGE_ALERTMANAGER_KEY"
+      }
+    },
+    "cloudforge-frontend-credentials": {
+      "arn": null,
+      "properties": {
+        "CLOUDFORGE_SESSION_SECRET": "CLOUDFORGE_SESSION_SECRET"
+      }
+    },
+    "cloudforge-project-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-infrastructure-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-deployment-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-aiops-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    },
+    "cloudforge-migration-db": {
+      "arn": null,
+      "properties": {
+        "DATABASE_URL": "DATABASE_URL"
+      }
+    }
+  },
+  "rollouts": {
+    "enabled": false,
+    "analysis_template": null
+  },
+  "reliability": {
+    "min_replicas": 2,
+    "max_replicas": 2,
+    "cpu_utilization": 70
+  },
+  "database_ca_configmap": null,
+  "drift": {
+    "enabled": false
+  },
+  "free_plan": true,
+  "secret_delivery": "preseeded",
+  "public_origin": null,
+  "alb_subnet_cidrs": [],
+  "preseeded_secret_keys": {
+    "cloudforge-frontend-project": [
+      "CLOUDFORGE_FRONTEND_PROJECT_KEY"
+    ],
+    "cloudforge-frontend-infrastructure": [
+      "CLOUDFORGE_FRONTEND_INFRASTRUCTURE_KEY"
+    ],
+    "cloudforge-frontend-deployment": [
+      "CLOUDFORGE_FRONTEND_DEPLOYMENT_KEY"
+    ],
+    "cloudforge-aiops-deployment": [
+      "CLOUDFORGE_AIOPS_DEPLOYMENT_KEY"
+    ],
+    "cloudforge-finops-audit-db": [
+      "FINOPS_AUDIT_DATABASE_URL"
+    ],
+    "cloudforge-finops-project-db": [
+      "FINOPS_PROJECT_DATABASE_URL"
+    ],
+    "cloudforge-frontend-finops": [
+      "CLOUDFORGE_FRONTEND_FINOPS_KEY"
+    ],
+    "cloudforge-frontend-aiops": [
+      "CLOUDFORGE_FRONTEND_AIOPS_KEY"
+    ],
+    "cloudforge-alertmanager-identity": [
+      "CLOUDFORGE_ALERTMANAGER_KEY"
+    ],
+    "cloudforge-frontend-credentials": [
+      "CLOUDFORGE_SESSION_SECRET"
+    ],
+    "cloudforge-project-db": [
+      "DATABASE_URL"
+    ],
+    "cloudforge-infrastructure-db": [
+      "DATABASE_URL"
+    ],
+    "cloudforge-deployment-db": [
+      "DATABASE_URL"
+    ],
+    "cloudforge-aiops-db": [
+      "DATABASE_URL"
+    ],
+    "cloudforge-migration-db": [
+      "DATABASE_URL"
+    ]
+  },
+  "preview_rollout_mode": "serialized-no-surge"
+}

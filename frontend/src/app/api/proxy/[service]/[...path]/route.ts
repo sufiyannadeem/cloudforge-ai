@@ -179,7 +179,7 @@ async function proxyRequest(
     path[2] === "deployments" && path.length === 5 && ["logs", "observability"].includes(path[4]);
   const isDiagnosticCapture = service === "deployment" && request.method === "POST" &&
     path[2] === "deployments" && path.length === 5 && path[4] === "diagnostics";
-  const requestTimeoutMs = isProvisioningOperation ? 600_000 : isDiagnosticCapture ? 23_000 : isDeploymentTelemetry ? 15_000 : 10_000;
+  const requestTimeoutMs = isProvisioningOperation ? 23_000 : isDiagnosticCapture ? 23_000 : isDeploymentTelemetry ? 15_000 : 10_000;
 
   try {
     const response = await fetch(targetUrl, {

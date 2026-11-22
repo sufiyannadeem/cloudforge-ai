@@ -54,16 +54,37 @@ def monitoring_endpoint(value, service, namespace):
 def render(config):
     account = checked(r'[0-9]{12}', config['account_id'], 'account_id')
     region = checked(r'[a-z]{2}-[a-z]+-[0-9]', config['region'], 'region')
+    image_pull_secret = config.get('image_pull_secret')
+    if image_pull_secret is not None:
+        checked(r'[a-z0-9][a-z0-9.-]*', image_pull_secret, 'image_pull_secret')
     role_pattern = rf'arn:aws:iam::{account}:role/[A-Za-z0-9+=,.@_/-]+'
+    free_plan = config.get('free_plan', False)
+    if type(free_plan) is not bool:
+        raise ValueError('free_plan must be boolean')
+    rollout_mode = config.get('preview_rollout_mode', 'surge')
+    if rollout_mode not in {'surge', 'serialized-no-surge'} or (rollout_mode != 'surge' and not free_plan):
+        raise ValueError('serialized-no-surge is restricted to the free-plan preview')
+    delivery = config.get('secret_delivery', 'external-secrets')
+    if delivery not in {'external-secrets', 'preseeded'}:
+        raise ValueError('Unknown secret_delivery')
+    if free_plan and (delivery != 'preseeded' or config.get('ai', {}).get('provider', 'disabled') != 'disabled'
+                      or config.get('drift', {}).get('enabled', False) or config.get('rollouts', {}).get('enabled', False)):
+        raise ValueError('Free-plan preview requires preseeded secrets and disables AI, drift and Rollouts')
     roles = config['roles']
+    base_roles = set() if free_plan else {'infrastructure-service', 'finops-service'}
+    if delivery == 'external-secrets':
+        base_roles.add('secret-sync')
     scheduled_drift = config.get('drift', {}).get('enabled', False)
     if type(scheduled_drift) is not bool:
         raise ValueError('drift.enabled must be boolean')
     if scheduled_drift:
         checked(role_pattern, roles.get('drift'), 'roles.drift')
-    for name in ('infrastructure-service', 'finops-service', 'secret-sync'):
+    for name in base_roles:
         checked(role_pattern, roles[name], 'roles.' + name)
-    checked(role_pattern, config['provisioner_role_arn'], 'provisioner_role_arn')
+    if not free_plan:
+        checked(role_pattern, config['provisioner_role_arn'], 'provisioner_role_arn')
+    elif config.get('provisioner_role_arn') or roles:
+        raise ValueError('Free-plan preview has no application AWS roles or tenant provisioning')
     ai = config.get('ai', {'provider': 'disabled'})
     if ai['provider'] not in {'disabled', 'bedrock'}:
         raise ValueError('Only disabled or explicitly configured Bedrock is supported')
@@ -72,7 +93,7 @@ def render(config):
         checked(r'[A-Za-z0-9.:/_-]+', ai['model'], 'ai.model')
         checked(r'[a-z0-9]{1,64}', ai.get('guardrail_id'), 'ai.guardrail_id')
         checked(r'[1-9][0-9]{0,7}', ai.get('guardrail_version'), 'ai.guardrail_version')
-    if set(roles) != {'infrastructure-service', 'finops-service', 'secret-sync'} | ({'aiops-service'} if ai['provider'] == 'bedrock' else set()) | ({'drift'} if scheduled_drift else set()):
+    if set(roles) != base_roles | ({'aiops-service'} if ai['provider'] == 'bedrock' else set()) | ({'drift'} if scheduled_drift else set()):
         raise ValueError('Unexpected workload role')
     if len(set(roles.values()) | {config['provisioner_role_arn']}) != len(roles) + 1:
         raise ValueError('Workload, sync and provisioner roles must be distinct')
@@ -85,6 +106,8 @@ def render(config):
     minimum = reliability.get('min_replicas', 2)
     maximum = reliability.get('max_replicas', 4)
     cpu = reliability.get('cpu_utilization', 70)
+    if free_plan and (minimum != 2 or maximum != 2):
+        raise ValueError('Free-plan preview uses exactly two replicas; scale-out requires a new budget')
     if any(type(v) is not int for v in (minimum, maximum, cpu)) or not (2 <= minimum <= maximum <= 10) or not (30 <= cpu <= 90):
         raise ValueError('Invalid reliability replica bounds or CPU target')
     database_ca = checked(r'[a-z0-9][a-z0-9.-]*', config.get('database_ca_configmap'), 'database_ca_configmap')
@@ -103,6 +126,24 @@ def render(config):
         raise ValueError('Configure reviewed monitoring Service target pod TLS ports')
     ingress_ns = checked(r'[a-z0-9][a-z0-9-]*', config['ingress_namespace'], 'ingress_namespace')
     ingress_app = checked(r'[a-z0-9][a-z0-9-]*', config['ingress_app'], 'ingress_app')
+    # ALB data-plane packets originate at ALB ENIs, never controller pods.
+    public_origin = config.get('public_origin')
+    if public_origin is not None:
+        origin = urlsplit(public_origin)
+        if (origin.scheme != 'https' or not origin.hostname or origin.username or origin.password
+                or origin.path not in {'', '/'} or origin.query or origin.fragment):
+            raise ValueError('Configure an HTTPS public_origin without a path')
+    if 'alb_subnet_cidrs' in config and not public_origin:
+        raise ValueError('ALB deployments require public_origin for authentication')
+    alb_sources = []
+    if 'alb_subnet_cidrs' in config:
+        if not isinstance(config['alb_subnet_cidrs'], list) or not config['alb_subnet_cidrs']:
+            raise ValueError('Required ALB source subnet CIDRs')
+        for cidr in config['alb_subnet_cidrs']:
+            network = ipaddress.ip_network(cidr, strict=True)
+            if network.version != 4 or not network.is_private or network.prefixlen == 0:
+                raise ValueError('ALB sources must be private IPv4 subnets')
+            alb_sources.append({'ipBlock': {'cidr': str(network)}})
     networks = {}
     for key in ('database', 'kubernetes_api', 'aws_https'):
         networks[key] = []
@@ -129,6 +170,8 @@ def render(config):
         spec = d['spec']['template']['spec']
         # IRSA admission injects its own projected token; no default API token needed.
         spec['automountServiceAccountToken'] = name == 'deployment-service'
+        if image_pull_secret:
+            spec['imagePullSecrets'] = [{'name': image_pull_secret}]
         d['spec']['template']['metadata'].pop('annotations', None)
         container = spec['containers'][0]
         container['image'] = checked(r'[a-z0-9][a-z0-9.:/_-]*@sha256:[0-9a-f]{64}', config['images'][name], 'images.' + name)
@@ -140,7 +183,7 @@ def render(config):
         d['spec'].pop('replicas', None)
         d['spec']['minReadySeconds'] = 10
         d['spec']['progressDeadlineSeconds'] = 600
-        d['spec']['strategy'] = {'type': 'RollingUpdate', 'rollingUpdate': {'maxSurge': 1, 'maxUnavailable': 0}}
+        d['spec']['strategy'] = {'type': 'RollingUpdate', 'rollingUpdate': {'maxSurge': 0 if rollout_mode == 'serialized-no-surge' else 1, 'maxUnavailable': 1 if rollout_mode == 'serialized-no-surge' else 0}}
         spec['topologySpreadConstraints'] = [
             {'maxSkew': 1, 'minDomains': 2, 'topologyKey': key, 'whenUnsatisfiable': 'DoNotSchedule',
              'labelSelector': {'matchLabels': {'app': name}}}
@@ -193,6 +236,14 @@ def render(config):
             secret_keys.setdefault(name_ref, set())
         # All service connections use their actual ClusterIP Services.
         additional = {'AWS_STS_REGIONAL_ENDPOINTS': 'regional'}
+        if free_plan:
+            additional['AWS_EC2_METADATA_DISABLED'] = 'true'
+        if free_plan and name == 'infrastructure-service':
+            additional['TERRAFORM_READ_ONLY'] = 'true'
+        if free_plan and name == 'finops-service':
+            additional['CLOUDFORGE_AWS_BILLING_ENABLED'] = 'false'
+        if name == 'frontend' and public_origin:
+            additional['CLOUDFORGE_PUBLIC_ORIGIN'] = public_origin.rstrip('/')
         if name != 'frontend':
             additional['PGSSLROOTCERT'] = '/etc/cloudforge/db-ca/ca.crt'
         if name in {'project-service', 'deployment-service', 'infrastructure-service'}:
@@ -224,13 +275,14 @@ def render(config):
     secret_keys = {name: keys | required.get(name, set()) for name, keys in secret_keys.items()}
     secret_keys['cloudforge-migration-db'] = {'DATABASE_URL'}
     if scheduled_drift: secret_keys['cloudforge-drift-db'] = {'DATABASE_URL'}
-    sa = document('ServiceAccount', 'cloudforge-secret-sync', {})
-    sa.pop('spec')
-    sa['automountServiceAccountToken'] = False
-    sa['metadata']['annotations'] = {'eks.amazonaws.com/role-arn': roles['secret-sync']}
-    docs += [sa, document('SecretStore', 'cloudforge', {'provider': {'aws': {
-        'service': 'SecretsManager', 'region': region,
-        'auth': {'jwt': {'serviceAccountRef': {'name': 'cloudforge-secret-sync'}}}}}}, 'external-secrets.io/v1')]
+    if delivery == 'external-secrets':
+        sa = document('ServiceAccount', 'cloudforge-secret-sync', {})
+        sa.pop('spec')
+        sa['automountServiceAccountToken'] = False
+        sa['metadata']['annotations'] = {'eks.amazonaws.com/role-arn': roles['secret-sync']}
+        docs += [sa, document('SecretStore', 'cloudforge', {'provider': {'aws': {
+            'service': 'SecretsManager', 'region': region,
+            'auth': {'jwt': {'serviceAccountRef': {'name': 'cloudforge-secret-sync'}}}}}}, 'external-secrets.io/v1')]
     secret_pattern = rf'arn:aws:secretsmanager:{region}:{account}:secret:[A-Za-z0-9/_+=.@-]+'
     if set(config['secrets']) != set(secret_keys):
         raise ValueError('secrets must map exactly the referenced Kubernetes Secret names')
@@ -247,6 +299,14 @@ def render(config):
             'secretStoreRef': {'name': 'cloudforge', 'kind': 'SecretStore'},
             'target': {'name': name, 'creationPolicy': 'Owner', 'deletionPolicy': 'Retain'},
             'data': data}, 'external-secrets.io/v1'))
+    if delivery == 'preseeded':
+        reviewed_keys = config.get('preseeded_secret_keys', {})
+        if set(reviewed_keys) != set(secret_keys) or any(
+                not isinstance(reviewed_keys[name], list) or set(reviewed_keys[name]) != keys
+                for name, keys in secret_keys.items()):
+            raise ValueError('Review exact preseeded Secret names/keys before rendering')
+        docs = [d for d in docs if d['kind'] not in {'SecretStore', 'ExternalSecret'}
+                and not (d['kind'] == 'ServiceAccount' and d['metadata']['name'] == 'cloudforge-secret-sync')]
     migration_sa = document('ServiceAccount', 'cloudforge-migrator', {})
     migration_sa.pop('spec')
     migration_sa['automountServiceAccountToken'] = False
@@ -277,6 +337,8 @@ def render(config):
         pod = {'serviceAccountName':'cloudforge-migrator','automountServiceAccountToken':False,
                'restartPolicy':'Never','terminationGracePeriodSeconds':30,'securityContext':copy.deepcopy(source['securityContext']),
                'containers':[container],'volumes':volumes}
+        if image_pull_secret:
+            pod['imagePullSecrets'] = [{'name': image_pull_secret}]
         job = document('Job','cloudforge-'+name+'-migrate',{'backoffLimit':0,'activeDeadlineSeconds':300,
                         'template':{'metadata':{'labels':{'cloudforge.ai/component':'database-migration'}},'spec':pod}},'batch/v1')
         job['metadata']['annotations'] = {'argocd.argoproj.io/hook':'Sync','argocd.argoproj.io/sync-wave':str(wave-5),
@@ -289,7 +351,7 @@ def render(config):
             item['metadata'].setdefault('annotations',{})['argocd.argoproj.io/sync-wave']='0'
     cm = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'cloudforge-terraform', 'namespace': 'cloudforge'},
           'data': {'TERRAFORM_STATE_BUCKET': bucket, 'TERRAFORM_STATE_REGION': region,
-                   'TERRAFORM_PROVISIONER_ROLE_ARN': config['provisioner_role_arn']}}
+                   'TERRAFORM_PROVISIONER_ROLE_ARN': config.get('provisioner_role_arn', '')}}
     docs += [cm, document('PersistentVolumeClaim', 'cloudforge-terraform-workspaces', {
         'accessModes': ['ReadWriteMany'], 'storageClassName': storage['class'],
         'resources': {'requests': {'storage': storage['size']}}})]
@@ -307,7 +369,7 @@ def render(config):
            'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}
     policy('dns', {}, egress=[{'to': [dns], 'ports': [tcp(53), {'protocol': 'UDP', 'port': 53}]}])
     for name, port in PORTS.items():
-        sources = [peer('frontend')] if name != 'frontend' else [peer(ingress_app, ingress_ns)]
+        sources = [peer('frontend')] if name != 'frontend' else (alb_sources or [peer(ingress_app, ingress_ns)])
         if name == 'deployment-service':
             sources += [peer('aiops-service'), peer('prometheus', monitor_ns)]
         if name == 'aiops-service':
@@ -347,6 +409,8 @@ def render(config):
         pod={'serviceAccountName':'cloudforge-drift','automountServiceAccountToken':False,'restartPolicy':'Never',
              'terminationGracePeriodSeconds':15,'securityContext':copy.deepcopy(original['securityContext']),
              'containers':[container],'volumes':[{'name':'database-ca','configMap':{'name':database_ca}}, {'name':'tmp','emptyDir':{'sizeLimit':'2Gi'}}]}
+        if image_pull_secret:
+            pod['imagePullSecrets'] = [{'name': image_pull_secret}]
         docs.append(document('CronJob','cloudforge-drift',{'schedule':'0 * * * *','concurrencyPolicy':'Forbid',
             'startingDeadlineSeconds':300,'successfulJobsHistoryLimit':1,'failedJobsHistoryLimit':1,
             'jobTemplate':{'spec':{'backoffLimit':0,'activeDeadlineSeconds':120,'ttlSecondsAfterFinished':7200,

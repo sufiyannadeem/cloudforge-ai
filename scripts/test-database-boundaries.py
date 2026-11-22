@@ -32,7 +32,8 @@ def main():
         r=subprocess.run(['go','build','-o',str(output/'dbcheck'),str(ROOT/'scripts/fixtures/database-boundaries.go')],cwd=ROOT/'services/service-identity',env=env,capture_output=True,timeout=120)
         if r.returncode:raise RuntimeError('Go database checker build failed')
         network=drill.create('network','network');volume=drill.create('volume','database')
-        db=drill.postgres('database',network,volume,secrets.token_hex(32),'--network-alias','wrong-host')
+        fixture_admin_password=secrets.token_hex(32)
+        db=drill.postgres('database',network,volume,fixture_admin_password,'--network-alias','wrong-host')
         for filename in ['server.key','ca.crt']:
             drill.exec(db,'sh','-ec','umask 077; cat > /var/lib/postgresql/data/'+filename,data=(output/filename).read_bytes())
         drill.sql(db,"ALTER SYSTEM SET ssl='on'; ALTER SYSTEM SET ssl_cert_file='/var/lib/postgresql/data/ca.crt'; ALTER SYSTEM SET ssl_key_file='/var/lib/postgresql/data/server.key'")
@@ -69,19 +70,26 @@ def main():
                 '-e','APP_ENV=production','-e','DATABASE_URL='+dsn(principal),*extra,image,*args)
             drill.fault('start',c);drill.docker('wait',c)
             exitcode=int(drill.docker('inspect',c,'--format','{{.State.ExitCode}}').stdout)
-            if suffix=='scheduled-drift-db' and exitcode==0:
-                if b'--- PASS: TestScheduledDriftDatabaseBoundary' not in drill.docker('logs',c).stdout:
-                    raise RuntimeError('Scheduled database tests did not actually execute')
+            required_tests={
+                'scheduled-drift-db':['TestScheduledDriftDatabaseBoundary'],
+                'lease-jobs-db':['TestAcquireExecutionLeaseAtomicMutualExclusion','TestHeartbeatRenewsLease',
+                                'TestLeaseExpiryAndStaleExecutionRecovery','TestTerraformJobDurabilityClaimAndNoReplay'],
+            }
+            if exitcode==0 and suffix in required_tests:
+                logs=drill.docker('logs',c).stdout
+                for test in required_tests[suffix]:
+                    if ('--- PASS: '+test).encode() not in logs:
+                        raise RuntimeError('Required database test did not actually execute: '+test)
             if (expected==0 and exitcode!=0) or (expected!=0 and exitcode==0):
                 result=drill.docker('logs',c,check=False)
                 log=result.stdout+result.stderr
-                for secret in passwords.values():log=log.replace(secret.encode(),b'[REDACTED]')
+                for secret in [*passwords.values(),fixture_admin_password]:log=log.replace(secret.encode(),b'[REDACTED]')
                 (output/(suffix+'.log')).write_bytes(log)
                 raise RuntimeError('Isolated database client failed: '+suffix)
         for service in ['project','infrastructure','deployment']:
             run('migrate-'+service,drill.image,['migrate'],'migrator',
                 ('--mount',f'type=bind,src={output/service},dst=/migrator,readonly','--entrypoint','/migrator','-e','TERRAFORM_READ_ONLY=true'))
-        if drill.sql(db,'SELECT count(*) FROM schema_migrations')!=b'23':raise RuntimeError('migration receipts mismatch')
+        if drill.sql(db,'SELECT count(*) FROM schema_migrations')!=b'25':raise RuntimeError('migration receipts mismatch')
         aiops_image=drill.docker('image','inspect',os.getenv('CLOUDFORGE_AIOPS_TEST_IMAGE','cloudforge-ai-aiops-service:latest'),'--format','{{.Id}}').stdout.decode().strip()
         run('aiops-migrate',aiops_image,['python','-m','app.database'],'migrator',
             ('--mount',f'type=bind,src={ROOT/"services/aiops-service/app"},dst=/app/app,readonly','--entrypoint',''))
@@ -117,6 +125,14 @@ with psycopg.connect(dsn,connect_timeout=3) as db:
         run('scheduled-drift-db',drill.image,['-test.run=TestScheduledDrift','-test.v'],'drift',
             ('--mount',f'type=bind,src={output/"drift-tests"},dst=/drift-tests,readonly','--entrypoint','/drift-tests',
              '-e','TEST_DATABASE_URL='+dsn('migrator'),'-e','CF_DB_FIXTURE_ID='+drill.run_id,'-e','CF_DB_FIXTURE_PROOF='+proof))
+        # Schema-isolated repository tests need fixture-only CREATE SCHEMA rights.
+        # Never grant those privileges to the production migrator/runtime roles.
+        fixture_admin_dsn=f'postgres://postgres:{fixture_admin_password}@database/cloudforge?sslmode=verify-full&sslrootcert=/ca.crt'
+        run('lease-jobs-db',drill.image,['-test.run=^Test(AcquireExecutionLeaseAtomicMutualExclusion|HeartbeatRenewsLease|LeaseExpiryAndStaleExecutionRecovery|TerraformJobDurabilityClaimAndNoReplay)$','-test.v'],'migrator',
+            ('--mount',f'type=bind,src={output/"drift-tests"},dst=/drift-tests,readonly',
+             '--mount',f'type=bind,src={ROOT/"services/infrastructure-service/internal/migration/migrations"},dst=/repo/internal/migration/migrations,readonly',
+             '--workdir','/repo/internal/repository','--entrypoint','/drift-tests',
+             '-e','TEST_DATABASE_URL='+fixture_admin_dsn,'-e','CLOUDFORGE_JOB_TEST_DSN='+fixture_admin_dsn))
         # The real HTTP server starts as a non-owner with no DDL permission.
         server=drill.create('container','runtime','--network',network,'--memory','256m',
             '--mount',f'type=bind,src={output/"ca.crt"},dst=/ca.crt,readonly',
@@ -130,7 +146,7 @@ with psycopg.connect(dsn,connect_timeout=3) as db:
     finally:
         failures=drill.cleanup()
         report={'status':'PASS' if success and not failures else 'FAIL','fixture':drill.run_id,
-                ('checks' if success else 'planned_checks'):['23 one-shot migrations','AIOps one-shot schema','7 runtime principals','pre-existing runtime DDL authority rejected','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences'],
+                ('checks' if success else 'planned_checks'):['25 one-shot migrations','AIOps one-shot schema','7 runtime principals','pre-existing runtime DDL authority rejected','negative DDL/account/hash/session/grant checks','real verified TLS','wrong hostname and unverified TLS rejection','production non-owner HTTP startup','scheduled drift DB history/overlap/outage/stale fences','lease mutual exclusion/heartbeat/expiry','durable job claims/results and no abandoned replay'],
                 'cleanup_failures':failures}
         if os.getenv('CLOUDFORGE_FINOPS_TEST_IMAGE'):
             report['native_finops_tls_and_audit']='PASS' if success else 'UNVERIFIED'

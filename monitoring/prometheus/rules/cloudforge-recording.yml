@@ -51,6 +51,14 @@ groups:
                 status=~"5.."
               }[5m])
             )
+            or on (job, service, environment)
+            (
+              sum by (job, service, environment) (
+                rate(http_requests_total{
+                  job="deployment-service"
+                }[5m])
+              ) * 0
+            )
           )
           /
           clamp_min(
@@ -72,6 +80,14 @@ groups:
                   job="deployment-service",
                   status=~"5.."
                 }[5m])
+              )
+              or on (job, service, environment)
+              (
+                sum by (job, service, environment) (
+                  rate(http_requests_total{
+                    job="deployment-service"
+                  }[5m])
+                ) * 0
               )
             )
             /

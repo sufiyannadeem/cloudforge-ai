@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -478,6 +479,21 @@ func (r *Runner) runWithEnvironment(ctx context.Context, workspace string, envir
 	command.Dir = workspace
 
 	command.Env = environment
+
+	command.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	command.Cancel = func() error {
+		if command.Process != nil && command.Process.Pid > 0 {
+			pgid := command.Process.Pid
+			_ = syscall.Kill(-pgid, syscall.SIGTERM)
+			time.AfterFunc(3*time.Second, func() {
+				_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			})
+		}
+		return nil
+	}
+	command.WaitDelay = 5 * time.Second
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

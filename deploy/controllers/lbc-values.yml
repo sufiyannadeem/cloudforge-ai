@@ -1,0 +1,29 @@
+# Target clusterName/region/vpcId and actual IRSA ServiceAccount must be bound before use.
+replicaCount: 2
+image:
+  repository: public.ecr.aws/eks/aws-load-balancer-controller
+  tag: v2.14.1@sha256:cef0fbb0d8534067af81890d9b7af2a6012c01865820ad803589f1c1ccb8627d
+enableShield: false
+enableWaf: false
+enableWafv2: false
+enableServiceMutatorWebhook: false
+createIngressClassResource: false
+ingressClassParams:
+  create: false
+defaultTargetType: ip
+resources:
+  requests:
+    cpu: 100m
+    memory: 192Mi
+controllerConfig:
+  featureGates:
+    ALBGatewayAPI: false
+    NLBGatewayAPI: false
+    AGAController: false
+    LBCapacityReservation: false
+    EnableServiceController: false
+serviceAccount:
+  create: false
+  name: aws-load-balancer-controller
+env:
+  AWS_STS_REGIONAL_ENDPOINTS: regional

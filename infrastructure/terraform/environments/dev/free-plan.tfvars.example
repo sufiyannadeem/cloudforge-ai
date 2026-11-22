@@ -1,0 +1,14 @@
+# Review-only short demo profile; preflight remains NO-GO until all evidence passes.
+# Never upgrade the account. No MSK, Marketplace, extra tenant resources or Kafka.
+enable_nat_gateway        = true
+single_nat_gateway        = true
+private_runtime_endpoints = true
+eks_node_min_size         = 2
+eks_node_desired_size     = 2
+eks_node_max_size         = 2 # Fixed preview pool; no automatic scale-out
+# Must be populated from reviewed operator metadata, never inferred or widened.
+eks_operator_role_arn   = ""
+eks_public_access_cidrs = []
+
+# Requires deploy/preview inputs and the single EFS controller configuration.
+eks_node_instance_types = ["m6a.large"]

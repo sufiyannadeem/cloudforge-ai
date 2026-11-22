@@ -147,9 +147,14 @@ func main() {
 		provisioningService,
 	)
 
+	resourceHandler.Jobs = resourceRepository
 	resourceHandler.TerraformReadOnly = cfg.TerraformReadOnly
 	resourceHandler.DriftStore = resourceRepository
 	resourceHandler.DriftRunner = terraformRunner
+
+	jobsDone := make(chan struct{})
+	go func() { defer close(jobsDone); resourceHandler.RunTerraformJobs(ctx, identity.ProjectAccess{DB: pool}) }()
+	defer func() { stop(); <-jobsDone }()
 
 	router := handler.NewAuthenticatedRouter(resourceHandler, frontendKey, func(ctx context.Context, claims identity.Claims) error {
 		consumed, err := resourceRepository.ConsumeApprovalAssertion(ctx, claims.Nonce, claims.Expiry)

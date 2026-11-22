@@ -1,0 +1,98 @@
+{
+  "status": "DECLARED_PINS_NOT_LIVE_COMPATIBILITY_PROOF",
+  "region": "eu-west-1",
+  "kubernetes_minor": "1.35",
+  "architecture": "linux/amd64",
+  "components": {
+    "vpc-cni": {
+      "version": "v1.22.4-eksbuild.14",
+      "configuration": "config/vpc-cni-configuration.json",
+      "schema": "schemas/vpc-cni-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "coredns": {
+      "version": "v1.13.2-eksbuild.75",
+      "configuration": "config/coredns-configuration.json",
+      "schema": "schemas/coredns-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "kube-proxy": {
+      "version": "v1.35.3-eksbuild.69",
+      "configuration": "config/kube-proxy-configuration.json",
+      "schema": "schemas/kube-proxy-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "aws-efs-csi-driver": {
+      "version": "v3.6.0-eksbuild.1",
+      "configuration": "config/aws-efs-csi-driver-configuration.json",
+      "schema": "schemas/aws-efs-csi-driver-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "aws-ebs-csi-driver": {
+      "version": "v1.68.1-eksbuild.1",
+      "configuration": "config/aws-ebs-csi-driver-configuration.json",
+      "schema": "schemas/aws-ebs-csi-driver-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "metrics-server": {
+      "version": "v0.9.1-eksbuild.2",
+      "configuration": "config/metrics-server-configuration.json",
+      "schema": "schemas/metrics-server-schema.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    },
+    "load-balancer-controller": {
+      "chart": {
+        "version": "1.14.1",
+        "package": "charts/aws-load-balancer-controller"
+      },
+      "image": {
+        "source_tag": "public.ecr.aws/eks/aws-load-balancer-controller:v2.14.1",
+        "amd64_digest": "sha256:cef0fbb0d8534067af81890d9b7af2a6012c01865820ad803589f1c1ccb8627d",
+        "immutable_image": "public.ecr.aws/eks/aws-load-balancer-controller@sha256:cef0fbb0d8534067af81890d9b7af2a6012c01865820ad803589f1c1ccb8627d"
+      },
+      "values": "lbc-values.yml",
+      "crds": "lbc-crds.yaml",
+      "iam_policy": "policies/lbc-target-group.template.json",
+      "acceptance": "UNVERIFIED_REQUIRES_LIVE_READBACK"
+    }
+  },
+  "source_sha256": {
+    "README.md": "4b3884a52d65fd69c7c29f9e371e7096d9d0f62cbf0475338c7d24de3896ca57",
+    "charts/aws-load-balancer-controller/.helmignore": "b18cffd4d200d8910c3b88512c1d3f5d8fbff28e991374d9ac83bbbae59ef825",
+    "charts/aws-load-balancer-controller/Chart.yaml": "e02133c52d6b7d5039c4eecfe4dbc3a645f52adf35090d5504772d3ada8bf268",
+    "charts/aws-load-balancer-controller/LICENSE": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
+    "charts/aws-load-balancer-controller/README.md": "ccac013e605f2c7bbb2ef9bda7385fb152d21e94fddc1e8aa09551170cc10e90",
+    "charts/aws-load-balancer-controller/ci/extra_args": "1806b275130ac8fa537b24da4c83d6c95feb205fca8bed9d20fb7a5fa3ba1ced",
+    "charts/aws-load-balancer-controller/ci/values.yaml": "ff6e98844931e1fbce4853a4731760c8ac6e6849927318b8d575e6505988bfa0",
+    "charts/aws-load-balancer-controller/crds/aga-crds.yaml": "564a3eee2d565a4d049838f75fbf2737a24be3a6847cd96a5200d46a61eb90b5",
+    "charts/aws-load-balancer-controller/crds/crds.yaml": "06b7ad402dd6714e2e2dacb6c3742c11ffa95b5fdc6f63e6ec16ce05616ae2e3",
+    "charts/aws-load-balancer-controller/crds/gateway-crds.yaml": "3d6bf5977214ab249fd560ca128a37737745e0121ba19c0b605a1578b3566ae5",
+    "charts/aws-load-balancer-controller/templates/NOTES.txt": "716c9e564c0d72995706703445b7eb2f68c692b7e2b92cab7e39accfd2f2d18e",
+    "charts/aws-load-balancer-controller/templates/_helpers.tpl": "69c10859c5dfd2dae42ba19e7d43bbd741277e0569bc5e37db83c1bb7fb8c74b",
+    "charts/aws-load-balancer-controller/templates/deployment.yaml": "85dcbe32e2d8f3b418ca517cd4c79648fb1ac27707f3add96807302515a67c76",
+    "charts/aws-load-balancer-controller/templates/hpa.yaml": "3fd5fbcf9c019b635075ab1987ccf23de2b189ca6df89990ed8411bb4d819a5c",
+    "charts/aws-load-balancer-controller/templates/ingressclass.yaml": "c0cbd3d65da26b0e068b07229acf70434882845c56664fcb254b2ce6e659cef8",
+    "charts/aws-load-balancer-controller/templates/pdb.yaml": "180e028bf66777b05b8daf4ed7db2481303e02a115a1235acb6d4733b7cde870",
+    "charts/aws-load-balancer-controller/templates/rbac.yaml": "b9410ca65e5e3346f49cd1e130f126eba95260df9b7354bd432b7e98aa424f11",
+    "charts/aws-load-balancer-controller/templates/service.yaml": "924966c73b0be5caf9c1be5be6a0a3929b0a6f1fa0050d70a713d94810acdd1e",
+    "charts/aws-load-balancer-controller/templates/serviceaccount.yaml": "69bef177044177c47d70181507adefba256e56fa319fccc59400079da8108139",
+    "charts/aws-load-balancer-controller/templates/servicemonitor.yaml": "8b9859659d56f33401af8422ce82938506e1c1299b5256af4bbc1090271cd42f",
+    "charts/aws-load-balancer-controller/templates/webhook.yaml": "7956d9111b18a0d186d6bda3e40de91babcb605d9a81ccdc6b9cb1fa3e8581ec",
+    "charts/aws-load-balancer-controller/values.yaml": "765b4225505c9fcdf6b0378f6a49c0735af5a42db1929252d44b45c25a61bb75",
+    "config/aws-ebs-csi-driver-configuration.json": "c8a3ae006bebe3a59bf6d6e6af37e8045fb10c79e6c0fccee9a3c0a1c3cb6c85",
+    "config/aws-efs-csi-driver-configuration.json": "f2caf549f9c46e867688f4a44bfee58122f7848eedf093954047c1936a30a2c5",
+    "config/coredns-configuration.json": "292e616499f4e354f0095d2e4cc6cc757083dc04f536ac079ff1c4fc288fcbe3",
+    "config/kube-proxy-configuration.json": "f43ef1c23bc06120d50af79e8ea11b54c264a8b6231ea1333eefceb3b4d30800",
+    "config/metrics-server-configuration.json": "6427f356b4fbedcfbb334cf613813a17bebdf73f319b719634af3b55438b8b88",
+    "config/vpc-cni-configuration.json": "397741aa572c74b0d2363ceb102f788cea30cb5685fec7276ef6a024edb00ca8",
+    "lbc-crds.yaml": "06b7ad402dd6714e2e2dacb6c3742c11ffa95b5fdc6f63e6ec16ce05616ae2e3",
+    "lbc-values.yml": "f5b6103ee058db66e9bcbaf5087ca1f78195592234040abca5258743732ec49c",
+    "policies/lbc-target-group.template.json": "c6b7248b170ebe35a03edcd9d5e04467bccde3a72e3a537ada224196132de692",
+    "schemas/aws-ebs-csi-driver-schema.json": "4da2dc5e47e9bfe2aacda4afe5a5e367db0c039d5792ac62a632e622ae03e61d",
+    "schemas/aws-efs-csi-driver-schema.json": "8f133dd33352edc998fa319f6ee2f825eb4cae3f564d009b1c3615828baba2a6",
+    "schemas/coredns-schema.json": "5eaca0052016306ba182462fbf1cbd0b8342bcff3b5b8c878a9547b00485a3f6",
+    "schemas/kube-proxy-schema.json": "23907c732f362d04089e58f4f81cb16df794e771ce3a0d8bcf19aa9d50906024",
+    "schemas/metrics-server-schema.json": "27b8844c8fb7956ace3a6b13cb7998afd00a7397ec96f7e28dc305bdc474bfe6",
+    "schemas/vpc-cni-schema.json": "52ff529b312e6ab80ff688a8a40ef789a028a78922d1bb681578d5545fd0ff2e"
+  }
+}

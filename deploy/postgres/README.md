@@ -20,10 +20,10 @@ For a **new or separately approved** dedicated database, a DBA executes
 approved secret tooling, and then runs existing migrations in this order:
 
 1. Project image with args `migrate` (001–006).
-2. Infrastructure image with args `migrate`, `TERRAFORM_READ_ONLY=true` (001–011).
+2. Infrastructure image with args `migrate`, `TERRAFORM_READ_ONLY=true` (001–013).
 3. Deployment image with args `migrate` (001–006; no Kubernetes credentials needed).
 4. AIOps image with command `python -m app.database`.
-5. As migration owner, execute `002_runtime_grants.sql`; verify all 23 receipts.
+5. As migration owner, execute `002_runtime_grants.sql`; verify all 25 receipts.
 
 These files are deployment bootstrap/grant instructions, not replacements for
 historical migrations. No passwords are embedded; newly created login roles have

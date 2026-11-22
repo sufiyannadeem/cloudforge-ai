@@ -1,3 +1,16 @@
+// Trust only the deployment-configured public origin, never forwarded headers.
+export function publicOrigin(requestUrl: string): string {
+  const configured = process.env.CLOUDFORGE_PUBLIC_ORIGIN;
+  if (!configured) {
+    if (process.env.NODE_ENV === "production") throw new Error("Public origin is required");
+    return new URL(requestUrl).origin;
+  }
+  const url = new URL(configured);
+  if (url.protocol !== "https:" || url.username || url.password ||
+      url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid public origin");
+  return url.origin;
+}
+
 export function secureAuthCookies(origin: string | null): boolean {
   if (process.env.CLOUDFORGE_AUTH_COOKIE_SECURE !== "false" || !origin) return true;
   const url = new URL(origin);
@@ -25,9 +38,9 @@ export function originMatchesRequest(
       return false;
     }
 
-    const expectedOrigin = new URL(
-      `${request.protocol}//${hostHeader}`,
-    );
+    const expectedOrigin = process.env.CLOUDFORGE_PUBLIC_ORIGIN || process.env.NODE_ENV === "production"
+      ? new URL(publicOrigin(requestUrl))
+      : new URL(`${request.protocol}//${hostHeader}`);
 
     return suppliedOrigin.origin === expectedOrigin.origin;
   } catch {

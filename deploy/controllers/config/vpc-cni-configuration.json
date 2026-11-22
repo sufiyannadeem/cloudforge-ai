@@ -1,0 +1,23 @@
+{
+  "enableNetworkPolicy": "true",
+  "env": {
+    "ENABLE_PREFIX_DELEGATION": "false",
+    "ENABLE_POD_ENI": "false",
+    "NETWORK_POLICY_ENFORCING_MODE": "strict"
+  },
+  "resources": {
+    "requests": {
+      "cpu": "50m",
+      "memory": "128Mi"
+    }
+  },
+  "nodeAgent": {
+    "enabled": true,
+    "resources": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "128Mi"
+      }
+    }
+  }
+}

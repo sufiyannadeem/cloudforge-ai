@@ -1,0 +1,165 @@
+{
+  "status": "PROPOSED_BUDGET_NOT_DEPLOYED",
+  "node_count": 2,
+  "raw_node": {
+    "cpu_m": 2000,
+    "memory_mi": 4096,
+    "pods": 110
+  },
+  "optimistic_al2023_node": {
+    "cpu_m": 1930,
+    "memory_mi": 3554,
+    "pods": 17
+  },
+  "assumption": "Optimistic secondary-IP fallback: CPU reservation 70m; memory=4096-(11*17+255)-100. Actual AMI/maxPods/allocatable and physical memory require readback. Managed maxPods can differ; this is NOT an observed node.",
+  "sources": [
+    "https://docs.aws.amazon.com/eks/latest/userguide/choosing-instance-type.html",
+    "https://raw.githubusercontent.com/awslabs/amazon-eks-ami/main/nodeadm/internal/kubelet/config.go"
+  ],
+  "system": [
+    {
+      "name": "vpc-cni-and-policy-agent",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 100,
+      "memory_mi": 256,
+      "host_network": true
+    },
+    {
+      "name": "kube-proxy",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 50,
+      "memory_mi": 64,
+      "host_network": true
+    },
+    {
+      "name": "efs-csi-node",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 70,
+      "memory_mi": 192,
+      "host_network": true
+    },
+    {
+      "name": "ebs-csi-node",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 70,
+      "memory_mi": 192,
+      "host_network": false
+    },
+    {
+      "name": "coredns",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 100,
+      "memory_mi": 128
+    },
+    {
+      "name": "efs-csi-controller",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 160,
+      "memory_mi": 416
+    },
+    {
+      "name": "ebs-csi-controller",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 210,
+      "memory_mi": 672
+    },
+    {
+      "name": "load-balancer-controller",
+      "replicas": 2,
+      "spread": true,
+      "cpu_m": 100,
+      "memory_mi": 192
+    },
+    {
+      "name": "metrics-server",
+      "replicas": 1,
+      "cpu_m": 100,
+      "memory_mi": 200
+    }
+  ],
+  "monitoring": [
+    {
+      "name": "kube-state-metrics",
+      "replicas": 1,
+      "cpu_m": 100,
+      "memory_mi": 128
+    },
+    {
+      "name": "prometheus",
+      "replicas": 1,
+      "cpu_m": 200,
+      "memory_mi": 512,
+      "pvc_gi": 16
+    },
+    {
+      "name": "grafana",
+      "replicas": 1,
+      "cpu_m": 100,
+      "memory_mi": 256,
+      "pvc_gi": 2
+    },
+    {
+      "name": "alertmanager",
+      "replicas": 1,
+      "cpu_m": 50,
+      "memory_mi": 128,
+      "pvc_gi": 2
+    }
+  ],
+  "applications": [
+    {
+      "name": "project-service",
+      "replicas": 2,
+      "cpu_m": 100,
+      "memory_mi": 128,
+      "spread": true
+    },
+    {
+      "name": "infrastructure-service",
+      "replicas": 2,
+      "cpu_m": 200,
+      "memory_mi": 256,
+      "spread": true
+    },
+    {
+      "name": "deployment-service",
+      "replicas": 2,
+      "cpu_m": 100,
+      "memory_mi": 128,
+      "spread": true
+    },
+    {
+      "name": "finops-service",
+      "replicas": 2,
+      "cpu_m": 100,
+      "memory_mi": 128,
+      "spread": true
+    },
+    {
+      "name": "aiops-service",
+      "replicas": 2,
+      "cpu_m": 200,
+      "memory_mi": 256,
+      "spread": true
+    },
+    {
+      "name": "frontend",
+      "replicas": 2,
+      "cpu_m": 100,
+      "memory_mi": 256,
+      "spread": true
+    }
+  ],
+  "csi_accounting": "EFS controller=driver100m/256Mi+provisioner50m/128Mi+liveness10m/32Mi; EBS controller=driver100/256+attacher25/128+provisioner50/128+resizer25/128+liveness10/32. Snapshotter/health/volume-modification disabled. Node driver50/128+registrar10/32+liveness10/32. Vendor pod readback must confirm all enabled sidecars; unmodeled containers block acceptance.",
+  "monitoring_storage_gi": 20,
+  "node_exporter": "NOT_INCLUDED; no node exporter was proposed in existing monitoring config",
+  "pvc_zone_placement": "UNKNOWN until EBS volumes/nodes exist; model does not claim RWO zone acceptance",
+  "native_tls_and_ca": "REQUIRED; monitor settings below are proposed inputs, not existing endpoints"
+}
