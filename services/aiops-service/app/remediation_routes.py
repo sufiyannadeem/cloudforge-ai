@@ -46,7 +46,7 @@ def get_remediation(
         {
             "action": "acknowledge_incident",
             "policy": "allowed",
-            "human_approval_required": False,
+            "human_approval_required": True,
             "description": (
                 "Acknowledge the incident without modifying "
                 "production infrastructure."
@@ -55,7 +55,7 @@ def get_remediation(
         {
             "action": "no_action",
             "policy": "allowed",
-            "human_approval_required": False,
+            "human_approval_required": True,
             "description": (
                 "Record that no production remediation is required."
             ),
@@ -115,6 +115,8 @@ def preview_remediation(
     try:
         trusted_request = request.model_copy(update={"requested_by": caller["actor"]})
         return service.preview(incident_id, trusted_request)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from None
     except LookupError as exc:
         raise HTTPException(
             status_code=404,
@@ -141,7 +143,7 @@ def approve_remediation(
         )
 
     try:
-        return service.approve(proposal_id, caller["actor"], caller["role"])
+        return service.approve(proposal_id, caller["actor"], caller["role"], request.expected_version, request.expected_fingerprint)
     except PermissionError as exc:
         raise HTTPException(
             status_code=409,
@@ -166,7 +168,7 @@ def reject_remediation(
     incident_id: str,
     proposal_id: str,
     request: RemediationRejectionRequest,
-    caller: dict[str, str] = Depends(require_remediation_approver),
+    caller: dict[str, str] = Depends(require_remediation_human),
 ):
 
     proposal = service.remediations.get(proposal_id)
@@ -181,9 +183,9 @@ def reject_remediation(
         return service.reject(
             proposal_id,
             caller["actor"],
-            request.reason.strip(),
+            request.reason.strip() if request.reason else None,
         )
-    except ValueError as exc:
+    except (ValueError, PermissionError) as exc:
         raise HTTPException(
             status_code=409,
             detail=str(exc),
@@ -241,7 +243,7 @@ def execute_remediation(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Remediation execution failed: {exc}",
+            detail="Remediation execution unavailable; review internal audit",
         ) from exc
 
 
@@ -288,3 +290,32 @@ def verify_remediation(
             status_code=502,
             detail=f"Remediation verification failed: {exc}",
         ) from exc
+
+
+@router.get("/{incident_id}/remediation/history")
+def remediation_history(incident_id: str, caller: dict = Depends(require_remediation_human)):
+    return {"incident_id": incident_id, "history": service.remediations.history(incident_id)}
+
+
+@router.post("/{incident_id}/remediation/{proposal_id}/alternative")
+def remediation_alternative(incident_id: str, proposal_id: str, caller: dict = Depends(require_remediation_human)):
+    proposal=service.remediations.get(proposal_id)
+    if proposal is None or proposal.incident_id!=incident_id:
+        raise HTTPException(404,"Remediation proposal not found")
+    try:
+        return service.remediations.alternative(proposal_id,caller['actor'])
+    except (ValueError,PermissionError) as exc:
+        raise HTTPException(409,str(exc)) from None
+
+
+@router.get("/{incident_id}/remediation/evidence")
+def trusted_remediation_evidence(incident_id: str,caller: dict=Depends(require_remediation_human)):
+    try:return service.remediations.evidence_options(incident_id,caller['actor'])
+    except (PermissionError,ValueError) as exc:raise HTTPException(409,str(exc)) from None
+
+
+@router.post("/{incident_id}/remediation/advisories/{effect}/reject")
+def reject_local_advisory(incident_id: str,effect: str,request: RemediationRejectionRequest,
+                          caller: dict=Depends(require_remediation_human)):
+    try:return service.remediations.reject_advisory(incident_id,caller['actor'],effect,request.reason.strip() if request.reason else None)
+    except (PermissionError,ValueError) as exc:raise HTTPException(409,str(exc)) from None

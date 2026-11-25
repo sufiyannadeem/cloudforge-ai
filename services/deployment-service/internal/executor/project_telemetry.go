@@ -49,8 +49,9 @@ type kubeObject struct {
 		CreationTimestamp    time.Time
 	}
 	Spec struct {
-		Replicas   *int
-		Containers []struct{ Name, Image string }
+		HostNetwork bool
+		Replicas    *int
+		Containers  []struct{ Name, Image string }
 	}
 	Status struct {
 		ObservedGeneration observedGeneration
@@ -80,12 +81,14 @@ func (g *observedGeneration) UnmarshalJSON(data []byte) error {
 }
 
 func owns(object kubeObject, kind, name, id string) bool {
+	controllers, matched := 0, false
 	for _, owner := range object.Metadata.OwnerReferences {
-		if owner.Controller && owner.Kind == kind && owner.Name == name && owner.UID == id {
-			return true
+		if owner.Controller {
+			controllers++
+			matched = owner.Kind == kind && owner.Name == name && owner.UID == id
 		}
 	}
-	return false
+	return controllers == 1 && matched
 }
 
 func (k *KubernetesExecutor) readScoped(ctx context.Context, namespace string, args ...string) ([]byte, error) {
@@ -110,7 +113,7 @@ func matchesScopedObject(object kubeObject, deployment model.Deployment) bool {
 }
 
 func matchesPod(item kubeObject, deployment model.Deployment) bool {
-	if item.Kind != "Pod" || !matchesScopedObject(item, deployment) ||
+	if item.Kind != "Pod" || item.Spec.HostNetwork || !matchesScopedObject(item, deployment) ||
 		item.Metadata.Annotations["cloudforge.ai/revision-id"] != deployment.ID.String() {
 		return false
 	}

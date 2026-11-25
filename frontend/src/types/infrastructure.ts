@@ -111,5 +111,5 @@ export type TerraformDriftScan = {
   id: number;
   scanned_at: string;
   status: "observed" | "unavailable";
-  findings: { address?: string; type: string; source: string; severity: string; risk: string; recommendation: string }[] | null;
+  findings: { address?: string; type: string; source: string; severity: string; risk: string; recommendation: string; comparisons?: { field: string; before: number | boolean; after: number | boolean }[] }[] | null;
 };

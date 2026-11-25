@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "SYNTHETIC_CI_ONLY",
+  "human_approval": "PENDING",
+  "reviewed_by": null,
+  "files": {
+    "runbooks/deployment-failure.md": "0532c93b3b5eeb7cae7dc51ab91380709262ef00b05c1e8f53176a17070394ed",
+    "runbooks/high-error-rate.md": "e3f30ebbdad0198addd15feafb8813d6dcbc0b497aac9fde17aab66b2ba18487",
+    "runbooks/high-latency.md": "0a48c46f2fca337f9a9ed8e543c78121fc22d9b60321067c9a2e586662127002",
+    "runbooks/service-down.md": "aa98e3773d4d53433ad0d3553c88a97f8f4ae9cf0e1c54db22af87b0402325bb",
+    "slo/cloudforge-slos.md": "6461af71f44963a9dcdb6b622e2271e33dd396fec1c5cf2ebc8d89460426943d"
+  }
+}

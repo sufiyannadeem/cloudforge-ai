@@ -1,18 +1,38 @@
 // Trust only the deployment-configured public origin, never forwarded headers.
 export function publicOrigin(requestUrl: string): string {
   const configured = process.env.CLOUDFORGE_PUBLIC_ORIGIN;
+
   if (!configured) {
-    if (process.env.NODE_ENV === "production") throw new Error("Public origin is required");
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Public origin is required");
+    }
     return new URL(requestUrl).origin;
   }
+
   const url = new URL(configured);
-  if (url.protocol !== "https:" || url.username || url.password ||
-      url.pathname !== "/" || url.search || url.hash) throw new Error("Invalid public origin");
+
+  const isLocalHTTP =
+    process.env.NODE_ENV !== "production" &&
+    process.env.CLOUDFORGE_LOCAL_DEV === "true" &&
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+
+  if (
+    (url.protocol !== "https:" && !isLocalHTTP) ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Invalid public origin");
+  }
+
   return url.origin;
 }
 
 export function secureAuthCookies(origin: string | null): boolean {
-  if (process.env.CLOUDFORGE_AUTH_COOKIE_SECURE !== "false" || !origin) return true;
+  if (process.env.NODE_ENV === "production" || process.env.CLOUDFORGE_AUTH_COOKIE_SECURE !== "false" || !origin) return true;
   const url = new URL(origin);
   return url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
 }

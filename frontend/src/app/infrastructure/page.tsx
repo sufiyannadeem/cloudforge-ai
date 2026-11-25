@@ -245,7 +245,8 @@ export default function InfrastructurePage() {
 
       const payload = await response.json();
 
-      setResources(getResourceList(payload));
+      const requested = new URLSearchParams(window.location.search).get("resource");
+      setResources(getResourceList(payload).filter((resource) => !requested || resource.id === requested));
     } catch (requestError) {
       if (!quiet) setError(
         requestError instanceof Error
@@ -1137,7 +1138,7 @@ return () => {
                               <DriftHistory
                                 resourceId={resource.id}
                                 scanAllowed={resource.status === "active" && (operator || identity?.role === "sre")}
-                                onPlan={operator && resource.status === "active" && planningId !== resource.id ? () => void planResource(resource) : undefined}
+                                onPlan={canManageRequest(resource) && resource.status === "active" && planningId !== resource.id ? () => void planResource(resource) : undefined}
                               />
                             </td>
 

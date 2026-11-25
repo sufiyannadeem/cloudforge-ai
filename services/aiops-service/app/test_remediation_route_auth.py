@@ -14,9 +14,18 @@ from .main import authorize_requests
 from .remediation_access import require_remediation_approver, require_remediation_human
 
 
+@pytest.fixture(autouse=True)
+def verified_project_fixture(monkeypatch):
+    # This suite checks human/approval identity; ownership/replay deny cases are
+    # exercised through actual middleware in test_secure_integration.py.
+    from . import main, project_evidence
+    monkeypatch.setattr(project_evidence, "authorize_incident", lambda *args: "00000000-0000-0000-0000-000000000001")
+    monkeypatch.setattr(main, "claim_telemetry_assertion", lambda *args: True)
+
+
 @pytest.mark.parametrize(
     "case,status",
-    [("verified", 200), ("sre", 200), ("developer", 403), ("developer read", 403), ("legacy", 401),
+    [("verified", 200), ("sre", 403), ("developer", 403), ("developer read", 403), ("legacy", 401),
      ("wrong issuer", 401), ("wrong audience", 401), ("wrong action", 401),
      ("expired", 401), ("wrong signature", 401), ("missing key", 503)],
 )
@@ -36,6 +45,7 @@ def test_remediation_uses_verified_frontend_identity(monkeypatch, case, status):
         "aud": "deployment" if case == "wrong audience" else "aiops",
         "target": path.replace("/approve", "/execute") if case == "wrong action" else path,
         "method": method, "sub": "verified-operator",
+        "body": __import__("hashlib").sha256(b"").hexdigest(),
         "role": "developer" if case.startswith("developer") else ("sre" if case == "sre" else "platform-engineer"),
         "iat": now, "exp": now + (-1 if case == "expired" else 25), "nonce": "01" * 16,
     }
@@ -50,6 +60,8 @@ def test_remediation_uses_verified_frontend_identity(monkeypatch, case, status):
         "type": "http", "method": method, "path": path, "raw_path": path.encode(),
         "query_string": b"", "headers": [(name.lower().encode(), value.encode()) for name, value in headers.items()],
     })
+
+    request._body = b""
 
     async def approve(req):
         try:

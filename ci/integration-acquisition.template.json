@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "status": "UNBOUND_REQUIRES_REVIEW",
+  "reviewed_by": null,
+  "platform": "linux-amd64",
+  "postgres_image": null,
+  "artifacts": {
+    "prometheus": {"version": "3.5.0", "url": "https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz", "sha256": null, "format": "tar.gz", "limit_mib": 180},
+    "kubeconform": {"version": "0.6.7", "url": "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz", "sha256": null, "format": "tar.gz", "limit_mib": 30},
+    "helm": {"version": "3.20.0", "url": "https://get.helm.sh/helm-v3.20.0-linux-amd64.tar.gz", "sha256": null, "format": "tar.gz", "limit_mib": 40},
+    "kubectl": {"version": "1.35.0", "url": "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl", "sha256": null, "format": "binary", "limit_mib": 80},
+    "terraform": {"version": "1.17.2", "url": "https://releases.hashicorp.com/terraform/1.17.2/terraform_1.17.2_linux_amd64.zip", "sha256": null, "format": "zip", "limit_mib": 60},
+    "go": {"version": "1.26.11", "url": "https://go.dev/dl/go1.26.11.linux-amd64.tar.gz", "sha256": null, "format": "tar.gz", "limit_mib": 120},
+    "schemas": {"version": "kubernetes-1.35.0_rollouts-REVIEW_CSI-REVIEW", "url": null, "sha256": null, "format": "tar.gz", "limit_mib": 50}
+  },
+  "schemas": {
+    "kubernetes_version": "1.35.0",
+    "rollouts_version": null,
+    "csi_version": null,
+    "schema_location": "{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+  },
+  "semantic": {
+    "artifact": {"version": "minilm-1110a243fdf4706b3f48f1d95db1a4f5529b4d41-approved-index", "url": null, "sha256": null, "format": "tar.gz", "limit_mib": 160},
+    "wheels": {"version": "cpython-312-linux-amd64-reviewed", "url": null, "sha256": null, "format": "tar.gz", "limit_mib": 250},
+    "glibc_base": null,
+    "embedding_lock_sha256": null,
+    "model_manifest_sha256": null,
+    "corpus_manifest_sha256": null,
+    "index_sha256": null,
+    "max_rss_mib": 1024,
+    "max_p95_ms": null
+  }
+}

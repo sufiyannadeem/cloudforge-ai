@@ -1,0 +1,99 @@
+{
+  "schema_version": 2,
+  "documents": {
+    "architecture/cloudforge-architecture.md": {
+      "sha256": "60745af7f3784e6187d10d7b1f51fe58f8421bed26757b776cbaa8a4263777b6",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": []
+    },
+    "runbooks/deployment-failure.md": {
+      "sha256": "1493be0f36be508430c58049cfb1b403b1d551440f43e96bef7fee682e7dd570",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": [
+        "deployment_health",
+        "image_pull_failure",
+        "scheduling_failure",
+        "startup_configuration"
+      ]
+    },
+    "runbooks/high-error-rate.md": {
+      "sha256": "ff4f32129a6b9ef6f64cd7fa2993b9c2b5320957455f317abaf81b697a7dd3eb",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": [
+        "error_rate"
+      ]
+    },
+    "runbooks/high-latency.md": {
+      "sha256": "22308bc4b44286c073e8bad4dd9610edc05ccbd343a391a161837d3d1d25377a",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": [
+        "latency"
+      ]
+    },
+    "runbooks/service-down.md": {
+      "sha256": "eca8d20091478ee8383fb4dbf26e72b503dbe68879cdf34710ef3fe6a4441964",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": [
+        "availability",
+        "dependency_health"
+      ]
+    },
+    "services/aiops-service.md": {
+      "sha256": "8010e43ce9d0d4218b6c28fcb05fc332b34d96e59edd20870b755047c0c4f92c",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": []
+    },
+    "services/deployment-service.md": {
+      "sha256": "3d7358121911174230f0888a14ed9fa867f757a203add6462c3caaa2658ea7f0",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": []
+    },
+    "services/infrastructure-service.md": {
+      "sha256": "a9ba1cba8c7c21c3c70c2a0cc7a8c1ee9fa6a8c48b774c8bb2018a4efe10d6bf",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": []
+    },
+    "services/project-service.md": {
+      "sha256": "a7aa575e312d64b5c3432e56a150a10c44c78cff3bb3455f0fcff38024846c1c",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": []
+    },
+    "slo/cloudforge-slos.md": {
+      "sha256": "62e520d41b0490fd9490b0ec17f729b508d41f66a616ca496eb51cf16dd1ae83",
+      "projects": [
+        "*"
+      ],
+      "reviewed_by": "repository-maintainers",
+      "signals": [
+        "slo_violation"
+      ]
+    }
+  }
+}

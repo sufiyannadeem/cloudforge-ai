@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 import httpx2 as httpx
+import pytest
 
 from .main import app
 from .models import (
@@ -31,7 +32,7 @@ def authenticated_get(path):
 
     async def send():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-            return await client.get(path, headers={"X-CloudForge-Identity": f"{payload.decode()}.{signature}"})
+            return await asyncio.wait_for(client.get(path, headers={"X-CloudForge-Identity": f"{payload.decode()}.{signature}"}), timeout=3)
 
     try:
         return asyncio.run(send())
@@ -65,6 +66,24 @@ _TEST_INCIDENT = Incident(
     ),
 )
 
+
+@pytest.fixture(autouse=True)
+def isolated_evidence(monkeypatch):
+    from . import main
+    monkeypatch.setattr(main, "claim_telemetry_assertion", lambda *args: True)
+    from . import project_evidence
+    from .ai_enrichment_service import AIEnrichmentService
+    from .ai_enrichment_models import EvidencePack
+    from fastapi import HTTPException
+    def authorize(incident_id, claims):
+        if incident_id != _TEST_INCIDENT.id:
+            raise HTTPException(404, "Incident not found.")
+        return "00000000-0000-0000-0000-000000000001"
+    monkeypatch.setattr(project_evidence, "authorize_incident", authorize)
+    monkeypatch.setattr(AIEnrichmentService, "_build_evidence_pack", lambda self, incident: EvidencePack(
+        incident_id=incident.id,service=incident.service,alert_name=incident.alert_name,
+        incident_summary="Offline fixture", anomaly_classification="normal",slo_classification="insufficient_data"))
+    monkeypatch.setattr(AIEnrichmentService, "_build_ai_evidence_package", lambda *args: None)
 
 def test_health_endpoint():
     response = authenticated_get("/health")

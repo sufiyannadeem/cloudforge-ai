@@ -80,7 +80,7 @@ def test_package_contains_knowledge():
     )
 
 
-def test_prompt_separates_evidence_and_knowledge():
+def test_prompt_withholds_local_knowledge_and_preserves_evidence():
     builder = AIEvidencePackageBuilder(
         read_only_tools=build_tools(),
         knowledge_base=build_knowledge_base(),
@@ -113,8 +113,13 @@ def test_prompt_separates_evidence_and_knowledge():
 
     assert (
         "CLOUDFORGE OPERATIONAL KNOWLEDGE"
-        in prompt
+        in package.knowledge_context
     )
+
+    assert "CLOUDFORGE OPERATIONAL KNOWLEDGE" not in prompt
+    assert "high-error-rate.md" not in prompt
+    assert package.knowledge_context not in prompt
+    assert "Runbook content is withheld." in prompt
 
     evidence_position = prompt.index(
         "AUTHORITATIVE OPERATIONAL EVIDENCE"
@@ -128,6 +133,22 @@ def test_prompt_separates_evidence_and_knowledge():
         evidence_position
         < knowledge_position
     )
+
+
+def test_prompt_never_serializes_private_runbook_content():
+    from dataclasses import replace
+
+    package = AIEvidencePackageBuilder(read_only_tools=build_tools()).build(
+        incident_id="incident-1",
+        service="deployment-service",
+        knowledge_query="high error rate",
+    )
+    private_runbook = "PRIVATE_RUNBOOK_SENTINEL: internal recovery instructions"
+    package = replace(package, knowledge_context=private_runbook)
+
+    assert package.knowledge_context == private_runbook
+    assert private_runbook not in package.to_prompt_context()
+    assert "incident-1" in package.to_prompt_context()
 
 
 def test_provenance_is_explicit():
@@ -214,7 +235,8 @@ def run():
     test_package_contains_knowledge()
     print("KNOWLEDGE PACKAGE: PASS")
 
-    test_prompt_separates_evidence_and_knowledge()
+    test_prompt_withholds_local_knowledge_and_preserves_evidence()
+    test_prompt_never_serializes_private_runbook_content()
     print("EVIDENCE/KNOWLEDGE SEPARATION: PASS")
 
     test_provenance_is_explicit()

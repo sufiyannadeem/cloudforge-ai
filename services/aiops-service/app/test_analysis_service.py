@@ -225,12 +225,9 @@ def test_end_to_end_ai_analysis() -> None:
 
     assert provider.user_prompt is not None
 
-    assert (
-        "CLOUDFORGE OPERATIONAL KNOWLEDGE"
-        in provider.user_prompt
-    )
-
-    assert "Source:" in provider.user_prompt
+    # Runbooks stay local even on the legacy provider path.
+    assert "CLOUDFORGE OPERATIONAL KNOWLEDGE" not in provider.user_prompt
+    assert "Source:" not in provider.user_prompt
 
     assert (
         "deployment-service"

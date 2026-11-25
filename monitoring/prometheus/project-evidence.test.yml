@@ -1,0 +1,88 @@
+rule_files:
+- rules/cloudforge-project-evidence.yml
+evaluation_interval: 15s
+tests:
+- name: valid
+  interval: 15s
+  input_series:
+  - series: cloudforge_resource_project_info{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  - series: cloudforge_resource_mapping_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002"}
+    values: 0+15x4
+  - series: cloudforge_resource_signal_state{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 1x4
+  - series: cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 0+15x4
+  - series: cloudforge_project_expected_resources{job="deployment-service",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  promql_expr_test:
+  - expr: cloudforge_project_internal_signal_state{project_id="00000000-0000-0000-0000-000000000001",signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples:
+    - labels: cloudforge_project_internal_signal_state{project_id="00000000-0000-0000-0000-000000000001",signal="cpu_pressure",provenance="verified_resource_v1"}
+      value: 1
+  - expr: cloudforge_project_signal_state{signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+- name: stale_mapping
+  interval: 15s
+  input_series:
+  - series: cloudforge_resource_project_info{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  - series: cloudforge_resource_mapping_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002"}
+    values: -200x4
+  - series: cloudforge_resource_signal_state{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 1x4
+  - series: cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 0+15x4
+  - series: cloudforge_project_expected_resources{job="deployment-service",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  promql_expr_test:
+  - expr: cloudforge_project_internal_signal_state{project_id="00000000-0000-0000-0000-000000000001",signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+  - expr: cloudforge_project_signal_state{signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+- name: ambiguous_mapping
+  interval: 15s
+  input_series:
+  - series: cloudforge_resource_project_info{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  - series: cloudforge_resource_mapping_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002"}
+    values: 0+15x4
+  - series: cloudforge_resource_signal_state{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 1x4
+  - series: cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 0+15x4
+  - series: cloudforge_project_expected_resources{job="deployment-service",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  - series: cloudforge_resource_project_info{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",instance="duplicate",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  promql_expr_test:
+  - expr: cloudforge_project_internal_signal_state{project_id="00000000-0000-0000-0000-000000000001",signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+  - expr: cloudforge_project_signal_state{signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+- name: missing_resource
+  interval: 15s
+  input_series:
+  - series: cloudforge_resource_project_info{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 1x4
+  - series: cloudforge_resource_mapping_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002"}
+    values: 0+15x4
+  - series: cloudforge_resource_signal_state{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 1x4
+  - series: cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service",cluster="trusted",namespace="cf-00000000-0000-0000-0000-000000000001",uid="00000000-0000-0000-0000-000000000003",resource_id="00000000-0000-0000-0000-000000000002",signal="cpu_pressure"}
+    values: 0+15x4
+  - series: cloudforge_project_expected_resources{job="deployment-service",project_id="00000000-0000-0000-0000-000000000001"}
+    values: 2x4
+  promql_expr_test:
+  - expr: cloudforge_project_internal_signal_state{project_id="00000000-0000-0000-0000-000000000001",signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []
+  - expr: cloudforge_project_signal_state{signal="cpu_pressure"}
+    eval_time: 30s
+    exp_samples: []

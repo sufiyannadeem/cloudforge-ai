@@ -77,7 +77,9 @@ def verified_instances(response: dict, account: str, requested: dict[str, dict])
     return checked
 
 
-def costs_for_region(rows: list[dict], today: date) -> tuple[list[dict], set[str]]:
+def costs_for_region(rows: list[dict], today: date, *, window_days: int = 7) -> tuple[list[dict], set[str]]:
+    if window_days not in {7, 14}:
+        raise ValueError("Unsupported billing window")
     region, account = rows[0]["region"], rows[0]["account_id"]
     client = AWSFinOpsClient(region=region, client_config=AWS_LIMITS)
     if client.get_account_id() != account:
@@ -87,7 +89,7 @@ def costs_for_region(rows: list[dict], today: date) -> tuple[list[dict], set[str
     result = ec2.describe_instances(InstanceIds=sorted(requested))
     verified = verified_instances(result, account, requested)
     start_by_id = {
-        instance: max(today - timedelta(days=7), requested[instance]["verified_at"].astimezone(UTC).date() + timedelta(days=1))
+        instance: max(today - timedelta(days=window_days), requested[instance]["verified_at"].astimezone(UTC).date() + timedelta(days=1))
         for instance in verified
     }
     eligible = {key: value for key, value in start_by_id.items() if value < today}
@@ -107,6 +109,8 @@ def costs_for_region(rows: list[dict], today: date) -> tuple[list[dict], set[str
         ]},
     }
     totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    daily: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
+    resource_daily: dict[tuple[str, str, str, str], Decimal] = defaultdict(Decimal)
     covered: set[str] = set()
     seen: set[tuple[str, date]] = set()
     for _ in range(4):
@@ -131,11 +135,19 @@ def costs_for_region(rows: list[dict], today: date) -> tuple[list[dict], set[str
                 if not value.is_finite() or not re.fullmatch(r"[A-Z]{3}", currency):
                     raise ValueError("invalid cost data")
                 totals[(quality, currency)] += value
+                daily[(period.isoformat(), quality, currency)] += value
+                resource_daily[(instance, period.isoformat(), quality, currency)] += value
                 covered.add(instance)
         token = page.get("NextPageToken")
         if not token:
             return [
-                {"status": quality, "currency": currency, "amount": str(value)}
+                {"status": quality, "currency": currency, "amount": str(value),
+                 "resource_history": [{"resource_id": str(requested[instance]["resource_id"]), "date": day, "amount": str(amount)}
+                                      for (instance, day, kind, unit), amount in sorted(resource_daily.items())
+                                      if kind == quality and unit == currency],
+                 "history": [{"date": day, "amount": str(amount)}
+                             for (day, kind, unit), amount in sorted(daily.items())
+                             if kind == quality and unit == currency]}
                 for (quality, currency), value in sorted(totals.items())
             ], covered
         params["NextPageToken"] = token
@@ -162,7 +174,7 @@ def project_costs(project_id: UUID, request: Request, response: Response, resour
         if not rows:
             raise HTTPException(404, "Resource attribution unavailable")
     unavailable = {"project_id": str(project_id), "status": "unavailable", "costs": [],
-                   "resources_with_cost": 0, "active_ec2_resources": len(rows)}
+                   "resources_with_cost": 0, "active_ec2_resources": len(rows), "history": []}
     if len(rows) > 20:
         return {**unavailable, "active_ec2_resources": None}
     grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
@@ -174,6 +186,7 @@ def project_costs(project_id: UUID, request: Request, response: Response, resour
         return unavailable
 
     totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
+    history: dict[tuple[str, str, str], Decimal] = defaultdict(Decimal)
     with_cost = 0
     for group in grouped.values():
         try:
@@ -181,9 +194,13 @@ def project_costs(project_id: UUID, request: Request, response: Response, resour
             with_cost += len(covered)
             for item in amounts:
                 totals[(item["status"], item["currency"])] += Decimal(item["amount"])
+                for day in item.get("history", []):
+                    history[(day["date"], item["status"], item["currency"])] += Decimal(day["amount"])
         except (AWSFinOpsError, ClientError, BotoCoreError, ValueError, TypeError, KeyError, InvalidOperation):
             continue
     return {**unavailable, "status": "available" if totals else "unavailable",
             "resources_with_cost": with_cost,
+            "history": [{"date": day, "status": kind, "currency": unit, "amount": str(value)}
+                        for (day, kind, unit), value in sorted(history.items())],
             "costs": [{"status": kind, "currency": currency, "amount": str(value)}
                       for (kind, currency), value in sorted(totals.items())]}

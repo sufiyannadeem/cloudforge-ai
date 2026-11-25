@@ -43,6 +43,11 @@ class RemediationPolicy:
         target_deployment_id: str | None,
     ) -> RemediationPolicyResult:
 
+        if incident_status != "open" and action != RemediationAction.NO_ACTION:
+            return RemediationPolicyResult(action=action,decision=PolicyDecision.BLOCKED,
+                reason="Only open incidents support mutation recommendations.",
+                requires_human_approval=True,executable=False)
+
         if action in self.BLOCKED_ACTIONS:
             return RemediationPolicyResult(
                 action=action,

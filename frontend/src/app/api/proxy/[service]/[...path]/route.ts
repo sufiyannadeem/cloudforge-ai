@@ -53,7 +53,13 @@ function isAuthorizedForRoute(
   method: string,
   path: string[],
 ): boolean {
+  if (service === "project" && path[0] === "admin") return role === "platform-engineer";
+  if (service === "aiops" && role === "developer") return false;
+  if (service === "finops" && role === "developer" && path[3] === "aws") return false;
   if (!MUTATING_METHODS.has(method)) return true;
+  if (service === "aiops" && path.includes("remediation") && ["approve", "execute"].includes(path.at(-1) ?? "")) {
+    return role === "platform-engineer";
+  }
 
   if (service === "infrastructure") {
     if (method === "POST" && path.length === 5 && path[2] === "resources" && path[4] === "drift") {
@@ -163,7 +169,7 @@ async function proxyRequest(
     body = await request.arrayBuffer();
   }
 
-  const approvalBody = request.method === "POST" && ((service === "infrastructure" && /\/(apply|review)$/.test(targetUrl.pathname)) || (service === "project" && targetUrl.pathname === "/admin/accounts") || (service === "deployment" && /\/promote$/.test(targetUrl.pathname)))
+  const approvalBody = request.method === "POST" && ((service === "infrastructure" && /\/(apply|review)$/.test(targetUrl.pathname)) || (service === "project" && targetUrl.pathname === "/admin/accounts") || (service === "deployment" && /\/promote$/.test(targetUrl.pathname)) || (service === "aiops" && /\/remediation(?:\/|$)/.test(targetUrl.pathname)))
     ? body ?? new ArrayBuffer(0)
     : undefined;
   try {
@@ -179,7 +185,9 @@ async function proxyRequest(
     path[2] === "deployments" && path.length === 5 && ["logs", "observability"].includes(path[4]);
   const isDiagnosticCapture = service === "deployment" && request.method === "POST" &&
     path[2] === "deployments" && path.length === 5 && path[4] === "diagnostics";
-  const requestTimeoutMs = isProvisioningOperation ? 23_000 : isDiagnosticCapture ? 23_000 : isDeploymentTelemetry ? 15_000 : 10_000;
+  const isAIAnalysis = service === "aiops" && request.method === "POST" &&
+    /^\/api\/v1\/incidents\/[^/]+\/analyze$/.test(targetUrl.pathname);
+  const requestTimeoutMs = isAIAnalysis ? 23_000 : isProvisioningOperation ? 23_000 : isDiagnosticCapture ? 23_000 : isDeploymentTelemetry ? 15_000 : 10_000;
 
   try {
     const response = await fetch(targetUrl, {

@@ -282,7 +282,7 @@ class IncidentStore:
                 connection=connection,
                 incident_id=incident_id,
                 event_type="ai_analysis",
-                message="AI incident analysis generated.",
+                message=f"Incident analysis recorded ({analysis.status}).",
                 status=row["status"],
                 metadata={
                     "ai_status": analysis.status,
@@ -343,9 +343,15 @@ class IncidentStore:
         page_size: int = 20,
         sort_by: str = "updated_at",
         sort_order: str = "desc",
+        claims: dict | None = None,
     ) -> tuple[list[Incident], int]:
         filters: list[str] = []
         parameters: list[Any] = []
+        if claims is not None:
+            from .project_evidence import membership_filter
+            predicate, scope_parameters = membership_filter(claims)
+            filters.append(predicate)
+            parameters.extend(scope_parameters)
 
         if status is not None:
             filters.append("status = %s")
@@ -433,10 +439,15 @@ class IncidentStore:
 
             return incidents, total
 
-    def get_statistics(self) -> dict[str, Any]:
+    def get_statistics(self, claims: dict | None = None) -> dict[str, Any]:
+        scope, parameters = "", ()
+        if claims is not None:
+            from .project_evidence import membership_filter
+            predicate, parameters = membership_filter(claims)
+            scope = "WHERE " + predicate
         with get_connection() as connection:
             summary = connection.execute(
-                """
+                f"""
                 SELECT
                     COUNT(*) AS total_incidents,
                     COUNT(*) FILTER (
@@ -451,34 +462,38 @@ class IncidentStore:
                         0
                     ) AS average_alerts_per_incident
                 FROM aiops_incidents
-                """
+                {scope}
+                """, parameters
             ).fetchone()
 
             priority_rows = connection.execute(
-                """
+                f"""
                 SELECT priority, COUNT(*) AS count
                 FROM aiops_incidents
+                {scope}
                 GROUP BY priority
                 ORDER BY priority
-                """
+                """, parameters
             ).fetchall()
 
             impact_rows = connection.execute(
-                """
+                f"""
                 SELECT impact, COUNT(*) AS count
                 FROM aiops_incidents
+                {scope}
                 GROUP BY impact
                 ORDER BY impact
-                """
+                """, parameters
             ).fetchall()
 
             service_rows = connection.execute(
-                """
+                f"""
                 SELECT service, COUNT(*) AS count
                 FROM aiops_incidents
+                {scope}
                 GROUP BY service
                 ORDER BY count DESC, service
-                """
+                """, parameters
             ).fetchall()
 
             return {
@@ -872,6 +887,11 @@ class IncidentStore:
             root_cause_hints=data.get("root_cause_hints") or [],
             recommended_actions=data.get("recommended_actions") or [],
             confidence=confidence,
+
+            diagnosis_project_id=data.get("diagnosis_project_id"),
+            citations=data.get("citations") or [],
+            retrieval_status=data.get("retrieval_status", "not_requested"),
+            knowledge_references=data.get("knowledge_references") or [],
 
             # Evidence-aware analysis fields.
             assessment=data.get("assessment"),

@@ -1,0 +1,7 @@
+[
+  {"query":"p95 latency slow response", "expected":"runbooks/high-latency.md"},
+  {"query":"high error rate 5xx errors", "expected":"runbooks/high-error-rate.md"},
+  {"query":"failed deployment image namespace", "expected":"runbooks/deployment-failure.md"},
+  {"query":"availability SLO error budget", "expected":"slo/cloudforge-slos.md"},
+  {"query":"sourdough pineapple violin astronomy", "expected":null}
+]

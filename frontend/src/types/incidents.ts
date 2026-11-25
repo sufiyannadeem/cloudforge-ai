@@ -37,6 +37,9 @@ export interface DeploymentCorrelation {
 }
 
 export interface AIAnalysis {
+  citations?: string[];
+  retrieval_status?: string;
+  knowledge_references?: { chunk_id: string; path: string; title: string; score?: number }[];
   status: string;
   provider: string;
   model: string | null;
@@ -157,7 +160,9 @@ export type RemediationStatus =
   | "REJECTED"
   | "EXECUTING"
   | "SUCCEEDED"
-  | "FAILED";
+  | "FAILED"
+  | "VERIFYING"
+  | "EXPIRED";
 
 export type RemediationPolicyDecision =
   | "allowed"
@@ -172,6 +177,17 @@ export interface RemediationAvailableAction {
 }
 
 export interface RemediationProposal {
+  recommendation_kind?: "investigation" | "acknowledgement" | "infrastructure_remediation";
+  execution_supported?: boolean;
+  recommendation_version?: number;
+  project_id?: string | null;
+  resource_scope?: string | null;
+  action_fingerprint?: string | null;
+  alternative_of?: string | null;
+  parameters?: Record<string, unknown>;
+  state_snapshot?: Record<string, unknown> | null;
+  expires_at?: string | null;
+  approved_role?: string | null;
   id: string;
   incident_id: string;
   action: RemediationAction;

@@ -113,9 +113,49 @@ with psycopg.connect(dsn,connect_timeout=3) as db:
     else:
         row=db.execute("INSERT INTO finops_anomaly_captures VALUES (gen_random_uuid(),'123456789012','native-fixture',now(),'{}') RETURNING id").fetchone()
         assert db.execute('SELECT actor FROM finops_anomaly_captures WHERE id=%s',(row[0],)).fetchone()[0]=='native-fixture'
+# Exercise the actual audit handler with separate runtime DSNs. AWS billing is
+# a deterministic fixture; this check never contacts AWS or proves billing data.
+if principal=='finops_audit':
+    import secrets
+    from types import SimpleNamespace
+    from uuid import uuid4
+    from fastapi import HTTPException
+    from app import finops_anomaly_audit as audit
+    from app.finops_cost_intelligence import CostAnomalyResponse
+    from app.identity_test_helpers import SignedTestClient
+    from app.main import app
+    from app.project_costs import project_resources
+    assert os.environ['FINOPS_PROJECT_DATABASE_URL'] != os.environ['FINOPS_AUDIT_DATABASE_URL']
+    os.environ['CLOUDFORGE_FRONTEND_KEY']=secrets.token_hex(32)
+    account=['737373737373']
+    estimate=CostAnomalyResponse(start_date='2026-01-01',end_date='2026-01-31',threshold=2.5,sample_count=7)
+    audit.AWSFinOpsService=lambda: SimpleNamespace(
+        client=SimpleNamespace(get_account_id=lambda:account[0]),
+        default_cost_intelligence_range=lambda _:('2026-01-01','2026-01-31'),
+        get_cost_anomalies=lambda **_:estimate)
+    client=SignedTestClient(app);path='/api/v1/finops/aws/anomalies/captures'
+    assert client.post(path).status_code==401
+    assert client.post(path,headers={'X-Test-Human-Role':'developer'}).status_code==403
+    headers={'X-Test-Human-Role':'sre'}
+    response=client.post(path,headers=headers,json={'actor':'forged','evidence':'forged'})
+    assert response.status_code==201
+    saved=response.json()
+    assert saved['actor']=='test-operator' and saved['evidence']['sample_count']==7
+    assert client.get(path,headers=headers).json()==[saved]
+    account[0]='747474747474'
+    assert client.get(path,headers=headers).json()==[]
+    try:
+        project_resources(os.environ['FINOPS_PROJECT_DATABASE_URL'],uuid4(),{'role':'sre','sub':'test-operator'})
+    except HTTPException as error:
+        assert error.status_code==404
+    else:
+        raise AssertionError('Missing project was authorized')
 """
             for principal in ['finops_project','finops_audit']:
-                run('native-'+principal,finops_image,['python','-c',check_python],principal,('--entrypoint','','-e','CHECK_SERVICE='+principal))
+                run('native-'+principal,finops_image,['python','-c',check_python],principal,
+                    ('--entrypoint','','-e','CHECK_SERVICE='+principal,
+                     '-e','FINOPS_PROJECT_DATABASE_URL='+dsn('finops_project'),
+                     '-e','FINOPS_AUDIT_DATABASE_URL='+dsn('finops_audit')))
         for name,url in [('wrong-host',dsn('deployment','wrong-host')),('unverified',dsn('deployment',ssl='require'))]:
             run('deny-'+name,drill.image,[],'deployment',('--mount',f'type=bind,src={output/"dbcheck"},dst=/dbcheck,readonly','--entrypoint','/dbcheck','-e','CHECK_SERVICE=deployment','-e','DATABASE_URL='+url),expected=1)
         proof=secrets.token_hex(32)
@@ -150,6 +190,7 @@ with psycopg.connect(dsn,connect_timeout=3) as db:
                 'cleanup_failures':failures}
         if os.getenv('CLOUDFORGE_FINOPS_TEST_IMAGE'):
             report['native_finops_tls_and_audit']='PASS' if success else 'UNVERIFIED'
+            if success:report['checks'].append('FinOps signed audit API, account isolation and separate runtime DSNs; fixture billing only')
         (output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
     return int(not success or bool(failures))
 

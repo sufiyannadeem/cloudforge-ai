@@ -1,0 +1,19 @@
+# Release CI must validate a reviewed glibc Python 3.12 image@sha256; no tag default.
+ARG AIOPS_GLIBC_BASE
+FROM ${AIOPS_GLIBC_BASE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+# Named local build contexts supplied by the reviewed release job, never fetched here.
+COPY --from=rag_wheels . /wheelhouse/
+COPY --from=rag_lock requirements-embeddings.lock /tmp/requirements-embeddings.lock
+COPY requirements.lock /tmp/requirements.lock
+RUN python -m pip install --no-index --find-links=/wheelhouse --only-binary=:all: --require-hashes \
+    -r /tmp/requirements.lock -r /tmp/requirements-embeddings.lock \
+    && rm -rf /wheelhouse \
+    && groupadd --gid 10001 appgroup \
+    && useradd --uid 10001 --gid 10001 --no-create-home appuser
+COPY app ./app
+COPY knowledge ./knowledge
+USER 10001:10001
+EXPOSE 8090
+CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","8090","--timeout-graceful-shutdown","20","--timeout-keep-alive","5","--limit-concurrency","16"]

@@ -1,3 +1,4 @@
+import { frontendApiRequest } from "@/lib/frontend-api";
 
 import type {
   Incident,
@@ -15,37 +16,13 @@ const REQUEST_TIMEOUT_MS = 10_000;
 async function requestJson<T>(
   url: string,
   options: RequestInit = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
-  const response = await fetch(url, {
+  return frontendApiRequest<T>(url, {
     ...options,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      ...(options.headers ?? {}),
-    },
-    cache: "no-store",
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json", ...options.headers },
+    signal: options.signal ?? AbortSignal.timeout(timeoutMs),
   });
-
-  if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
-
-    try {
-      const body = (await response.json()) as {
-        detail?: string;
-      };
-
-      if (body.detail) {
-        message = body.detail;
-      }
-    } catch {
-      // Keep the generic HTTP error.
-    }
-
-    throw new Error(message);
-  }
-
-  return response.json() as Promise<T>;
 }
 
 const incidentsBaseUrl =
@@ -117,6 +94,7 @@ export async function analyzeIncident(
     {
       method: "POST",
     },
+    25_000,
   );
 }
 
@@ -184,13 +162,14 @@ export async function unassignIncident(
 export async function resolveIncident(
   incidentId: string,
   resolutionNotes: string,
+  resolvedBy: string,
 ): Promise<Incident> {
   return requestJson<Incident>(
     `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/resolve`,
     {
       method: "PATCH",
       body: JSON.stringify({
-        resolved_by: "nadeem",
+        resolved_by: resolvedBy,
         resolution_notes: resolutionNotes,
       }),
     },
@@ -228,6 +207,8 @@ export async function approveIncidentRemediation(
   incidentId: string,
   proposalId: string,
   approvedBy: string,
+  expectedVersion: number,
+  expectedFingerprint: string,
 ): Promise<RemediationProposal> {
   return requestJson<RemediationProposal>(
     `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/approve`,
@@ -235,6 +216,8 @@ export async function approveIncidentRemediation(
       method: "POST",
       body: JSON.stringify({
         approved_by: approvedBy,
+        expected_version: expectedVersion,
+        expected_fingerprint: expectedFingerprint,
       }),
     },
   );
@@ -244,7 +227,7 @@ export async function rejectIncidentRemediation(
   incidentId: string,
   proposalId: string,
   rejectedBy: string,
-  reason: string,
+  reason?: string,
 ): Promise<RemediationProposal> {
   return requestJson<RemediationProposal>(
     `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/reject`,
@@ -262,6 +245,7 @@ export async function executeIncidentRemediation(
   incidentId: string,
   proposalId: string,
   executedBy: string,
+  idempotencyKey: string,
 ): Promise<RemediationProposal> {
   return requestJson<RemediationProposal>(
     `${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/execute`,
@@ -269,7 +253,17 @@ export async function executeIncidentRemediation(
       method: "POST",
       body: JSON.stringify({
         executed_by: executedBy,
+        idempotency_key: idempotencyKey,
       }),
     },
   );
+}
+
+
+export type RemediationReviewEvent = { id: number; proposal_id: string | null; effect?: string | null; recommendation_version: number; event_type: string; actor: string; reason: string | null; created_at: string };
+export function getRemediationHistory(incidentId: string) {
+  return requestJson<{incident_id: string; history: RemediationReviewEvent[]}>(`${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/history`);
+}
+export function requestRemediationAlternative(incidentId: string, proposalId: string) {
+  return requestJson<{outcome: string; proposal_id: string | null; kind?: string; evidence_snapshot_only?: boolean; guidance?: string}>(`${incidentsBaseUrl}/${encodeURIComponent(incidentId)}/remediation/${encodeURIComponent(proposalId)}/alternative`, {method: "POST"});
 }

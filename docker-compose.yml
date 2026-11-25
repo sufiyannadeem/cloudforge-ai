@@ -357,7 +357,7 @@ services:
       NEXT_PUBLIC_APP_NAME: "CloudForge AI"
       NEXT_PUBLIC_APP_ENV: ${APP_ENV:-development}
       CLOUDFORGE_SESSION_SECRET: ${CLOUDFORGE_SESSION_SECRET:?Set CLOUDFORGE_SESSION_SECRET in .env}
-      CLOUDFORGE_AUTH_COOKIE_SECURE: ${CLOUDFORGE_AUTH_COOKIE_SECURE:-false}
+
       PROJECT_SERVICE_URL: "http://project-service:8080"
       INFRASTRUCTURE_SERVICE_URL: "http://infrastructure-service:8081"
       DEPLOYMENT_SERVICE_URL: "http://deployment-service:8082"
@@ -365,6 +365,9 @@ services:
       FINOPS_SERVICE_URL: "http://finops-service:8091"
       PROMETHEUS_URL: "http://prometheus:9090"
       GRAFANA_URL: "http://grafana:3000"
+      CLOUDFORGE_PUBLIC_ORIGIN: ${CLOUDFORGE_PUBLIC_ORIGIN:?Public origin required}
+      CLOUDFORGE_LOCAL_DEV: ${CLOUDFORGE_LOCAL_DEV:-false}
+      CLOUDFORGE_AUTH_COOKIE_SECURE: ${CLOUDFORGE_AUTH_COOKIE_SECURE:-true}
     depends_on:
       - project-service
       - infrastructure-service

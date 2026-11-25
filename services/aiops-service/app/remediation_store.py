@@ -19,97 +19,144 @@ APPROVAL_TTL_MINUTES = 30
 
 
 class RemediationStore:
-    def create(
-        self,
-        *,
-        incident_id: str,
-        action: RemediationAction,
-        status: RemediationStatus,
-        policy_decision: PolicyDecision,
-        policy_reason: str,
-        reason: str | None,
-        target_deployment_id: str | None,
-        proposed_by: str,
-    ) -> RemediationProposal:
+    def create(self, *, incident_id, action, status, policy_decision, policy_reason,
+               reason, target_deployment_id, proposed_by):
+        from .remediation_integrity import lock_incident, verify_actor
+        with get_connection() as db:
+            incident = lock_incident(db, incident_id)
+            verify_actor(db, proposed_by, incident['project_id'])
+            return self._create_locked(db, incident, action, policy_decision, policy_reason,
+                                       reason, target_deployment_id, proposed_by)
+
+    def _create_locked(self, db, incident, action, decision, policy_reason, reason, target, actor, parent=None):
+        from .remediation_integrity import action_family, current_state, fingerprint
+        if action in {RemediationAction.ACKNOWLEDGE_INCIDENT, RemediationAction.NO_ACTION} and target:
+            raise ValueError('Workflow actions cannot carry deployment parameters')
+        from .remediation_integrity import ensure_not_rejected
+        ensure_not_rejected(db,dict(incident_id=incident['id'],project_id=incident['project_id'],action=action))
+        state = current_state(db, incident, target)
+        if action == RemediationAction.RERUN_DEPLOYMENT and (not state['target'] or state['target']['status'] != 'pending'):
+            raise PermissionError('Only an existing pending deployment in this project can be proposed')
+        version = db.execute('SELECT COALESCE(MAX(recommendation_version),0)+1 AS version FROM aiops_remediation_proposals WHERE incident_id=%s',
+                             (incident['id'],)).fetchone()['version']
         now = datetime.now(timezone.utc)
+        ident = f"rem-{uuid4().hex}"
+        status = RemediationStatus.REJECTED if decision == PolicyDecision.BLOCKED else RemediationStatus.PENDING_APPROVAL
+        decision = PolicyDecision.BLOCKED if decision == PolicyDecision.BLOCKED else PolicyDecision.REQUIRES_APPROVAL
+        row = db.execute('''INSERT INTO aiops_remediation_proposals
+            (id,incident_id,action,status,policy_decision,policy_reason,reason,target_deployment_id,
+             proposed_by,created_at,updated_at,expires_at,recommendation_version,project_id,
+             resource_scope,action_fingerprint,state_snapshot,alternative_of,parameters)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *''',
+            (ident,incident['id'],action.value,status.value,decision.value,policy_reason,reason,target,
+             actor,now,now,now+timedelta(minutes=APPROVAL_TTL_MINUTES),version,incident['project_id'],
+             target or incident['id'],fingerprint(incident['project_id'],incident['id'],action),Jsonb(state),parent,Jsonb({}))).fetchone()
+        self._review(db,row,'proposed',actor)
+        self._event(db,incident['id'],'remediation_proposed','Versioned recommendation recorded.',status.value,
+                    {'proposal_id':ident,'version':version,'action':action.value,'alternative_of':parent},now)
+        return self._row_to_model(row)
 
-        proposal_id = (
-            f"rem-{now.strftime('%Y%m%d%H%M%S%f')}-{uuid4().hex[:8]}"
-        )
+    def _locked(self, db, proposal_id):
+        from .remediation_integrity import lock_incident
+        header = db.execute('SELECT incident_id FROM aiops_remediation_proposals WHERE id=%s',(proposal_id,)).fetchone()
+        if not header: raise LookupError('Remediation proposal not found')
+        incident = lock_incident(db,header['incident_id'])
+        row = db.execute('SELECT * FROM aiops_remediation_proposals WHERE id=%s FOR UPDATE',(proposal_id,)).fetchone()
+        if row.get('project_id') is None or str(row['project_id']) != str(incident['project_id']):
+            raise PermissionError('Recommendation project ownership changed')
+        return row,incident
 
-        expires_at = (
-            now + timedelta(minutes=APPROVAL_TTL_MINUTES)
-            if status == RemediationStatus.PENDING_APPROVAL
-            else None
-        )
+    @staticmethod
+    def _review(db,row,event,actor,reason=None):
+        db.execute('''INSERT INTO aiops_remediation_reviews
+            (proposal_id,incident_id,project_id,recommendation_version,event_type,actor,reason)
+            VALUES(%s,%s,%s,%s,%s,%s,%s)''',
+            (row['id'],row['incident_id'],row['project_id'],row['recommendation_version'],event,actor,reason))
 
-        with get_connection() as connection:
-            row = connection.execute(
-                """
-                INSERT INTO aiops_remediation_proposals (
-                    id,
-                    incident_id,
-                    action,
-                    status,
-                    policy_decision,
-                    policy_reason,
-                    reason,
-                    target_deployment_id,
-                    proposed_by,
-                    created_at,
-                    updated_at,
-                    expires_at,
-                    verification_result
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s,
-                    %s, %s
-                )
-                RETURNING *
-                """,
-                (
-                    proposal_id,
-                    incident_id,
-                    action.value,
-                    status.value,
-                    policy_decision.value,
-                    policy_reason,
-                    reason,
-                    target_deployment_id,
-                    proposed_by,
-                    now,
-                    now,
-                    expires_at,
-                    Jsonb({}),
-                ),
-            ).fetchone()
+    def history(self,incident_id):
+        with get_connection() as db:
+            return db.execute('''SELECT id,proposal_id,recommendation_version,event_type,actor,reason,created_at,NULL::text AS effect FROM aiops_remediation_reviews
+                WHERE incident_id=%s AND project_id=(SELECT project_id FROM aiops_incident_projects WHERE incident_id=%s)
+                UNION ALL SELECT -id AS id,NULL AS proposal_id,0 AS recommendation_version,
+                'advisory_rejected' AS event_type,actor,reason,created_at,effect FROM aiops_advisory_rejections
+                WHERE incident_id=%s AND project_id=(SELECT project_id FROM aiops_incident_projects WHERE incident_id=%s)
+                ORDER BY created_at,id''',(incident_id,incident_id,incident_id,incident_id)).fetchall()
 
-            self._event(
-                connection,
-                incident_id,
-                "remediation_proposed",
-                (
-                    f"Remediation proposal {proposal_id} created "
-                    f"for action {action.value}."
-                ),
-                status.value,
-                {
-                    "proposal_id": proposal_id,
-                    "action": action.value,
-                    "policy_decision": policy_decision.value,
-                    "target_deployment_id": target_deployment_id,
-                    "proposed_by": proposed_by,
-                    "expires_at": (
-                        expires_at.isoformat()
-                        if expires_at
-                        else None
-                    ),
-                },
-                now,
-            )
+    def evidence_options(self,incident_id,actor):
+        from .remediation_integrity import lock_incident,verify_actor
+        with get_connection() as db:
+            incident=lock_incident(db,incident_id)
+            verify_actor(db,actor,incident['project_id'])
+            return self._evidence_options(db,incident)
 
-            return self._row_to_model(row)
+    def _evidence_options(self,db,incident,pending_target=False):
+        from .trusted_telemetry import project_signals
+        from .evidence_catalog import select_catalog
+        project=str(incident['project_id'])
+        effects={r['effect'] for r in db.execute('''SELECT effect FROM aiops_advisory_rejections WHERE incident_id=%s AND project_id=%s
+            UNION SELECT action_family AS effect FROM aiops_remediation_proposals WHERE incident_id=%s AND status='REJECTED' ''',
+            (incident['id'],project,incident['id'])).fetchall()}
+        signals=project_signals(project)
+        from .knowledge_config import local_signal_knowledge
+        knowledge=local_signal_knowledge(project,signals)
+        catalog=select_catalog(project,incident,signals,effects,incident.get('ai_analysis'),pending_target,knowledge)
+        catalog['retrieval_status']=knowledge['retrieval_status']
+        catalog['knowledge_references']=knowledge['references']
+        return dict(project_id=project,incident_id=incident['id'],signals=signals,catalog=catalog,
+                    provenance='verified_resource_v1',rejected_effects=sorted(effects),knowledge=knowledge)
+
+    def reject_advisory(self,incident_id,actor,effect,reason=None):
+        from .remediation_integrity import lock_incident,verify_actor,effect_fingerprint
+        from .evidence_catalog import EFFECTS
+        if effect not in EFFECTS:raise ValueError('Unknown advisory effect')
+        with get_connection() as db:
+            incident=lock_incident(db,incident_id);project=str(incident['project_id'])
+            verify_actor(db,actor,project)
+            db.execute('''INSERT INTO aiops_advisory_rejections
+                (incident_id,project_id,effect,action_fingerprint,resource_scope,actor,reason)
+                VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(incident_id,project_id,effect) DO NOTHING''',
+                (incident_id,project,effect,effect_fingerprint(project,incident_id,effect),'project:'+project,actor,reason))
+            return {'incident_id':incident_id,'effect':effect,'status':'rejected','kind':'advisory_feedback','does_not_cancel_execution':True}
+
+    def alternative(self, proposal_id, actor):
+        from .remediation_integrity import select_alternative, verify_actor
+        with get_connection() as db:
+            row,incident=self._locked(db,proposal_id)
+            verify_actor(db,actor,incident['project_id'])
+            if row['status'] != 'REJECTED': raise PermissionError('Reject this version before requesting an alternative')
+            if row.get('alternative_result') is not None: return row['alternative_result']
+            families={r['action_family'] for r in db.execute("SELECT action_family FROM aiops_remediation_proposals WHERE incident_id=%s AND status='REJECTED'",(row['incident_id'],)).fetchall()}
+            pending=False
+            if row.get('target_deployment_id'):
+                from .remediation_integrity import current_state
+                try:pending=current_state(db,incident,row['target_deployment_id'])['target']['status']=='pending'
+                except (PermissionError,ValueError,TypeError):pass
+            options=self._evidence_options(db,incident,pending)
+            families.update(options['rejected_effects'])
+            candidates=options['catalog']['items']
+            recovery=next((item for item in candidates if item['action']=='rerun_deployment' and item['execution_supported']),None)
+            candidate='rerun_deployment' if recovery else select_alternative(incident,families)
+            if candidate:
+                proposal=self._create_locked(db,incident,RemediationAction(candidate),PolicyDecision.REQUIRES_APPROVAL,
+                    ('Trusted degraded deployment health and a verified pending target support independent review of the existing queue action.' if recovery else 'Open, unacknowledged incident supports workflow acknowledgement only; this does not fix infrastructure.'),
+                    None,row['target_deployment_id'] if recovery else None,actor,parent=proposal_id)
+                result={'outcome':'pending_approval','proposal_id':proposal.id,'recommendation_version':proposal.recommendation_version,
+                        'kind':'infrastructure_remediation' if recovery else 'acknowledgement'}
+            else:
+                result={'outcome':'investigation_required','kind':'investigation','proposal_id':None,
+                        'guidance':'Review project evidence and escalate to a Platform Engineer. No materially different safe mutation is supported.'}
+                # Legacy rows get scope only in the audit envelope; their immutable
+                # recommendation contract is never retrospectively approved.
+                audit={**row,'project_id':incident['project_id']}
+                self._review(db,audit,'alternative_exhausted',actor)
+            if recovery:
+                fact=next(s for s in options['signals'] if s['signal']=='deployment_health' and s['state']=='degraded')
+                result['generation_evidence']={'provenance':'verified_resource_v1','project_id':str(incident['project_id']),
+                    'signal':'deployment_health','state':'degraded','observed_at':fact['observed_at']}
+            result['catalog']=options['catalog']
+            result['evidence_snapshot_only']=True
+            db.execute('UPDATE aiops_remediation_proposals SET alternative_result=%s WHERE id=%s',(Jsonb(result),proposal_id))
+            return result
 
     def get(
         self,
@@ -121,6 +168,8 @@ class RemediationStore:
                 SELECT *
                 FROM aiops_remediation_proposals
                 WHERE id = %s
+                  AND project_id = (SELECT project_id FROM aiops_incident_projects b
+                                    WHERE b.incident_id = aiops_remediation_proposals.incident_id)
                 """,
                 (proposal_id,),
             ).fetchone()
@@ -140,6 +189,8 @@ class RemediationStore:
                 SELECT *
                 FROM aiops_remediation_proposals
                 WHERE incident_id = %s
+                  AND project_id = (SELECT project_id FROM aiops_incident_projects b
+                                    WHERE b.incident_id = aiops_remediation_proposals.incident_id)
                 ORDER BY created_at DESC
                 """,
                 (incident_id,),
@@ -150,336 +201,94 @@ class RemediationStore:
                 for row in rows
             ]
 
-    def move_to_approved(
-        self,
-        proposal_id: str,
-        approved_by: str,
-        approved_role: str,
-    ) -> RemediationProposal | None:
-        if not approved_by.strip() or approved_role not in {"sre", "platform-engineer"}:
-            raise PermissionError("verified SRE or Platform Engineer approval required")
-        now = datetime.now(timezone.utc)
+    def move_to_approved(self, proposal_id, approved_by, approved_role, expected_version, expected_fingerprint):
+        from .remediation_integrity import current_state, contract, verify_actor, fingerprint
+        if approved_role != 'platform-engineer': raise PermissionError('Platform Engineer approval required')
+        with get_connection() as db:
+            row,incident=self._locked(db,proposal_id)
+            verify_actor(db,approved_by,incident['project_id'],platform=True)
+            from .remediation_integrity import ensure_not_rejected
+            ensure_not_rejected(db,row)
+            from .remediation_integrity import validate_alternative_evidence
+            validate_alternative_evidence(db,row)
+            if row['status'] != 'PENDING_APPROVAL': raise PermissionError('Only pending recommendations can be approved')
+            if row['recommendation_version'] != expected_version or row['action_fingerprint'] != expected_fingerprint:
+                raise PermissionError('Displayed recommendation version or fingerprint is stale')
+            if row['proposed_by'] == approved_by: raise PermissionError('Independent approval required; self-approval prohibited')
+            now=datetime.now(timezone.utc)
+            if not row['expires_at'] or row['expires_at']<=now: raise PermissionError('Recommendation expired')
+            if row['policy_decision'] != 'requires_approval' or row['parameters'] != {}: raise PermissionError('Unsupported approval policy or parameters')
+            if row['action_fingerprint'] != fingerprint(incident['project_id'],row['incident_id'],row['action']):
+                raise PermissionError('Recommendation fingerprint mismatch')
+            state=current_state(db,incident,row['target_deployment_id'])
+            if state.get('target') and state['target'].get('created_by') == approved_by:
+                raise PermissionError('Deployment requester cannot approve their own mutation')
+            if state != row['state_snapshot']: raise PermissionError('Current state changed; request a fresh recommendation')
+            from .remediation_policy import RemediationPolicy
+            policy=RemediationPolicy().evaluate(RemediationAction(row['action']),incident_status=incident['status'],target_deployment_id=row['target_deployment_id'])
+            if not policy.executable: raise PermissionError('Current policy blocks this action')
+            updated=db.execute('''UPDATE aiops_remediation_proposals SET status='APPROVED',approved_by=%s,
+                approved_role=%s,approved_environment=%s,approved_at=%s,approved_contract=%s,updated_at=%s WHERE id=%s RETURNING *''',
+                (approved_by,approved_role,state['target']['environment'] if state['target'] else None,
+                 now,Jsonb(contract(row)),now,proposal_id)).fetchone()
+            self._review(db,updated,'approved',approved_by)
+            self._event(db,row['incident_id'],'remediation_approved','Independent Platform Engineer approval recorded.',updated['status'],
+                        {'proposal_id':proposal_id,'version':row['recommendation_version'],'approved_by':approved_by},now)
+            return self._row_to_model(updated)
 
-        with get_connection() as connection:
-            existing = connection.execute(
-                """
-                SELECT *
-                FROM aiops_remediation_proposals
-                WHERE id = %s
-                FOR UPDATE
-                """,
-                (proposal_id,),
-            ).fetchone()
+    def move_to_rejected(self,proposal_id,rejected_by,reason=None):
+        from .remediation_integrity import verify_actor
+        with get_connection() as db:
+            row,incident=self._locked(db,proposal_id)
+            verify_actor(db,rejected_by,incident['project_id'])
+            if row['status'] not in {'PENDING_APPROVAL','APPROVED'} or row.get('execution_idempotency_key'):
+                raise PermissionError('Only unclaimed recommendations may be rejected')
+            now=datetime.now(timezone.utc)
+            updated=db.execute('''UPDATE aiops_remediation_proposals SET status='REJECTED',rejected_by=%s,
+                rejection_reason=%s,rejected_at=%s,updated_at=%s WHERE id=%s RETURNING *''',
+                (rejected_by,reason,now,now,proposal_id)).fetchone()
+            self._review(db,updated,'rejected',rejected_by,reason)
+            self._event(db,row['incident_id'],'remediation_rejected','Recommendation rejected; reason retained in internal review history.',
+                        'REJECTED',{'proposal_id':proposal_id,'version':row['recommendation_version']},now)
+            return self._row_to_model(updated)
 
-            if existing is None:
-                return None
-
-            if existing["status"] != (
-                RemediationStatus.PENDING_APPROVAL.value
-            ):
-                raise ValueError(
-                    "only PENDING_APPROVAL proposals can be approved"
-                )
-
-            if (
-                existing["expires_at"] is not None
-                and existing["expires_at"] <= now
-            ):
-                row = connection.execute(
-                    """
-                    UPDATE aiops_remediation_proposals
-                    SET
-                        status = %s,
-                        updated_at = %s
-                    WHERE id = %s
-                    RETURNING *
-                    """,
-                    (
-                        RemediationStatus.EXPIRED.value,
-                        now,
-                        proposal_id,
-                    ),
-                ).fetchone()
-
-                self._event(
-                    connection,
-                    row["incident_id"],
-                    "remediation_expired",
-                    (
-                        f"Remediation proposal {proposal_id} "
-                        "expired before approval."
-                    ),
-                    row["status"],
-                    {
-                        "proposal_id": proposal_id,
-                        "action": row["action"],
-                    },
-                    now,
-                )
-
-                return self._row_to_model(row)
-
-            environment = None
-            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value:
-                if existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value or existing["expires_at"] is None:
-                    raise PermissionError("proposal lacks an expiring remediation policy approval")
-                try:
-                    target_id = UUID(existing["target_deployment_id"])
-                except (ValueError, TypeError, AttributeError):
-                    raise ValueError("invalid deployment target") from None
-                if str(target_id) != existing["target_deployment_id"]:
-                    raise ValueError("deployment target must be a canonical UUID")
-                target = connection.execute(
-                    "SELECT environment FROM deployments WHERE id = %s AND status = 'pending'",
-                    (target_id,),
-                ).fetchone()
-                if target is None:
-                    raise ValueError("remediation requires a pending deployment target")
-                environment = target["environment"]
-
-            row = connection.execute(
-                """
-                UPDATE aiops_remediation_proposals
-                SET
-                    status = %s,
-                    approved_by = %s,
-                    approved_role = %s,
-                    approved_environment = %s,
-                    approved_at = %s,
-                    updated_at = %s
-                WHERE id = %s
-                RETURNING *
-                """,
-                (
-                    RemediationStatus.APPROVED.value,
-                    approved_by,
-                    approved_role,
-                    environment,
-                    now,
-                    now,
-                    proposal_id,
-                ),
-            ).fetchone()
-
-            self._event(
-                connection,
-                row["incident_id"],
-                "remediation_approved",
-                (
-                    f"Remediation proposal {proposal_id} "
-                    f"approved by {approved_by}."
-                ),
-                row["status"],
-                {
-                    "proposal_id": proposal_id,
-                    "approved_by": approved_by,
-                    "approved_role": approved_role,
-                    "environment": environment,
-                    "action": row["action"],
-                },
-                now,
-            )
-
-            return self._row_to_model(row)
-
-    def move_to_rejected(
-        self,
-        proposal_id: str,
-        rejected_by: str,
-        reason: str,
-    ) -> RemediationProposal | None:
-        now = datetime.now(timezone.utc)
-
-        with get_connection() as connection:
-            existing = connection.execute(
-                """
-                SELECT *
-                FROM aiops_remediation_proposals
-                WHERE id = %s
-                FOR UPDATE
-                """,
-                (proposal_id,),
-            ).fetchone()
-
-            if existing is None:
-                return None
-
-            if existing["status"] not in {
-                RemediationStatus.PENDING_APPROVAL.value,
-                RemediationStatus.APPROVED.value,
-            }:
-                raise ValueError(
-                    "only pending or unclaimed approved proposals can be rejected"
-                )
-
-            if (
-                existing["expires_at"] is not None
-                and existing["expires_at"] <= now
-            ):
-                row = connection.execute(
-                    """
-                    UPDATE aiops_remediation_proposals
-                    SET
-                        status = %s,
-                        updated_at = %s
-                    WHERE id = %s
-                    RETURNING *
-                    """,
-                    (
-                        RemediationStatus.EXPIRED.value,
-                        now,
-                        proposal_id,
-                    ),
-                ).fetchone()
-
-                self._event(
-                    connection,
-                    row["incident_id"],
-                    "remediation_expired",
-                    (
-                        f"Remediation proposal {proposal_id} "
-                        "expired before rejection."
-                    ),
-                    row["status"],
-                    {
-                        "proposal_id": proposal_id,
-                        "action": row["action"],
-                    },
-                    now,
-                )
-
-                return self._row_to_model(row)
-
-            row = connection.execute(
-                """
-                UPDATE aiops_remediation_proposals
-                SET
-                    status = %s,
-                    rejected_by = %s,
-                    rejection_reason = %s,
-                    rejected_at = %s,
-                    updated_at = %s
-                WHERE id = %s
-                RETURNING *
-                """,
-                (
-                    RemediationStatus.REJECTED.value,
-                    rejected_by,
-                    reason,
-                    now,
-                    now,
-                    proposal_id,
-                ),
-            ).fetchone()
-
-            self._event(
-                connection,
-                row["incident_id"],
-                "remediation_rejected",
-                (
-                    f"Remediation proposal {proposal_id} "
-                    f"rejected by {rejected_by}."
-                ),
-                row["status"],
-                {
-                    "proposal_id": proposal_id,
-                    "rejected_by": rejected_by,
-                    "reason": reason,
-                    "action": row["action"],
-                },
-                now,
-            )
-
-            return self._row_to_model(row)
-
-    def claim_execution(
-        self,
-        proposal_id: str,
-        requested_by: str,
-        idempotency_key: str,
-        dispatch_token_hash: str | None,
-    ) -> RemediationProposal | None:
-        with get_connection() as connection:
-            existing = connection.execute(
-                """
-                SELECT *
-                FROM aiops_remediation_proposals
-                WHERE id = %s
-                FOR UPDATE
-                """,
-                (proposal_id,),
-            ).fetchone()
-
-            if existing is None:
-                return None
-
-            if existing["execution_idempotency_key"] is not None:
-                raise ValueError("proposal execution already claimed")
-            if existing["status"] != RemediationStatus.APPROVED.value:
-                raise ValueError("only APPROVED proposals can be executed")
-            now = datetime.now(timezone.utc)
-            if existing["expires_at"] is not None and existing["expires_at"] <= now:
-                raise PermissionError("remediation approval has expired")
-            if existing["rejected_at"] is not None or existing["policy_decision"] == PolicyDecision.BLOCKED.value:
-                raise PermissionError("remediation is rejected or blocked")
-            if existing["action"] == RemediationAction.RERUN_DEPLOYMENT.value and (
-                not dispatch_token_hash
-                or not existing["approved_by"]
-                or not existing["approved_at"]
-                or existing["approved_role"] not in {"sre", "platform-engineer"}
-                or not existing["approved_environment"]
-                or not existing["expires_at"]
-                or existing["policy_decision"] != PolicyDecision.REQUIRES_APPROVAL.value
-            ):
-                raise PermissionError("verified deployment approval required")
-
-            row = connection.execute(
-                """
-                UPDATE aiops_remediation_proposals
-                SET
-                    status = %s,
-                    execution_requested_by = %s,
-                    execution_idempotency_key = %s,
-                    dispatch_token_hash = %s,
-                    updated_at = %s
-                WHERE id = %s
-                  AND status = %s
-                  AND execution_idempotency_key IS NULL
-                RETURNING *
-                """,
-                (
-                    RemediationStatus.EXECUTING.value,
-                    requested_by,
-                    idempotency_key,
-                    dispatch_token_hash,
-                    now,
-                    proposal_id,
-                    RemediationStatus.APPROVED.value,
-                ),
-            ).fetchone()
-
-            if row is None:
-                raise ValueError("proposal execution already claimed")
-
-            self._event(
-                connection,
-                row["incident_id"],
-                "remediation_executing",
-                (
-                    f"Remediation proposal {proposal_id} "
-                    "entered execution."
-                ),
-                row["status"],
-                {
-                    "proposal_id": proposal_id,
-                    "requested_by": requested_by,
-                    "action": row["action"],
-                    "idempotency_key": idempotency_key,
-                },
-                now,
-            )
-
-            return self._row_to_model(row)
+    def claim_execution(self,proposal_id,requested_by,idempotency_key,dispatch_token_hash):
+        from .remediation_integrity import current_state, validate_approval, verify_actor
+        with get_connection() as db:
+            row,incident=self._locked(db,proposal_id)
+            verify_actor(db,requested_by,incident['project_id'],platform=True)
+            from .remediation_integrity import ensure_not_rejected
+            ensure_not_rejected(db,row)
+            from .remediation_integrity import validate_alternative_evidence
+            validate_alternative_evidence(db,row)
+            verify_actor(db,row.get('approved_by'),incident['project_id'],platform=True)
+            if row['status'] != 'APPROVED' or row.get('execution_idempotency_key'):
+                raise PermissionError('Execution already claimed or not approved')
+            now=datetime.now(timezone.utc)
+            if not row['expires_at'] or row['expires_at']<=now or not row.get('approved_at') or row['approved_at']>now:
+                raise PermissionError('Approval expired or invalid')
+            if row.get('rejected_at') or row['policy_decision'] != 'requires_approval': raise PermissionError('Rejected or blocked action')
+            validate_approval(row,current_state(db,incident,row['target_deployment_id']),requested_by)
+            from .remediation_policy import RemediationPolicy
+            policy=RemediationPolicy().evaluate(RemediationAction(row['action']),incident_status=incident['status'],target_deployment_id=row['target_deployment_id'])
+            if not policy.executable: raise PermissionError('Current execution policy denied')
+            if row['action']=='rerun_deployment' and not dispatch_token_hash: raise PermissionError('Dispatch proof required')
+            updated=db.execute('''UPDATE aiops_remediation_proposals SET status='EXECUTING',execution_requested_by=%s,
+                execution_idempotency_key=%s,dispatch_token_hash=%s,updated_at=%s
+                WHERE id=%s AND status='APPROVED' AND execution_idempotency_key IS NULL RETURNING *''',
+                (requested_by,idempotency_key,dispatch_token_hash,now,proposal_id)).fetchone()
+            if not updated: raise PermissionError('Execution already claimed')
+            self._review(db,updated,'execution_claimed',requested_by)
+            if row['action']=='acknowledge_incident':
+                if incident['status']!='open' or incident['acknowledged_at'] is not None:
+                    raise PermissionError('Incident is no longer open and unacknowledged')
+                db.execute("UPDATE aiops_incidents SET acknowledged_at=%s,acknowledged_by=%s,updated_at=GREATEST(%s,updated_at+interval '1 microsecond') WHERE id=%s",
+                           (now,requested_by,now,row['incident_id']))
+                updated=db.execute("UPDATE aiops_remediation_proposals SET status='SUCCEEDED',executed_at=%s,result=%s WHERE id=%s RETURNING *",
+                           (now,Jsonb({'atomic_acknowledgement':True}),proposal_id)).fetchone()
+            self._event(db,row['incident_id'],'remediation_executing','Approved action claimed by the authorized operational service.',
+                        updated['status'],{'proposal_id':proposal_id,'requested_by':requested_by},now)
+            return self._row_to_model(updated)
 
     def mark_verifying(
         self,
@@ -761,6 +570,11 @@ class RemediationStore:
         row: dict[str, Any],
     ) -> RemediationProposal:
         return RemediationProposal(
+            recommendation_version=row.get('recommendation_version',0),
+            project_id=str(row['project_id']) if row.get('project_id') else None,
+            resource_scope=row.get('resource_scope'), action_fingerprint=row.get('action_fingerprint'),
+            alternative_of=row.get('alternative_of'), parameters=row.get('parameters') or {},
+            approved_role=row.get('approved_role'), state_snapshot=row.get('state_snapshot'),
             id=row["id"],
             incident_id=row["incident_id"],
             action=RemediationAction(row["action"]),

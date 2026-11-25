@@ -476,3 +476,38 @@ func (r *DeploymentRepository) GetPreviousSuccessfulDeployment(
 
 	return deployment, nil
 }
+
+// DB ownership, not workload labels, selects the current project resource inventory.
+// A global cap fails closed rather than silently exporting a partial fleet.
+func (r *DeploymentRepository) ListTelemetryDeployments(ctx context.Context) ([]model.Deployment, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM (
+ SELECT DISTINCT ON (d.project_id,d.namespace) d.id,d.updated_at
+ FROM deployments d JOIN projects p ON p.id=d.project_id AND p.created_by IS NOT NULL
+ WHERE d.execution_mode='kubernetes' AND d.status IN ('running','succeeded','failed')
+ ORDER BY d.project_id,d.namespace,d.updated_at DESC,d.id DESC) current_resources
+ ORDER BY updated_at DESC LIMIT 21`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	result := []model.Deployment{}
+	for _, id := range ids {
+		d, err := r.GetByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, d)
+	}
+	return result, nil
+}

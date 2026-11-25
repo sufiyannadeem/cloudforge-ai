@@ -1,0 +1,122 @@
+{
+  "verification_date": "2026-11-25",
+  "scope": "Publisher metadata/checksums, OCI manifests and strict schema derivation; not binary/runtime/integration approval",
+  "human_approval": "PENDING",
+  "reviewed_by": null,
+  "tool_sources": {
+    "prometheus": {
+      "release": "https://api.github.com/repos/prometheus/prometheus/releases/tags/v3.5.0",
+      "checksums": "https://github.com/prometheus/prometheus/releases/download/v3.5.0/sha256sums.txt",
+      "checksum_file_sha256": "48243adaaa4b0b6777877c262f6cbaa937fa76b9757973f48c7a6074aaec78b7",
+      "asset_digest_matches_publisher_checksums": true
+    },
+    "kubeconform": {
+      "release": "https://api.github.com/repos/yannh/kubeconform/releases/tags/v0.6.7",
+      "checksums": "https://github.com/yannh/kubeconform/releases/download/v0.6.7/CHECKSUMS",
+      "checksum_file_sha256": "5946c6300e94d5f43c877cb41ff7117c63130f1710ce20f04fd721f99fb0485e"
+    },
+    "helm": {
+      "checksums": "https://get.helm.sh/helm-v3.20.0-linux-amd64.tar.gz.sha256sum"
+    },
+    "kubectl": {
+      "checksums": "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl.sha256"
+    },
+    "terraform": {
+      "checksums": "https://releases.hashicorp.com/terraform/1.17.2/terraform_1.17.2_SHA256SUMS",
+      "checksum_file_sha256": "6ece9a6cf116bb7b59adb14103140aa197b2d09543457f611c5a7f362302beab"
+    },
+    "go": {
+      "checksums": "https://go.dev/dl/?mode=json&include=all",
+      "published_bytes": 66999944
+    },
+    "actionlint": {
+      "release": "https://api.github.com/repos/rhysd/actionlint/releases/tags/v1.7.12",
+      "checksums": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_checksums.txt",
+      "checksum_file_sha256": "433028cf0ba3c42163ea1a668dedce30fcdbe84fe912b1a5e288c006eab8a4f5",
+      "asset_digest_matches_publisher_checksums": true,
+      "small_archive_verified_locally": true,
+      "archive_bytes": 2353908
+    }
+  },
+  "images": {
+    "postgres": {
+      "source": "https://registry-1.docker.io/v2/library/postgres/manifests/16-bookworm",
+      "index_digest": "sha256:cd0e9518bda5f2ea667ff84d22795d089720c883f288e215d97ce57437e8ef37",
+      "linux_amd64_manifest_digest": "sha256:d755a91aff87574a57060f86ecc0d55f83ccb51ceec6ec6f904c1210d018d998",
+      "manifest_bytes_hashed": true,
+      "layers_downloaded": false
+    },
+    "python": {
+      "source": "https://registry-1.docker.io/v2/library/python/manifests/3.12-slim-bookworm",
+      "linux_amd64_manifest_digest": "sha256:1475c4f5b6bcb7d35e57661d6f5d7429ec4041275633c15f2b49350ac898276d",
+      "manifest_bytes_hashed": true,
+      "layers_downloaded": false
+    }
+  },
+  "compatibility": {
+    "rollouts": {
+      "version": "1.10.2",
+      "commit": "be8a6221c6c9751cd14497f31a2cb3c33690375a",
+      "source": "https://raw.githubusercontent.com/argoproj/argo-rollouts/be8a6221c6c9751cd14497f31a2cb3c33690375a/.github/workflows/testing.yaml",
+      "upstream_ci_includes_kubernetes": "1.35.1+k3s1"
+    },
+    "csi": {
+      "version": "1.6.2",
+      "commit": "10cd116be04e012b283c0811618b182b20741e89",
+      "source": "https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/10cd116be04e012b283c0811618b182b20741e89/.github/workflows/e2e.yaml",
+      "upstream_ci_includes_kubernetes": "v1.35.1"
+    },
+    "local_cluster_or_live_compatibility_tested": false
+  },
+  "model": {
+    "metadata": "https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/revision/1110a243fdf4706b3f48f1d95db1a4f5529b4d41?blobs=true",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "onnx_bytes": 90405214,
+    "onnx_sha256_from_publisher_lfs": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+    "weights_downloaded": false,
+    "inference_performed": false,
+    "verified_head_redirect_host": "us.aws.cdn.hf.co",
+    "head_content_length": 90405214,
+    "body_read_during_head_verification": false
+  },
+  "schemas": {
+    "manifest_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8",
+    "standalone_schema_count": 314,
+    "bytes_with_manifest": 9831137,
+    "native_kubeconform_executed": false,
+    "reproduced_with_cached_pyyaml": "6.0.3",
+    "draft7_legality_checks": 314,
+    "source_derivation_reproduced": true
+  },
+  "actions": {
+    "checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "commit_existence_checked_via_official_github_api": true
+  },
+  "python_dependencies": {
+    "metadata_records_checked": 34,
+    "all_have_approved_published_compatible_wheel": true,
+    "verification_scope": "PyPI JSON only; no package downloads/installations",
+    "python_version": "3.12.3",
+    "libc": [
+      "glibc",
+      "2.39"
+    ],
+    "bootstrap_packages_checked": 8,
+    "source_pattern": "https://pypi.org/pypi/<package>/<version>/json"
+  },
+  "terraform_provider": {
+    "name": "registry.terraform.io/hashicorp/aws",
+    "version": "6.66.0",
+    "linux_amd64_sha256": "156fe7164a3d26ef6b35734c43e99fb198df90575ed897d1182b8e930b8cd523",
+    "checksums_url": "https://releases.hashicorp.com/terraform-provider-aws/6.66.0/terraform-provider-aws_6.66.0_SHA256SUMS"
+  },
+  "checks": {
+    "gate_mechanics": "9 passed",
+    "actionlint_version": "1.7.12",
+    "workflow_syntax": "PASS (shellcheck/pyflakes disabled)",
+    "bash_python_source_and_job_references": "PASS",
+    "postgres_native_prometheus_kubeconform_terraform_tls_semantic_integrations": "NOT_EXECUTED"
+  }
+}

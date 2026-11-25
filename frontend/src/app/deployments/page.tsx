@@ -36,8 +36,8 @@ interface DeploymentForm {
 const initialForm: DeploymentForm = {
   project_id: "",
   environment: "development",
-  image: "ghcr.io/cloudforge/api-service:v1.0.0",
-  git_commit_sha: "c0ffee1",
+  image: "",
+  git_commit_sha: "",
   namespace: "cloudforge-dev",
   strategy: "rolling",
   max_surge: 1,

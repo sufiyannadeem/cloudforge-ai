@@ -1,0 +1,24 @@
+# Repeat only for independently approved project namespaces. Never bind to AI.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudforge-metrics-discovery
+  namespace: cf-REPLACE_WITH_APPROVED_PROJECT_UUID
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudforge-metrics-discovery
+  namespace: cf-REPLACE_WITH_APPROVED_PROJECT_UUID
+subjects:
+  - kind: ServiceAccount
+    name: REPLACE_WITH_PROMETHEUS_SERVICE_ACCOUNT
+    namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudforge-metrics-discovery

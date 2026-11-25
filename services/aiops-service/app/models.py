@@ -89,6 +89,11 @@ class AIAnalysis(BaseModel):
         default_factory=list
     )
 
+    diagnosis_project_id: str | None = None
+    citations: list[str] = Field(default_factory=list)
+    retrieval_status: str = "not_requested"
+    knowledge_references: list[dict[str, Any]] = Field(default_factory=list)
+
     generated_at: datetime | None = None
     error: str | None = None
 

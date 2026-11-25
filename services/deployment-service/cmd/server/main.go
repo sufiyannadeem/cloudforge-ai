@@ -191,6 +191,21 @@ func main() {
 		deploymentService.SetProgressiveEnabled(os.Getenv("ARGO_ROLLOUTS_ENABLED") == "true")
 		deploymentRepository.SetExecutionMode("kubernetes")
 		telemetryHandler = handler.NewProjectTelemetryHandler(k8sExec, os.Getenv("PROMETHEUS_URL"), deploymentRepository)
+		if os.Getenv("PROJECT_EVIDENCE_ENABLED") == "true" {
+			if os.Getenv("PROJECT_EVIDENCE_SCRAPE_TOKEN_FILE") == "" {
+				logger.Error("dedicated evidence scrape credential path required")
+				os.Exit(1)
+			}
+			metricsHandler = metrics.ProtectEvidenceMetrics(metricsHandler, os.Getenv("PROJECT_EVIDENCE_SCRAPE_TOKEN_FILE"))
+			evidenceCollector := metrics.NewProjectEvidenceCollector(deploymentRepository, k8sExec)
+			if err := metricsRegistry.Register(evidenceCollector); err != nil {
+				logger.Error("evidence metrics registration failed")
+				os.Exit(1)
+			}
+			evidenceContext, cancelEvidence := context.WithCancel(ctx)
+			defer cancelEvidence()
+			go evidenceCollector.Run(evidenceContext)
+		}
 		logger.Info(
 			"configured Kubernetes deployment executor and verified API connectivity",
 			"executor",

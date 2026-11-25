@@ -1,0 +1,12 @@
+FROM python:3.12-alpine3.24@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 AI_WORKLOAD=inference
+WORKDIR /app
+RUN apk add --no-cache ca-certificates libstdc++ krb5-libs=1.22.3-r0 \
+ && addgroup -S appgroup && adduser -S -D -H -u 10001 -G appgroup appuser
+COPY requirements.lock .
+RUN python -m pip install --no-cache-dir --no-compile --only-binary=:all: --require-hashes -r requirements.lock
+# Explicit allowlist. No operational APIs, database stores, remediation/execution tools or knowledge.
+COPY app/__init__.py app/inference_main.py app/inference_identity.py app/inference_security.py app/postgres_ledger.py app/workload_policy.py app/ai_provider.py app/gemini_provider.py ./app/
+USER 10001
+EXPOSE 8443
+CMD ["uvicorn","app.inference_main:app","--host","0.0.0.0","--port","8443","--ssl-keyfile","/var/run/inference-tls/tls.key","--ssl-certfile","/var/run/inference-tls/tls.crt","--limit-concurrency","8","--timeout-keep-alive","2"]

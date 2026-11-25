@@ -1,0 +1,200 @@
+name: Consolidated Release Verification
+on:
+  workflow_dispatch:
+    inputs:
+      runner_profile:
+        description: Hosted ephemeral Linux or preprovisioned isolated dedicated runners
+        type: choice
+        options: [hosted, dedicated]
+        default: hosted
+permissions:
+  contents: read
+env:
+  CHECKPOINT_DISABLE: '1'
+  AWS_EC2_METADATA_DISABLED: 'true'
+  AWS_SHARED_CREDENTIALS_FILE: /dev/null
+  AWS_CONFIG_FILE: /dev/null
+concurrency:
+  group: isolated-release-verification-${{ inputs.runner_profile }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    environment: release-verification
+    timeout-minutes: 5
+    outputs:
+      postgres_image: ${{ steps.lock.outputs.postgres_image }}
+      native_runner: ${{ steps.runners.outputs.native_runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Review-bound hosted acquisition plan (no downloads)
+        if: inputs.runner_profile == 'hosted'
+        id: lock
+        env:
+          CI_ACQUISITION_LOCK_SHA256: ${{ vars.CI_ACQUISITION_LOCK_SHA256 }}
+          CI_ACQUISITION_APPROVED: ${{ vars.CI_ACQUISITION_APPROVED }}
+        run: python3 scripts/ci/acquire-integration-inputs.py plan
+      - id: runners
+        env:
+          PROFILE: ${{ inputs.runner_profile }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          profile=os.environ['PROFILE']
+          assert profile in {'hosted','dedicated'}
+          runner=['ubuntu-24.04'] if profile=='hosted' else ['self-hosted','linux','x64','cloudforge-release-verification']
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+              out.write('native_runner='+json.dumps(runner)+'\n')
+          PY
+  native:
+    needs: plan
+    runs-on: ${{ fromJSON(needs.plan.outputs.native_runner) }}
+    environment: release-verification
+    timeout-minutes: 20
+    env:
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_CONFIG_FILE: /dev/null
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Install hash-locked Python test dependencies (hosted CI only)
+        if: inputs.runner_profile == 'hosted'
+        run: |
+          python3.12 -m venv services/aiops-service/.venv
+          services/aiops-service/.venv/bin/python -m pip install --only-binary=:all: --require-hashes -r services/aiops-service/requirements.lock -r tests/requirements-ci.lock
+      - name: CI-only hash-verified native tools and standalone schema bundle
+        if: inputs.runner_profile == 'hosted'
+        env:
+          CI_ACQUISITION_LOCK_SHA256: ${{ vars.CI_ACQUISITION_LOCK_SHA256 }}
+          CI_ACQUISITION_APPROVED: ${{ vars.CI_ACQUISITION_APPROVED }}
+        run: services/aiops-service/.venv/bin/python scripts/ci/acquire-integration-inputs.py native --output "$RUNNER_TEMP/native-inputs"
+      - name: Dedicated cached native/schema configuration
+        if: inputs.runner_profile == 'dedicated'
+        env:
+          SCHEMA_LOCATION: ${{ vars.KUBERNETES_SCHEMA_LOCATION }}
+          PROVIDER_MIRROR: ${{ vars.TF_OFFLINE_PROVIDER_MIRROR }}
+        run: |
+          test -n "$SCHEMA_LOCATION" && test -n "$PROVIDER_MIRROR"
+          echo "KUBERNETES_SCHEMA_LOCATION=$SCHEMA_LOCATION" >> "$GITHUB_ENV"
+          echo "TF_OFFLINE_PROVIDER_MIRROR=$PROVIDER_MIRROR" >> "$GITHUB_ENV"
+      - name: Acquire only lockfile-verified Terraform providers (hosted CI only)
+        if: inputs.runner_profile == 'hosted'
+        run: |
+          terraform -chdir=infrastructure/terraform/bootstrap providers mirror -platform=linux_amd64 "$RUNNER_TEMP/terraform-mirror"
+          terraform -chdir=infrastructure/terraform/environments/dev providers mirror -platform=linux_amd64 "$RUNNER_TEMP/terraform-mirror"
+          git diff --exit-code -- infrastructure/terraform/bootstrap/.terraform.lock.hcl infrastructure/terraform/environments/dev/.terraform.lock.hcl
+          echo "TF_OFFLINE_PROVIDER_MIRROR=$RUNNER_TEMP/terraform-mirror" >> "$GITHUB_ENV"
+      - name: Validate workflow syntax with checksum-pinned actionlint
+        if: inputs.runner_profile == 'hosted'
+        run: actionlint -shellcheck= -pyflakes= .github/workflows/consolidated-release-verification.yml .github/workflows/semantic-release-verification.yml
+      - name: Native Prometheus, Helm, Kustomize and strict Kubernetes/CRD schemas
+        run: services/aiops-service/.venv/bin/python scripts/verify-consolidated-release.py native
+      - name: Real Terraform provider-schema validation and loopback TLS integration; no skips
+        run: |
+          services/aiops-service/.venv/bin/python scripts/ci/run-hosted-native-tests.py
+  postgres-hosted:
+    if: inputs.runner_profile == 'hosted'
+    needs: plan
+    runs-on: ubuntu-24.04
+    environment: release-verification
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: ${{ needs.plan.outputs.postgres_image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}
+          POSTGRES_DB: postgres
+        ports: ['5432/tcp']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      CI_EPHEMERAL_POSTGRES: synthetic-service-only
+      CI_SYNTHETIC_POSTGRES_PASSWORD: ${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}
+      RELEASE_TEST_ALLOW_SCHEMA_RESET: yes-disposable-public
+      AWS_EC2_METADATA_DISABLED: 'true'
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_CONFIG_FILE: /dev/null
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Acquire checksum-pinned Go (CI only)
+        env:
+          CI_ACQUISITION_LOCK_SHA256: ${{ vars.CI_ACQUISITION_LOCK_SHA256 }}
+          CI_ACQUISITION_APPROVED: ${{ vars.CI_ACQUISITION_APPROVED }}
+        run: python3 scripts/ci/acquire-integration-inputs.py postgres --output "$RUNNER_TEMP/go-inputs"
+      - name: Install hash-locked test dependencies
+        run: |
+          python3.12 -m venv services/aiops-service/.venv
+          services/aiops-service/.venv/bin/python -m pip install --only-binary=:all: --require-hashes -r services/aiops-service/requirements.lock -r tests/requirements-ci.lock
+      - name: Prepare fresh synthetic databases and roles in service container only
+        env:
+          CI_POSTGRES_ADMIN_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable
+        run: services/aiops-service/.venv/bin/python scripts/ci/bootstrap-integration-postgres.py
+      - name: Acquire checksum-verified Go modules; no source pin changes
+        working-directory: services/deployment-service
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: |
+          go mod download
+          git diff --exit-code -- go.mod go.sum
+      - name: Real migrations, effective ACLs, ledger, replay, rejections and atomic dispatch; no skips
+        env:
+          AI_TEST_POSTGRES_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_inference_test?sslmode=disable
+          REMEDIATION_TEST_DATABASE_URL: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_remediation_test?sslmode=disable
+          RELEASE_TEST_POSTGRES_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_release_test?sslmode=disable
+        run: services/aiops-service/.venv/bin/python scripts/verify-consolidated-release.py postgres
+  postgres-dedicated:
+    if: inputs.runner_profile == 'dedicated'
+    needs: plan
+    runs-on: [self-hosted, linux, x64, cloudforge-isolated-postgres]
+    environment: release-verification
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Existing isolated dedicated databases; no acquisition or provisioning
+        env:
+          AI_TEST_POSTGRES_DSN: ${{ secrets.ISOLATED_AI_TEST_POSTGRES_DSN }}
+          REMEDIATION_TEST_DATABASE_URL: ${{ secrets.ISOLATED_REMEDIATION_TEST_DATABASE_URL }}
+          RELEASE_TEST_POSTGRES_DSN: ${{ secrets.ISOLATED_RELEASE_TEST_POSTGRES_DSN }}
+          RELEASE_TEST_ALLOW_SCHEMA_RESET: yes-disposable-public
+          GOTOOLCHAIN: local
+          GOPROXY: 'off'
+        run: services/aiops-service/.venv/bin/python scripts/verify-consolidated-release.py postgres
+  integration-verification:
+    if: always()
+    needs: [plan, native, postgres-hosted, postgres-dedicated]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every active integration gate; only the inactive runner branch may skip
+        env:
+          PROFILE: ${{ inputs.runner_profile }}
+          RESULTS: ${{ toJson(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results=json.loads(os.environ['RESULTS'])
+          profile=os.environ['PROFILE']; assert profile in {'hosted','dedicated'}
+          active='postgres-'+profile
+          inactive='postgres-'+('dedicated' if profile=='hosted' else 'hosted')
+          assert set(results)=={'plan','native','postgres-hosted','postgres-dedicated'}
+          assert all(results[key]['result']=='success' for key in ('plan','native',active))
+          assert results[inactive]['result']=='skipped'
+          print('Integration evidence passed for this revision; separate approved semantic evidence and all production release gates remain required.')
+          PY

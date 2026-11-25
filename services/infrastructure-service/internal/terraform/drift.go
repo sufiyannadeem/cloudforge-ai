@@ -13,12 +13,13 @@ import (
 )
 
 type DriftFinding struct {
-	Address        string `json:"address,omitempty"`
-	Type           string `json:"type"`
-	Source         string `json:"source"`
-	Severity       string `json:"severity"`
-	Risk           string `json:"risk"`
-	Recommendation string `json:"recommendation"`
+	Address        string            `json:"address,omitempty"`
+	Type           string            `json:"type"`
+	Source         string            `json:"source"`
+	Severity       string            `json:"severity"`
+	Risk           string            `json:"risk"`
+	Recommendation string            `json:"recommendation"`
+	Comparisons    []DriftComparison `json:"comparisons,omitempty"`
 }
 
 // ScanDrift saves an observation plan only in a private, disposable workspace.
@@ -79,7 +80,14 @@ func classifyDrift(raw string) ([]DriftFinding, error) {
 		Address string
 		Type    string
 		Mode    string
-		Change  struct{ Actions []string }
+		Change  struct {
+			Actions         []string
+			Before          map[string]any
+			After           map[string]any
+			BeforeSensitive any `json:"before_sensitive"`
+			AfterSensitive  any `json:"after_sensitive"`
+			AfterUnknown    any `json:"after_unknown"`
+		}
 	}
 	var plan struct {
 		Format   string `json:"format_version"`
@@ -102,6 +110,7 @@ func classifyDrift(raw string) ([]DriftFinding, error) {
 			}
 			finding := DriftFinding{Type: change.Type, Source: group.source,
 				Recommendation: "Review provider changes, then generate a fresh plan for Platform Engineer approval."}
+			finding.Comparisons = safeDriftComparisons(change.Change.Before, change.Change.After, change.Change.BeforeSensitive, change.Change.AfterSensitive, change.Change.AfterUnknown)
 			if safeResourceAddress.MatchString(change.Address) {
 				finding.Address = change.Address
 			}

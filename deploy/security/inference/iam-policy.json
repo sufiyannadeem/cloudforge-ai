@@ -1,0 +1,7 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": ["REPLACE_WITH_EXACT_API_SECRET_ARN", "REPLACE_WITH_EXACT_INTERNAL_AUTH_SECRET_ARN", "REPLACE_WITH_EXACT_TLS_SECRET_ARN"]},
+    {"Effect": "Allow", "Action": ["rds-db:connect"], "Resource": "arn:aws:rds-db:eu-west-1:REPLACE_ACCOUNT:dbuser:REPLACE_DB_RESOURCE_ID/cf_inference"}
+  ]
+}

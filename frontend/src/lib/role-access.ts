@@ -42,10 +42,12 @@ const navigation: { label: string; items: NavigationItem[] }[] = [
     { href: "/infrastructure", label: "Infrastructure", developerLabel: "Infrastructure Requests", icon: "⌘", roles: allRoles },
     { href: "/deployments", label: "Deployments", developerLabel: "My Deployments", icon: "⇧", roles: allRoles },
     { href: "/finops", label: "FinOps", icon: "$", roles: operatorRoles },
-    { href: "/project-costs", label: "Project FinOps", icon: "$", roles: ["developer"] },
+    { href: "/project-costs", label: "Project FinOps", icon: "$", roles: allRoles },
     { href: "/administration", label: "Administration", icon: "◇", roles: ["platform-engineer"] },
   ] },
   { label: "Reliability", items: [
+    { href: "/agent", label: "AI Kubernetes Agent", icon: "◈", roles: allRoles },
+    { href: "/drift", label: "Terraform Drift", icon: "⌘", roles: allRoles },
     { href: "/observability", label: "Observability", developerLabel: "Project Monitoring", icon: "◉", roles: allRoles },
     { href: "/slo", label: "SLO & Error Budget", icon: "◒", roles: operatorRoles },
     { href: "/incidents", label: "AIOps Incidents", icon: "⚡", roles: operatorRoles },

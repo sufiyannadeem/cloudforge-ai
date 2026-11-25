@@ -60,6 +60,7 @@ def test_billing_is_resource_scoped_and_distinguishes_estimates(monkeypatch, att
     }
     totals, covered = costs.costs_for_region([attribution], date(2026, 1, 4))
     assert covered == {INSTANCE}
+    assert [day for row in totals for day in row["history"]] == [{"date": "2026-01-02", "amount": "2.50"}, {"date": "2026-01-03", "amount": "2.50"}]
     assert {row["status"]: row["amount"] for row in totals} == {"actual": "2.50", "estimated": "2.50"}
     filters = billing.get_cost_and_usage_with_resources.call_args.kwargs["Filter"]["And"]
     assert {x["Dimensions"]["Key"]: x["Dimensions"]["Values"] for x in filters} == {
@@ -129,3 +130,29 @@ def test_incident_resource_costs_query_only_attributed_instance(monkeypatch, att
     result = costs.project_costs(UUID(PROJECT), request, Response(), UUID(attribution["resource_id"]))
     assert result["status"] == "available"
     assert result["resources_with_cost"] == 1
+
+
+@pytest.mark.parametrize('role', ['developer', 'sre', 'platform-engineer'])
+def test_project_cost_history_api_preserves_scope_and_quality(monkeypatch, attribution, role):
+    from .identity_test_helpers import SignedTestClient
+    from .main import app
+    monkeypatch.setenv('CLOUDFORGE_FRONTEND_KEY', 'fixture-only-finops-frontend-key-at-least-32-bytes')
+    monkeypatch.setenv('FINOPS_PROJECT_DATABASE_URL', 'fixture-read-only-dsn')
+    def scoped(_dsn, project, claims):
+        assert claims['role'] == role and claims['sub'] == 'test-operator'
+        if str(project) != PROJECT:
+            raise HTTPException(404, 'Project not found')
+        return [attribution]
+    monkeypatch.setattr(costs, 'project_resources', scoped)
+    monkeypatch.setattr(costs, 'costs_for_region', lambda *_: ([{
+        'status': 'estimated', 'currency': 'USD', 'amount': '2.50',
+        'history': [{'date': '2026-01-03', 'amount': '2.50'}],
+    }], {INSTANCE}))
+    client = SignedTestClient(app)
+    headers = {'X-Test-Human-Role': role, 'X-CloudForge-Role': 'platform-engineer'}
+    assert client.get(f'/api/v1/finops/projects/{PROJECT}/costs').status_code == 401
+    response = client.get(f'/api/v1/finops/projects/{PROJECT}/costs', headers=headers)
+    assert response.status_code == 200
+    assert response.json()['history'] == [{'date': '2026-01-03', 'status': 'estimated', 'currency': 'USD', 'amount': '2.50'}]
+    assert response.headers['cache-control'] == 'private, no-store'
+    assert client.get('/api/v1/finops/projects/99999999-9999-4999-8999-999999999999/costs', headers=headers).status_code == 404

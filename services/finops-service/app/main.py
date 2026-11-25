@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 
 from .service_identity import production_database
 from .project_costs import router as project_costs_router
+from .project_insights import router as project_insights_router
 from .aws_secrets_loader import populate_env_from_secrets_manager
 from .aws_finops_routes import router as aws_finops_router
 from .finops_anomaly_audit import router as finops_anomaly_audit_router
@@ -58,6 +59,7 @@ app = FastAPI(
 )
 
 app.include_router(project_costs_router)
+app.include_router(project_insights_router)
 app.include_router(finops_router)
 app.include_router(aws_finops_router)
 app.include_router(finops_anomaly_audit_router)

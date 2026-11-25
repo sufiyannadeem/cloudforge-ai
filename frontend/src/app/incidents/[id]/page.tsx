@@ -1,17 +1,21 @@
 "use client";
+import InferenceStatus from "@/components/incidents/InferenceStatus";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 
+import { useViewerSession } from "@/components/layout/ViewerSession";
 import AppShell from "@/components/layout/AppShell";
 import IncidentCostEvidence from "@/components/incidents/IncidentCostEvidence";
+import KnowledgeReferences from "@/components/incidents/KnowledgeReferences";
 import OperatorBriefing from "@/components/incidents/OperatorBriefing";
 import IncidentTimeline from "@/components/incidents/IncidentTimeline";
 import RemediationPanel from "@/components/incidents/RemediationPanel";
 import {
   acknowledgeIncident,
   analyzeIncidentDeterministic,
+  analyzeIncident,
   assignIncident,
   getIncident,
   getIncidentTimeline,
@@ -431,7 +435,7 @@ function AIAnalysisPanel({
           >
             {analyzing
               ? "Analyzing..."
-              : "Analyze Incident"}
+              : "Analyze deterministic evidence"}
           </button>
         </div>
       </Section>
@@ -471,6 +475,8 @@ function AIAnalysisPanel({
             </span>
           )}
         </div>
+
+        <InferenceStatus analysis={analysis} />
 
         {analysis.summary && (
           <div>
@@ -633,7 +639,7 @@ function AIAnalysisPanel({
           >
             {analyzing
               ? "Re-analyzing..."
-              : "Re-analyze"}
+              : "Refresh deterministic analysis"}
           </button>
         </div>
       </div>
@@ -643,9 +649,12 @@ function AIAnalysisPanel({
 
 export default function IncidentDetailsPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
+  return <IncidentDetails key={params.id} incidentId={params.id} />;
+}
 
-  const incidentId = params.id;
+function IncidentDetails({ incidentId }: { incidentId: string }) {
+  const actor = useViewerSession()?.username ?? "";
+  const router = useRouter();
 
   const [incident, setIncident] =
     useState<Incident | null>(null);
@@ -785,6 +794,21 @@ export default function IncidentDetailsPage() {
     };
   }, [incidentId]);
 
+  async function handleAIDiagnose() {
+    try {
+      setAnalysisLoading(true);
+      setError("");
+      const result = await analyzeIncident(incidentId);
+      if (!result.incident || result.incident.id !== incidentId) throw new Error("Incident scope mismatch");
+      setIncident(result.incident);
+      await loadTimeline();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "AI diagnosis unavailable.");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }
+
   async function handleAnalyze() {
     try {
       setAnalysisLoading(true);
@@ -813,7 +837,7 @@ export default function IncidentDetailsPage() {
 
       await acknowledgeIncident(
         incidentId,
-        "nadeem",
+        actor,
       );
 
       await refreshDetails();
@@ -893,6 +917,7 @@ export default function IncidentDetailsPage() {
       await resolveIncident(
         incidentId,
         resolutionNotes.trim(),
+        actor,
       );
 
       await refreshDetails();
@@ -1035,6 +1060,12 @@ export default function IncidentDetailsPage() {
           </div>
         </section>
 
+        <button type="button" onClick={() => void handleAIDiagnose()} disabled={analysisLoading}
+          className="rounded border border-[var(--cf-border)] px-4 py-2 disabled:opacity-50">
+          {analysisLoading ? "Analyzing…" : "Request AI diagnosis"}
+        </button>
+        <p className="text-sm text-[var(--cf-text-muted)]">Uses authorized project aggregates only. AI cannot approve or execute changes.</p>
+
         <AIAnalysisPanel
           analysis={incident.ai_analysis}
           analyzing={analysisLoading}
@@ -1045,6 +1076,7 @@ export default function IncidentDetailsPage() {
 	<OperatorBriefing
 	  analysis={incident.ai_analysis}
 	/>
+          <KnowledgeReferences key={incident.id} incidentId={incident.id} />
 
         <Section title="Incident Overview">
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">

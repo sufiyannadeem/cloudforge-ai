@@ -46,3 +46,23 @@ test("private HTTP uses the pinned public HTTPS origin and rejects forged hosts"
   process.env.CLOUDFORGE_PUBLIC_ORIGIN = "https://public.execute-api.example/path";
   assert.equal(originMatchesRequest("https://public.execute-api.example", internal, "internal-alb"), false);
 });
+
+test("production rejects localhost HTTP exceptions and always secures auth cookies", (t) => {
+  const keys = ["NODE_ENV", "CLOUDFORGE_LOCAL_DEV", "CLOUDFORGE_PUBLIC_ORIGIN", "CLOUDFORGE_AUTH_COOKIE_SECURE"];
+  const before = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  t.after(() => keys.forEach(key => { if (before[key] === undefined) delete process.env[key]; else process.env[key] = before[key]; }));
+  process.env.NODE_ENV = "production";
+  process.env.CLOUDFORGE_LOCAL_DEV = "true";
+  process.env.CLOUDFORGE_AUTH_COOKIE_SECURE = "false";
+  for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+    const origin = `http://${host}:3000`;
+    process.env.CLOUDFORGE_PUBLIC_ORIGIN = origin;
+    assert.throws(() => publicOrigin(origin), /Invalid public origin/);
+    assert.equal(secureAuthCookies(origin), true);
+    assert.equal(originMatchesRequest(origin, origin, `${host}:3000`), false);
+  }
+  process.env.NODE_ENV = "development";
+  process.env.CLOUDFORGE_PUBLIC_ORIGIN = "http://localhost:3000";
+  assert.equal(publicOrigin("http://localhost:3000"), "http://localhost:3000");
+  assert.equal(secureAuthCookies("http://localhost:3000"), false);
+});

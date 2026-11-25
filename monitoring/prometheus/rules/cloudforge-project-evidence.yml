@@ -1,0 +1,189 @@
+# Trusted resource inventory and strict full-coverage project evidence.
+groups:
+- name: cloudforge-project-evidence
+  interval: 15s
+  limit: 10000
+  rules:
+  - record: cloudforge:resource_mapping:verified
+    expr: |-
+      max by (cluster, namespace, uid, resource_id, project_id) (
+       (cloudforge_resource_project_info{job="deployment-service"} == 1)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_resource_project_info{job="deployment-service"}) == 1)
+       and on (cluster, resource_id) (count by (cluster, resource_id) (cloudforge_resource_project_info{job="deployment-service"}) == 1)
+       and on (cluster, namespace, uid, resource_id) (cloudforge_resource_mapping_timestamp_seconds{job="deployment-service"} >= time() - 60)
+       and on (cluster, namespace, uid, resource_id) (cloudforge_resource_mapping_timestamp_seconds{job="deployment-service"} <= time())
+       and (time() - timestamp(cloudforge_resource_project_info{job="deployment-service"}) <= 45)
+      )
+  - record: cloudforge:pod_mapping:verified
+    expr: |-
+      max by (cluster, namespace, uid, resource_id, project_id) (
+       ((cloudforge_pod_project_info{job="deployment-service"} == 1) and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_pod_project_info{job="deployment-service"}) == 1)
+       and (time() - timestamp(cloudforge_pod_project_info{job="deployment-service"}) <= 45))
+       * on (cluster, namespace, resource_id, project_id) group_left cloudforge:resource_mapping:verified
+      )
+  - record: cloudforge:resource_kube_state:verified
+    expr: |-
+      max by (cluster, namespace, resource_id, project_id, signal) (
+       ((cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"} == 0 or cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"} == 1)
+       and on (cluster, namespace, uid, resource_id, signal) (count by (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"}) == 1)
+       and on (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service"} >= time()-120)
+       and on (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service"} <= time())
+       and (time()-timestamp(cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"}) <= 45)) * on (cluster, namespace, uid, resource_id) group_left(project_id) cloudforge:resource_mapping:verified)
+  - record: cloudforge:resource_kube_stamp:verified
+    expr: |-
+      min by (cluster, namespace, resource_id, project_id, signal) (
+       (cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service"} and on (cluster, namespace, uid, resource_id, signal) ((cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"} == 0 or cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"} == 1)
+       and on (cluster, namespace, uid, resource_id, signal) (count by (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"}) == 1)
+       and on (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service"} >= time()-120)
+       and on (cluster, namespace, uid, resource_id, signal) (cloudforge_resource_signal_observed_timestamp_seconds{job="deployment-service"} <= time())
+       and (time()-timestamp(cloudforge_resource_signal_state{job="deployment-service",signal=~"cpu_pressure|memory_pressure|oom|restart_loop|deployment_health|image_pull_failure|scheduling_failure|startup_configuration"}) <= 45)))
+       * on (cluster, namespace, uid, resource_id) group_left(project_id) cloudforge:resource_mapping:verified)
+  - record: cloudforge:pod_requests:rate5m
+    expr: |-
+      sum by (cluster, namespace, uid, resource_id, project_id) ((((rate(http_requests_total{job="cloudforge-project-http"}[5m]) >= 0) and (rate(http_requests_total{job="cloudforge-project-http"}[5m]) < +Inf) and (count_over_time(http_requests_total{job="cloudforge-project-http"}[5m]) >= 18)
+       and (time()-timestamp(http_requests_total{job="cloudforge-project-http"}) <= 45))
+       and on (cluster, namespace, uid) ((up{job="cloudforge-project-http"} == 1) and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (up{job="cloudforge-project-http"}) == 1))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified)
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (count_over_time(http_requests_total{job="cloudforge-project-http"}[5m])) >= 18)
+       and on (cluster,namespace,uid) (count by (cluster,namespace,uid) (count_over_time(http_requests_total{job="cloudforge-project-http"}[5m])) == count by (cluster,namespace,uid) (http_requests_total{job="cloudforge-project-http"}))
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (timestamp(http_requests_total{job="cloudforge-project-http"})) >= time()-45)
+  - record: cloudforge:pod_errors:rate5m
+    expr: |-
+      sum by (cluster, namespace, uid, resource_id, project_id) ((((rate(http_requests_total{job="cloudforge-project-http",status=~"5.."}[5m]) >= 0) and (rate(http_requests_total{job="cloudforge-project-http",status=~"5.."}[5m]) < +Inf) and (count_over_time(http_requests_total{job="cloudforge-project-http",status=~"5.."}[5m]) >= 18)
+       and (time()-timestamp(http_requests_total{job="cloudforge-project-http",status=~"5.."}) <= 45))
+       and on (cluster, namespace, uid) ((up{job="cloudforge-project-http"} == 1) and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (up{job="cloudforge-project-http"}) == 1))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified)
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (count_over_time(http_requests_total{job="cloudforge-project-http",status=~"5.."}[5m])) >= 18)
+       and on (cluster,namespace,uid) (count by (cluster,namespace,uid) (count_over_time(http_requests_total{job="cloudforge-project-http",status=~"5.."}[5m])) == count by (cluster,namespace,uid) (http_requests_total{job="cloudforge-project-http",status=~"5.."}))
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (timestamp(http_requests_total{job="cloudforge-project-http",status=~"5.."})) >= time()-45)
+  - record: cloudforge:pod_http_state:verified
+    expr: |-
+      ((cloudforge:pod_errors:rate5m / (cloudforge:pod_requests:rate5m > 0)) > bool 0.01)
+       and on(cluster,namespace,uid,resource_id,project_id)
+       ((cloudforge:pod_errors:rate5m / (cloudforge:pod_requests:rate5m > 0)) <= 1)
+    labels:
+      signal: error_rate
+  - record: cloudforge:pod_latency_good:rate5m
+    expr: |-
+      sum by (cluster, namespace, uid, resource_id, project_id) ((((rate(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}[5m]) >= 0) and (rate(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}[5m]) < +Inf) and (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}[5m]) >= 18)
+       and (time()-timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}) <= 45))
+       and on (cluster, namespace, uid) ((up{job="cloudforge-project-http"} == 1) and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (up{job="cloudforge-project-http"}) == 1))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified)
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}[5m])) >= 18)
+       and on (cluster,namespace,uid) (count by (cluster,namespace,uid) (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}[5m])) == count by (cluster,namespace,uid) (http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"}))
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="0.5"})) >= time()-45)
+  - record: cloudforge:pod_latency_total:rate5m
+    expr: |-
+      sum by (cluster, namespace, uid, resource_id, project_id) ((((rate(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}[5m]) >= 0) and (rate(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}[5m]) < +Inf) and (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}[5m]) >= 18)
+       and (time()-timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}) <= 45))
+       and on (cluster, namespace, uid) ((up{job="cloudforge-project-http"} == 1) and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (up{job="cloudforge-project-http"}) == 1))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified)
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}[5m])) >= 18)
+       and on (cluster,namespace,uid) (count by (cluster,namespace,uid) (count_over_time(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}[5m])) == count by (cluster,namespace,uid) (http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"}))
+       and on (cluster,namespace,uid) (min by (cluster,namespace,uid) (timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http",le="+Inf"})) >= time()-45)
+  - record: cloudforge:pod_http_state:verified
+    expr: |-
+      ((cloudforge:pod_latency_good:rate5m / (cloudforge:pod_latency_total:rate5m > 0)) < bool 0.95)
+       and on(cluster,namespace,uid,resource_id,project_id)
+       ((cloudforge:pod_latency_good:rate5m / (cloudforge:pod_latency_total:rate5m > 0)) <= 1)
+    labels:
+      signal: latency
+  - record: cloudforge:pod_http_state:verified
+    expr: |-
+      (1 - ((probe_success{job="cloudforge-project-probe"} == 0 or probe_success{job="cloudforge-project-probe"} == 1)
+       and (time()-timestamp(probe_success{job="cloudforge-project-probe"}) <= 45)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (probe_success{job="cloudforge-project-probe"}) == 1)))
+       * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+    labels:
+      signal: availability
+  - record: cloudforge:pod_http_state:verified
+    expr: |-
+      (1 - ((cloudforge_dependency_healthy{job="cloudforge-project-sli"} == 0 or cloudforge_dependency_healthy{job="cloudforge-project-sli"} == 1) and (time()-timestamp(cloudforge_dependency_healthy{job="cloudforge-project-sli"}) <= 45)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_dependency_healthy{job="cloudforge-project-sli"}) == 1)
+       and on (cluster, namespace, uid) (cloudforge_dependency_evidence_complete{job="cloudforge-project-sli"} >= 1)
+       and on (cluster, namespace, uid) (cloudforge_dependency_evidence_complete{job="cloudforge-project-sli"} <= 1)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_dependency_evidence_complete{job="cloudforge-project-sli"}) == 1)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="dependency_health"}) == 1)
+       and on (cluster, namespace, uid) (time()-timestamp(cloudforge_dependency_evidence_complete{job="cloudforge-project-sli"}) <= 45)
+       and on (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="dependency_health"} >= time()-120)
+       and on (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="dependency_health"} <= time()))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+    labels:
+      signal: dependency_health
+  - record: cloudforge:pod_http_state:verified
+    expr: |-
+      ((cloudforge_slo_breached{job="cloudforge-project-sli"} == 0 or cloudforge_slo_breached{job="cloudforge-project-sli"} == 1) and (time()-timestamp(cloudforge_slo_breached{job="cloudforge-project-sli"}) <= 45)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_slo_breached{job="cloudforge-project-sli"}) == 1)
+       and on (cluster, namespace, uid) (cloudforge_slo_window_coverage_ratio{job="cloudforge-project-sli"} >= .9)
+       and on (cluster, namespace, uid) (cloudforge_slo_window_coverage_ratio{job="cloudforge-project-sli"} <= 1)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_slo_window_coverage_ratio{job="cloudforge-project-sli"}) == 1)
+       and on (cluster, namespace, uid) (count by (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="slo_violation"}) == 1)
+       and on (cluster, namespace, uid) (time()-timestamp(cloudforge_slo_window_coverage_ratio{job="cloudforge-project-sli"}) <= 45)
+       and on (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="slo_violation"} >= time()-120)
+       and on (cluster, namespace, uid) (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="slo_violation"} <= time())) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+    labels:
+      signal: slo_violation
+  - record: cloudforge:pod_http_stamp:verified
+    expr: |-
+      (min by (cluster, namespace, uid) (timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http"}) and (time()-timestamp(http_request_duration_seconds_bucket{job="cloudforge-project-http"}) <= 45))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+       and on (cluster, namespace, uid, resource_id, project_id) cloudforge:pod_http_state:verified{signal="latency"}
+    labels:
+      signal: latency
+  - record: cloudforge:pod_http_stamp:verified
+    expr: |-
+      (min by (cluster, namespace, uid) (timestamp(http_requests_total{job="cloudforge-project-http"}) and (time()-timestamp(http_requests_total{job="cloudforge-project-http"}) <= 45))) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+       and on (cluster, namespace, uid, resource_id, project_id) cloudforge:pod_http_state:verified{signal="error_rate"}
+    labels:
+      signal: error_rate
+  - record: cloudforge:pod_http_stamp:verified
+    expr: |-
+      (timestamp(probe_success{job="cloudforge-project-probe"})) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+       and on (cluster, namespace, uid, resource_id, project_id) cloudforge:pod_http_state:verified{signal="availability"}
+    labels:
+      signal: availability
+  - record: cloudforge:pod_http_stamp:verified
+    expr: |-
+      (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="dependency_health"}) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+       and on (cluster, namespace, uid, resource_id, project_id) cloudforge:pod_http_state:verified{signal="dependency_health"}
+    labels:
+      signal: dependency_health
+  - record: cloudforge:pod_http_stamp:verified
+    expr: |-
+      (cloudforge_sli_observed_timestamp_seconds{job="cloudforge-project-sli",signal="slo_violation"}) * on (cluster, namespace, uid) group_left(resource_id, project_id) cloudforge:pod_mapping:verified
+       and on (cluster, namespace, uid, resource_id, project_id) cloudforge:pod_http_state:verified{signal="slo_violation"}
+    labels:
+      signal: slo_violation
+  - record: cloudforge:resource_http_state:verified
+    expr: |-
+      max by (cluster, namespace, resource_id, project_id, signal) (cloudforge:pod_http_state:verified)
+       and on (cluster, namespace, resource_id, project_id, signal) (count by (cluster, namespace, resource_id, project_id, signal) (cloudforge:pod_http_state:verified)
+       == on (cluster, namespace, resource_id, project_id) group_left count by (cluster, namespace, resource_id, project_id) (cloudforge:pod_mapping:verified))
+  - record: cloudforge:resource_http_stamp:verified
+    expr: |-
+      min by (cluster, namespace, resource_id, project_id, signal) (cloudforge:pod_http_stamp:verified)
+       and on (cluster, namespace, resource_id, project_id, signal) cloudforge:resource_http_state:verified
+  - record: cloudforge:resource_signal:verified
+    expr: cloudforge:resource_kube_state:verified or cloudforge:resource_http_state:verified
+  - record: cloudforge:resource_stamp:verified
+    expr: cloudforge:resource_kube_stamp:verified or cloudforge:resource_http_stamp:verified
+  - record: cloudforge:project_inventory:verified
+    expr: |-
+      max by (project_id) ((cloudforge_project_expected_resources{job="deployment-service"} > 0)
+       and on(project_id) (count by(project_id) (cloudforge_project_expected_resources{job="deployment-service"}) == 1)
+       and (time()-timestamp(cloudforge_project_expected_resources{job="deployment-service"}) <= 45))
+  - record: cloudforge_project_internal_signal_state
+    expr: |-
+      max by (project_id,signal) (cloudforge:resource_signal:verified)
+       and on(project_id,signal) (count by(project_id,signal) (cloudforge:resource_signal:verified)
+       == on(project_id) group_left cloudforge:project_inventory:verified)
+    labels:
+      provenance: verified_resource_v1
+  - record: cloudforge_project_internal_signal_observed_timestamp_seconds
+    expr: |-
+      min by (project_id,signal) (cloudforge:resource_stamp:verified)
+       and on(project_id,signal) cloudforge_project_internal_signal_state
+    labels:
+      provenance: verified_resource_v1
+  - record: cloudforge_project_signal_state
+    expr: cloudforge_project_internal_signal_state{signal=~"latency|error_rate|availability"}
+    labels:
+      provenance: verified_resource_v1
+  - record: cloudforge_project_signal_observed_timestamp_seconds
+    expr: cloudforge_project_internal_signal_observed_timestamp_seconds{signal=~"latency|error_rate|availability"}
+    labels:
+      provenance: verified_resource_v1

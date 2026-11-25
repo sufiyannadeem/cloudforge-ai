@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import math
+import hashlib
 from pathlib import Path
 
 from .rag_models import (
@@ -17,20 +19,29 @@ class OperationalKnowledgeBase:
     """
     Local operational knowledge base.
 
-    The retrieval backend is intentionally deterministic and
-    dependency-free.
-
-    It can later be replaced by an embedding/vector backend
-    without changing the retrieval contract.
+    Hybrid local retrieval with a host-supplied, bounded embedding backend.
+    Knowledge is contextual material and never live operational evidence.
     """
 
     def __init__(
         self,
         knowledge_dir: str | Path,
+        *,
+        embedder=None,
+        min_relevance: float = 0.15,
+        allowed_paths: set[str] | None = None,
+        documents: list[KnowledgeDocument] | None = None,
+        embeddings: dict | None = None,
+        semantic_threshold: float = 0.45,
     ) -> None:
+        self.embedder = embedder
+        self.min_relevance = max(0.0, min(1.0, min_relevance))
+        self.allowed_paths = allowed_paths
         self.knowledge_dir = Path(knowledge_dir)
 
-        self.documents = self._load_documents()
+        self.embeddings = embeddings
+        self.semantic_threshold = semantic_threshold
+        self.documents = documents if documents is not None else self._load_documents()
         self.chunks = self._chunk_documents()
 
     def _load_documents(
@@ -44,6 +55,10 @@ class OperationalKnowledgeBase:
         for path in sorted(
             self.knowledge_dir.rglob("*.md")
         ):
+            if path.is_symlink() or not path.resolve().is_relative_to(self.knowledge_dir.resolve()):
+                continue
+            if self.allowed_paths is not None and path.relative_to(self.knowledge_dir).as_posix() not in self.allowed_paths:
+                continue
             content = path.read_text(
                 encoding="utf-8"
             ).strip()
@@ -103,9 +118,7 @@ class OperationalKnowledgeBase:
                 document.content
             )
 
-            for index, section in enumerate(
-                sections
-            ):
+            for section in sections:
                 if not section.strip():
                     continue
 
@@ -113,7 +126,7 @@ class OperationalKnowledgeBase:
                     KnowledgeChunk(
                         chunk_id=(
                             f"{document.document_id}"
-                            f":chunk-{index}"
+                            f":{hashlib.sha256(section.strip().encode()).hexdigest()[:20]}"
                         ),
                         document_id=(
                             document.document_id
@@ -150,7 +163,8 @@ class OperationalKnowledgeBase:
                 "\n".join(current)
             )
 
-        return sections
+        return [section[start:start+2000] for section in sections
+                for start in range(0, len(section), 2000)]
 
     @staticmethod
     def _normalize_token(
@@ -241,12 +255,14 @@ class OperationalKnowledgeBase:
           deployment/deployments
         """
 
+        query = query[:2000]
         query_terms = self._tokens(query)
 
         if not query_terms:
             return []
 
         results: list[RetrievalResult] = []
+        left = list(self.embedder(query)) if self.embedder is not None else None
 
         for chunk in self.chunks:
             content_terms = self._tokens(
@@ -265,7 +281,7 @@ class OperationalKnowledgeBase:
                 title_terms
             )
 
-            if not matched and not title_matches:
+            if not matched and not title_matches and self.embedder is None:
                 continue
 
             score = float(
@@ -278,6 +294,19 @@ class OperationalKnowledgeBase:
                 * len(title_matches)
             )
 
+            score = min(1.0, score)
+            if self.embedder is not None:
+                right = list(self.embeddings[chunk.chunk_id] if self.embeddings is not None else self.embedder(chunk.content))
+                if len(left) != len(right) or not left or not all(math.isfinite(x) for x in left + right):
+                    raise ValueError('Invalid embedding')
+                norm = math.sqrt(sum(x*x for x in left) * sum(x*x for x in right))
+                semantic = sum(x*y for x, y in zip(left, right)) / norm if norm else 0
+                if semantic < self.semantic_threshold:
+                    continue
+                # Semantic relevance is a gate, lexical overlap improves ordering.
+                score = min(1.0, 0.8 * max(0.0, semantic) + 0.2 * score)
+            if score < self.min_relevance:
+                continue
             results.append(
                 RetrievalResult(
                     chunk=chunk,
@@ -298,7 +327,14 @@ class OperationalKnowledgeBase:
             )
         )
 
-        return results[: max(1, top_k)]
+        unique = []
+        seen = set()
+        for result in results:
+            digest = hashlib.sha256(' '.join(result.chunk.content.lower().split()).encode()).hexdigest()
+            if digest not in seen:
+                unique.append(result)
+                seen.add(digest)
+        return unique[: max(0, min(5, top_k))]
 
     def build_context(
         self,
@@ -337,6 +373,7 @@ class OperationalKnowledgeBase:
             sections.extend(
                 [
                     f"[Knowledge {index}]",
+                    f"Citation: {result.chunk.chunk_id}",
                     f"Source: {result.chunk.path}",
                     f"Title: {result.chunk.title}",
                     "Evidence type: operational_knowledge",
@@ -356,4 +393,4 @@ class OperationalKnowledgeBase:
                 ]
             )
 
-        return "\n".join(sections)
+        return "\n".join(sections)[:12000]
