@@ -5,6 +5,14 @@ No workflow was dispatched, database/cluster started, AWS called, image built, m
 weights downloaded or inference performed locally. Only bounded public metadata,
 checksums/schema sources and a verified 2.3MB actionlint validator were retrieved.
 
+## Revised schema hash — separate human approval pending
+
+The second hosted-run correction changed the deterministic schema conversion.
+The current lock hash below requires a new explicit human review in all three
+protected CI environments; approval of the previous hash does not authorize it.
+Do not change approval settings automatically. See
+[the second-run fix report](HOSTED_VERIFICATION_SECOND_RUN_FIX.md) for old/new hashes.
+
 ## Verified acquisition inputs
 
 `ci/integration-acquisition.json` now contains actual verified values; do **not** copy
@@ -54,7 +62,7 @@ include Kubernetes 1.35.1. These are compatible offline schema candidates for th
 Generation closes internal reference dependencies, preserves explicitly open Kubernetes
 maps, applies strict unknown-property checks to defined objects, and binds GVKs.
 The metadata-only local derivation produced **314 schemas**, about 9.8MB, with bundle
-manifest SHA256 `a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8`.
+manifest SHA256 `297ea2fa316ae6ab3f4fc96b7111d5613bb685493bb9fb0c6bdb3e7e2191f482`.
 All 314 schemas passed offline Draft-7 legality checks; CI must reproduce this
 manifest and still run native kubeconform. No schema placeholders or permissive replacements
 are supplied. CEL/admission/controller semantics still require separate release evidence.
@@ -81,7 +89,7 @@ avoid GVK collisions. The native gate has no default/remote/missing-schema fallb
 4. In all three environments, only **after human review**, set:
 
    ```text
-   CI_ACQUISITION_LOCK_SHA256=229740c6df87058f6c06162b908b8f48a9b408a5979ab6b5079492e0669e2d45
+   CI_ACQUISITION_LOCK_SHA256=8f73972d01681d32e3c3e817fc176dc15b19bb93893da1bfab8578fa2846759e
    CI_ACQUISITION_APPROVED=true
    ```
 

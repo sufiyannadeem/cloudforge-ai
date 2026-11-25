@@ -181,8 +181,11 @@ def strict_schema(value):
     for key in ('allOf','anyOf','oneOf'):
         if key in result:result[key]=[strict_schema(v) for v in result[key]]
     if result.pop('nullable',False) and isinstance(result.get('type'),str):result['type']=[result['type'],'null']
-    if result.get('x-kubernetes-int-or-string'):
-        result.pop('type',None);result['anyOf']=[{'type':'integer'},{'type':'string'}]
+    if result.get('format')=='int-or-string' or result.get('x-kubernetes-int-or-string'):
+        # OpenAPI uses a string format; CRDs use an extension (possibly with anyOf).
+        # Preserve existing composition/constraints instead of replacing anyOf.
+        if result.get('format')=='int-or-string':result.pop('format')
+        result['type']=['integer','string']
     if result.get('properties') and not result.get('x-kubernetes-preserve-unknown-fields'):
         result.setdefault('additionalProperties',False)
     return result

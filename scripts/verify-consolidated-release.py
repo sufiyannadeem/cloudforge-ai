@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -63,7 +64,14 @@ def native():
         rules=sorted((ROOT/'monitoring/prometheus/rules').glob('*.yml'))
         run([tool,'check','rules',*rules])
         for fixture in sorted((ROOT/'monitoring/prometheus').rglob('*.test.yml')):
-            run([tool,'test','rules',fixture.name],cwd=fixture.parent)
+            if fixture.name=='slo-evidence.test.yml':
+                # This fixture exercises scaled production rules generated beside it.
+                prepare=runpy.run_path(str(ROOT/'monitoring/prometheus/test-slo-evidence.py'))['prepare_fixture']
+                with tempfile.TemporaryDirectory(prefix='cloudforge-native-slo-') as temp:
+                    folder=Path(temp);prepare(folder)
+                    run([tool,'test','rules',fixture.name],cwd=folder)
+            else:
+                run([tool,'test','rules',fixture.name],cwd=fixture.parent)
     check('native_prometheus','promtool check config --syntax-only monitoring/prometheus/prometheus.yml; promtool check rules monitoring/prometheus/rules/*.yml; promtool test rules <each *.test.yml in its directory>',prometheus)
     def schemas():
         tool=os.getenv('KUBECONFORM') or shutil.which('kubeconform')

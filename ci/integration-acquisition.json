@@ -115,7 +115,7 @@
         "version": "2.14.1"
       }
     ],
-    "bundle_manifest_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8"
+    "bundle_manifest_sha256": "297ea2fa316ae6ab3f4fc96b7111d5613bb685493bb9fb0c6bdb3e7e2191f482"
   },
   "semantic": {
     "delivery": "approval-gated-same-sha-actions-candidate",

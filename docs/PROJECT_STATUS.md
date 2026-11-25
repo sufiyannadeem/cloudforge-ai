@@ -1,3 +1,4 @@
+<!-- Current schema/acquisition hash revision: see HOSTED_VERIFICATION_SECOND_RUN_FIX.md; separate human approval pending. -->
 # CloudForge AI implementation status
 
 Final pre-CI review: see [PRE_CI_SOURCE_REVIEW.md](PRE_CI_SOURCE_REVIEW.md). The
@@ -58,7 +59,7 @@ checksum-verified 2.3MB actionlint were retrieved; no heavy local artifacts were
    [public evidence](../ci/acquisition-evidence.json); configure eligible protected
    GitHub environments/reviewers and required same-SHA status checks. No settings changed.
 2. After real human review only, bind lock SHA
-   `229740c6df87058f6c06162b908b8f48a9b408a5979ab6b5079492e0669e2d45`
+   `8f73972d01681d32e3c3e817fc176dc15b19bb93893da1bfab8578fa2846759e`
    and explicit approval in the three environments described in the guide.
 3. At final SHA S, manually run hosted integration; then separately approved semantic
    `prepare` with that successful run/attempt; independently inspect/hash the retained

@@ -80,13 +80,15 @@
     "body_read_during_head_verification": false
   },
   "schemas": {
-    "manifest_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8",
+    "manifest_sha256": "297ea2fa316ae6ab3f4fc96b7111d5613bb685493bb9fb0c6bdb3e7e2191f482",
     "standalone_schema_count": 314,
-    "bytes_with_manifest": 9831137,
+    "bytes_with_manifest": 9833261,
     "native_kubeconform_executed": false,
-    "reproduced_with_cached_pyyaml": "6.0.3",
+    "reproduced_with_cached_pyyaml": "6.0.1",
     "draft7_legality_checks": 314,
-    "source_derivation_reproduced": true
+    "source_derivation_reproduced": true,
+    "previous_manifest_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8",
+    "int_or_string_conversion": "Official OpenAPI format and CRD extension; strict integer/string union with existing branch constraints retained"
   },
   "actions": {
     "checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -118,5 +120,21 @@
     "workflow_syntax": "PASS (shellcheck/pyflakes disabled)",
     "bash_python_source_and_job_references": "PASS",
     "postgres_native_prometheus_kubeconform_terraform_tls_semantic_integrations": "NOT_EXECUTED"
+  },
+  "second_hosted_run_correction": {
+    "old_acquisition_sha256": "229740c6df87058f6c06162b908b8f48a9b408a5979ab6b5079492e0669e2d45",
+    "new_acquisition_sha256": "8f73972d01681d32e3c3e817fc176dc15b19bb93893da1bfab8578fa2846759e",
+    "old_bundle_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8",
+    "new_bundle_sha256": "297ea2fa316ae6ab3f4fc96b7111d5613bb685493bb9fb0c6bdb3e7e2191f482",
+    "schema_count": 314,
+    "source_bytes": 5114630,
+    "failed_run_id": "45572638680",
+    "failed_source_sha": "030d1326b682dc5dadae1dfc619912abaa14be5b",
+    "human_approval": "PENDING_SEPARATE_HASH_REVIEW",
+    "reviewed_by": null,
+    "same_source_pins": true,
+    "schema_manifest_reproductions": 2,
+    "native_kubeconform_executed": false,
+    "bounded_source_documents_only": true
   }
 }
