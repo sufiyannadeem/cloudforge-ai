@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -102,11 +103,22 @@ def postgres():
     return [dict(gate='real_postgresql',status='PASS',reason='Real migrations/ACL/store/ledger/import tests and native Go dispatch passed without skips')]
 
 
+def write_report(name,content):
+    """Create a fresh report by basename in the current review workspace only."""
+    if not isinstance(name,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.json',name):
+        raise ValueError('Report must be a JSON basename in the review workspace')
+    root_fd=os.open('.',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=root_fd)
+        with os.fdopen(fd,'w') as stream:stream.write(content+'\n')
+    finally:os.close(root_fd)
+
+
 if __name__=='__main__':
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('gate',choices=['native','postgres']);parser.add_argument('--output',type=Path);a=parser.parse_args()
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('gate',choices=['native','postgres']);parser.add_argument('--output',help='New JSON report basename in the current workspace');a=parser.parse_args()
     try:rows=native() if a.gate=='native' else postgres()
     except (OSError,RuntimeError,ValueError,subprocess.SubprocessError) as error:rows=[dict(gate=a.gate,status='FAIL',reason=str(error))]
     output=json.dumps({'release_ready':False,'checks':rows},indent=2)
-    if a.output:a.output.write_text(output+'\n')
+    if a.output:write_report(a.output,output)
     print(output)
     sys.exit(1 if any(r['status']=='FAIL' for r in rows) else 2 if any(r['status']=='BLOCKED' for r in rows) else 0)

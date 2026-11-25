@@ -110,7 +110,7 @@ jobs:
         image: ${{ needs.plan.outputs.postgres_image }}
         env:
           POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: cloudforge-ci-disposable-only
+          POSTGRES_PASSWORD: ${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}
           POSTGRES_DB: postgres
         ports: ['5432/tcp']
         options: >-
@@ -118,6 +118,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       CI_EPHEMERAL_POSTGRES: synthetic-service-only
+      CI_SYNTHETIC_POSTGRES_PASSWORD: ${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}
       RELEASE_TEST_ALLOW_SCHEMA_RESET: yes-disposable-public
       AWS_EC2_METADATA_DISABLED: 'true'
       AWS_SHARED_CREDENTIALS_FILE: /dev/null
@@ -139,7 +140,7 @@ jobs:
           services/aiops-service/.venv/bin/python -m pip install --only-binary=:all: --require-hashes -r services/aiops-service/requirements.lock -r tests/requirements-ci.lock
       - name: Prepare fresh synthetic databases and roles in service container only
         env:
-          CI_POSTGRES_ADMIN_DSN: postgresql://postgres:cloudforge-ci-disposable-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable
+          CI_POSTGRES_ADMIN_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable
         run: services/aiops-service/.venv/bin/python scripts/ci/bootstrap-integration-postgres.py
       - name: Acquire checksum-verified Go modules; no source pin changes
         working-directory: services/deployment-service
@@ -151,9 +152,9 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - name: Real migrations, effective ACLs, ledger, replay, rejections and atomic dispatch; no skips
         env:
-          AI_TEST_POSTGRES_DSN: postgresql://postgres:cloudforge-ci-disposable-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_inference_test?sslmode=disable
-          REMEDIATION_TEST_DATABASE_URL: postgresql://postgres:cloudforge-ci-disposable-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_remediation_test?sslmode=disable
-          RELEASE_TEST_POSTGRES_DSN: postgresql://postgres:cloudforge-ci-disposable-only@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_release_test?sslmode=disable
+          AI_TEST_POSTGRES_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_inference_test?sslmode=disable
+          REMEDIATION_TEST_DATABASE_URL: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_remediation_test?sslmode=disable
+          RELEASE_TEST_POSTGRES_DSN: postgresql://postgres:${{ secrets.SYNTHETIC_CI_POSTGRES_PASSWORD }}@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/cloudforge_release_test?sslmode=disable
         run: services/aiops-service/.venv/bin/python scripts/verify-consolidated-release.py postgres
   postgres-dedicated:
     if: inputs.runner_profile == 'dedicated'

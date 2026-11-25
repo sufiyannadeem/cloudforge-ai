@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import runpy
+import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -24,6 +26,30 @@ def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def command(args,**kwargs):subprocess.run([str(v) for v in args],check=True,timeout=600,**kwargs)
+
+
+def archive_candidate(candidate,archive):
+    """Write only confined regular files with validated relative archive names."""
+    candidate=Path(candidate)
+    if candidate.is_symlink():raise ValueError('Linked candidate root')
+    with archive.open('xb') as output,gzip.GzipFile(filename='',mode='wb',fileobj=output,mtime=0) as zipped,tarfile.open(fileobj=zipped,mode='w') as tar:
+        for path in sorted(candidate.rglob('*')):
+            if path.is_symlink():raise ValueError('Candidate links forbidden')
+            if path.is_dir():continue
+            name=path.relative_to(candidate).as_posix()
+            if (not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*',name)
+                or any(part in {'.','..'} for part in Path(name).parts)
+                or not path.resolve().is_relative_to(candidate.resolve())):
+                raise ValueError('Unsafe candidate archive path')
+            if any(parent.is_symlink() for parent in path.parents):raise ValueError('Linked candidate parent')
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            with os.fdopen(fd,'rb') as data:
+                metadata=os.fstat(data.fileno())
+                if not stat.S_ISREG(metadata.st_mode):raise ValueError('Candidate must contain regular files')
+                info=tarfile.TarInfo(name)
+                info.size=metadata.st_size
+                info.uid=info.gid=0;info.uname=info.gname='';info.mtime=0;info.mode=0o644
+                tar.addfile(info,data)
 
 
 def prepare(folder):
@@ -68,7 +94,7 @@ def prepare(folder):
     command([python,ROOT/'scripts/prepare-embedding-artifact.py','--source',staging,'--output',model,
         '--source-revision',prep['revision'],'--reviewed-by',reviewer])
     index=folder/'candidate/index.json'
-    env=dict(os.environ,AI_EMBEDDING_ARTIFACT_DIR=str(model),AI_EMBEDDING_MANIFEST_SHA256=sha(model/'manifest.json'),
+    env=dict(os.environ,AI_KNOWLEDGE_DIR=str(corpus),AI_EMBEDDING_ARTIFACT_DIR=str(model),AI_EMBEDDING_MANIFEST_SHA256=sha(model/'manifest.json'),
              AI_KNOWLEDGE_MANIFEST_SHA256=sha(corpus/'manifest.json'),OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1',TOKENIZERS_PARALLELISM='false')
     # Artifact/index generation is local-only after acquisition; no embedding/network provider.
     offline="import runpy,socket,sys; deny=lambda *a,**k: (_ for _ in ()).throw(OSError('offline embedding preparation')); socket.socket.connect=deny; socket.create_connection=deny; script=sys.argv.pop(1); runpy.run_path(script,run_name='__main__')"
@@ -84,14 +110,8 @@ def prepare(folder):
         acquisition_lock_sha256=sha(ROOT/'ci/integration-acquisition.json'),corpus_source_sha256=sha(source),
         status='CANDIDATE_REQUIRES_SEPARATE_HUMAN_HASH_APPROVAL',human_review_statement=reviewer)
     (candidate/'provenance.json').write_text(json.dumps(provenance,sort_keys=True,indent=2)+'\n')
-    # Deterministic archive metadata; vectors may still vary with CPU/runtime numerical behavior.
     archive=folder/'semantic-candidate.tar.gz'
-    with archive.open('xb') as output,gzip.GzipFile(filename='',mode='wb',fileobj=output,mtime=0) as zipped,tarfile.open(fileobj=zipped,mode='w') as tar:
-        for path in sorted(candidate.rglob('*')):
-            if not path.is_file():continue
-            info=tar.gettarinfo(str(path),arcname=path.relative_to(candidate).as_posix())
-            info.uid=info.gid=0;info.uname=info.gname='';info.mtime=0;info.mode=0o644
-            with path.open('rb') as data:tar.addfile(info,data)
+    archive_candidate(candidate,archive)
     if archive.stat().st_size>400*1024*1024:raise ValueError('Candidate artifact budget exceeded')
     (folder/'semantic-candidate.sha256').write_text(sha(archive)+'  semantic-candidate.tar.gz\n')
     print('Candidate SHA256:',sha(archive),'separate reviewer approval required; no production artifact approval granted')

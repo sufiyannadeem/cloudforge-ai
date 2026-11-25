@@ -30,7 +30,19 @@ def concept_embedding(text):
     return [float(len(words & group)) for group in CONCEPTS]
 
 
+def approved_knowledge_root(value):
+    """A CLI argument may select only the operator-configured corpus mount."""
+    approved=Path(os.getenv('AI_KNOWLEDGE_DIR',str(Path(__file__).resolve().parent.parent/'knowledge'))).absolute()
+    supplied=Path(value)
+    if '..' in supplied.parts or supplied.absolute()!=approved:
+        raise ValueError('Knowledge directory differs from the approved mount')
+    if any(path.is_symlink() for path in (approved,*approved.parents)):
+        raise ValueError('Linked knowledge directories are forbidden')
+    return approved
+
+
 def reviewed_knowledge(root, project_id=None):
+    root=approved_knowledge_root(root)
     if project_id is not None: project_id=str(UUID(project_id))
     if (root/'manifest.json').is_symlink() or (root/'manifest.json').stat().st_size>131072:
         raise ValueError('Manifest too large or linked')

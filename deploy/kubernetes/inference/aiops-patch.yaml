@@ -6,6 +6,7 @@ metadata: {name: aiops-service, namespace: cloudforge}
 spec:
   template:
     spec:
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -21,6 +22,10 @@ spec:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities: {drop: [ALL]}
+          # Match the base Deployment resource budget explicitly in this patch.
+          resources:
+            requests: {cpu: 200m, memory: 256Mi, ephemeral-storage: 128Mi}
+            limits: {cpu: 1000m, memory: 512Mi, ephemeral-storage: 4Gi}
           env:
             - {name: AI_PROVIDER, value: gemini}
             - {name: AI_INTERNAL_KEY_FILE, value: /var/run/inference-auth/request-key}

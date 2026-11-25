@@ -32,7 +32,10 @@ def digest(value):
 
 
 def load(path,semantic=False):
-    raw=Path(path).read_bytes()
+    approved=ROOT/'ci/integration-acquisition.json'
+    if Path(path).absolute()!=approved or approved.is_symlink():
+        raise ValueError('Only the checked-in acquisition lock is allowed')
+    raw=approved.read_bytes()
     if hashlib.sha256(raw).hexdigest()!=digest(os.environ['CI_ACQUISITION_LOCK_SHA256']):
         raise ValueError('Acquisition lock differs from environment-approved digest')
     lock=json.loads(raw)
@@ -87,26 +90,34 @@ def validate(item):
 
 
 def url(value):
+    if not isinstance(value,str) or any(ord(c)<33 or c=='\\' for c in value):
+        raise ValueError('Invalid artifact URL characters')
     parsed=urllib.parse.urlsplit(value)
     if (parsed.scheme!='https' or parsed.hostname not in HOSTS or parsed.username or parsed.password
         or parsed.port not in (None,443) or parsed.fragment or parsed.query):raise ValueError('Artifact URL not allowlisted')
-    return value
+    # Rebuild the authority from a literal allowlist, never the file-supplied URL.
+    host=next(host for host in HOSTS if host==parsed.hostname)
+    return urllib.parse.urlunsplit(('https',host,parsed.path,'',''))
 
 
 class ReviewedRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,request,fp,code,msg,headers,newurl):
         # GitHub assets use signed redirect queries; never log URLs or send auth headers.
+        if any(ord(c)<33 or c=='\\' for c in newurl):raise ValueError('Invalid redirect characters')
         p=urllib.parse.urlsplit(newurl)
         if p.scheme!='https' or p.hostname not in HOSTS or p.username or p.password or p.port not in (None,443):
             raise ValueError('Artifact redirect not allowlisted')
-        return super().redirect_request(request,fp,code,msg,headers,newurl)
+        host=next(host for host in HOSTS if host==p.hostname)
+        reviewed=urllib.parse.urlunsplit(('https',host,p.path,p.query,''))
+        return super().redirect_request(request,fp,code,msg,headers,reviewed)
 
 
 def fetch(item,target):
     validate(item)
+    source_url=url(item['url'])
     sha=hashlib.sha256();count=0;limit=int(item['limit_mib'])*1024*1024
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),ReviewedRedirect())
-    with opener.open(item['url'],timeout=30) as response,target.open('xb') as output:
+    with opener.open(source_url,timeout=30) as response,target.open('xb') as output:
         while True:
             chunk=response.read(1024*1024)
             if not chunk:break
@@ -187,8 +198,8 @@ def standalone(schema,definitions):
                 raise ValueError('External/unsupported schema reference')
             key=ref.removeprefix('#/definitions/')
             if key not in needed:
-                needed[key]=None
-                needed[key]=copy.deepcopy(definitions[key]);refs(needed[key])
+                needed[key]=copy.deepcopy(definitions[key])
+                refs(needed[key])
         for child in schema_children(value):refs(child)
     result=copy.deepcopy(schema);refs(result)
     if needed:result['definitions']=needed
@@ -288,9 +299,9 @@ def acquire(lock,group,dest):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('mode',choices=['plan','native','postgres'])
-    parser.add_argument('--lock',type=Path,default=ROOT/'ci/integration-acquisition.json');parser.add_argument('--output',type=Path);args=parser.parse_args()
+    parser.add_argument('--output',type=Path);args=parser.parse_args()
     if os.getenv('GITHUB_ACTIONS')!='true' or os.getenv('RUNNER_ENVIRONMENT')!='github-hosted':parser.exit(2,'CI-only acquisition; local execution forbidden\n')
-    lock=load(args.lock)
+    lock=load(ROOT/'ci/integration-acquisition.json')
     if args.mode=='plan':
         with Path(os.environ['GITHUB_OUTPUT']).open('a') as stream:stream.write('postgres_image='+lock['postgres_image']+'\n')
     else:

@@ -88,6 +88,14 @@ avoid GVK collisions. The native gate has no default/remote/missing-schema fallb
    Independently recompute that SHA from the checked-in lock. The human audit record
    is the protected environment/reviewer decision, not a fabricated `reviewed_by`
    field. Missing approval or mismatched hash stops acquisition.
+   In **release-verification**, also configure the environment secret
+   `SYNTHETIC_CI_POSTGRES_PASSWORD` with a dedicated cryptographically random
+   64-character lowercase hexadecimal value (32 random bytes). Use it only for
+   the disposable hosted PostgreSQL service; never reuse an application or production
+   credential. It is consumed through secret references, never committed or logged.
+   Missing, malformed or mismatched credentials fail closed. This prerequisite replaces
+   the former public fixture password; it grants no acquisition or workflow approval.
+
 5. In **semantic-preparation**, additionally set `SEMANTIC_PREPARATION_APPROVED=true`
    and `SEMANTIC_ARTIFACT_REVIEWER` to the actual human review statement/name. No bot,
    `github.actor` inference or default reviewer is used. This is required only when

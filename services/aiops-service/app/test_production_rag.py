@@ -81,6 +81,24 @@ def test_integrity_manifest_scope_and_symlink_fail_closed(corpus,monkeypatch):
     assert config.knowledge_references('latency',PROJECT)['references']==[]
 
 
+def test_knowledge_root_must_match_operator_mount_before_read(corpus, tmp_path):
+    root, _, _ = corpus
+    assert config.approved_knowledge_root(root) == root
+    with pytest.raises(ValueError, match='approved mount'):
+        config.reviewed_knowledge(tmp_path / 'unapproved')
+    with pytest.raises(ValueError, match='approved mount'):
+        config.reviewed_knowledge(root / '..' / root.name)
+
+
+def test_knowledge_root_rejects_linked_directory(corpus, tmp_path, monkeypatch):
+    root, _, _ = corpus
+    link = tmp_path / 'linked'
+    link.symlink_to(root, target_is_directory=True)
+    monkeypatch.setenv('AI_KNOWLEDGE_DIR', str(link))
+    with pytest.raises(ValueError, match='Linked knowledge'):
+        config.reviewed_knowledge(link)
+
+
 def semantic_bundle(corpus,monkeypatch):
     root,add,finish=corpus
     add('unrelated.md','# Gardening\nWater the orchard trees.')
