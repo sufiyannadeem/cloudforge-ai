@@ -89,6 +89,10 @@ class AIEnrichment(BaseModel):
 
     error: str | None = None
 
+    citations: list[str] = Field(default_factory=list)
+    retrieval_status: str = "not_requested"
+    knowledge_references: list[dict[str, object]] = Field(default_factory=list)
+
     generated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

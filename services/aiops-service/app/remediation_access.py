@@ -13,6 +13,6 @@ def require_remediation_human(request: Request) -> dict[str, str]:
 def require_remediation_approver(
     caller: dict[str, str] = Depends(require_remediation_human),
 ) -> dict[str, str]:
-    if caller["role"] not in {"sre", "platform-engineer"}:
-        raise HTTPException(403, "SRE or Platform Engineer required.")
+    if caller["role"] != "platform-engineer":
+        raise HTTPException(403, "Platform Engineer approval or execution required.")
     return caller

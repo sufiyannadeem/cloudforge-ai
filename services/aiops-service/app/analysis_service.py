@@ -5,9 +5,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from pathlib import Path
-from .rag import OperationalKnowledgeBase
-
 from .ai_provider import AIProvider
 from .ai_guardrails import (
     ai_guardrail_validator,
@@ -68,11 +65,6 @@ class IncidentAnalysisService:
         self.deployment_correlation_engine = (
             deployment_correlation_engine
             or DeploymentCorrelationEngine()
-        )
-
-        self.knowledge_base = OperationalKnowledgeBase(
-            Path(__file__).resolve().parent.parent
-            / "knowledge"
         )
 
     def analyze_incident(
@@ -136,10 +128,8 @@ class IncidentAnalysisService:
                 evidence_analysis,
             )
 
-        knowledge_context = self._build_knowledge_context(
-            incident=incident,
-            deterministic=evidence_analysis,
-        )
+        # Runbooks stay local, including on legacy provider paths.
+        knowledge_context = ""
 
         provider_result = self.provider.analyze(
             system_prompt=self._system_prompt(),
@@ -151,7 +141,7 @@ class IncidentAnalysisService:
             ),
         )
 
-        if provider_result.status == "error":
+        if provider_result.status != "success":
             logger.warning(
                 "AI provider failed for incident %s: %s",
                 incident.id,
@@ -180,39 +170,6 @@ class IncidentAnalysisService:
         return incident_store.save_ai_analysis(
             incident.id,
             ai_analysis,
-        )
-
-    def _build_knowledge_context(
-        self,
-        incident: Any,
-        deterministic: AIAnalysis,
-    ) -> str:
-        """
-        Retrieve relevant operational knowledge for an incident.
-
-        RAG provides contextual knowledge only.
-        Deterministic telemetry and incident evidence remain authoritative.
-        """
-
-        query_parts = [
-            incident.alert_name,
-            incident.service,
-            deterministic.assessment,
-            deterministic.probable_cause or "",
-            " ".join(
-                deterministic.evidence_findings
-            ),
-        ]
-
-        query = " ".join(
-            part
-            for part in query_parts
-            if part
-        )
-
-        return self.knowledge_base.build_context(
-            query,
-            top_k=5,
         )
 
     def _collect_deployment_correlations(
@@ -692,6 +649,7 @@ class IncidentAnalysisService:
         operational_context: dict[str, Any],
         knowledge_context: str = "",
     ) -> str:
+        knowledge_context = ""  # Runbooks are local-only on every provider path.
         payload = {
             "incident": {
                 "id": incident.id,

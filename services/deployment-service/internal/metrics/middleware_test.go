@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -172,8 +171,7 @@ func TestControlledLocalTrafficIncludesInjectedFailures(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	server := httptest.NewServer(Middleware(serviceMetrics)(mux))
-	defer server.Close()
+	handler := Middleware(serviceMetrics)(mux)
 	for i := 0; i < 10; i++ {
 		path := "/api/v1/observability-validation"
 		expected := http.StatusOK
@@ -181,14 +179,10 @@ func TestControlledLocalTrafficIncludesInjectedFailures(t *testing.T) {
 			path += "?fail=1"
 			expected = http.StatusInternalServerError
 		}
-		response, err := server.Client().Get(server.URL + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, _ = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
-		if response.StatusCode != expected {
-			t.Fatalf("request %d: %d", i, response.StatusCode)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != expected {
+			t.Fatalf("request %d: %d", i, response.Code)
 		}
 	}
 	families, err := registry.Gather()

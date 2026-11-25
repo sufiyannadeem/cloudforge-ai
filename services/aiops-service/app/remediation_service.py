@@ -112,6 +112,8 @@ class RemediationService:
         proposal_id: str,
         approved_by: str,
         approved_role: str,
+        expected_version: int,
+        expected_fingerprint: str,
     ) -> RemediationProposal:
         proposal = self.remediations.get(proposal_id)
 
@@ -129,6 +131,7 @@ class RemediationService:
             proposal_id,
             approved_by,
             approved_role,
+            expected_version, expected_fingerprint,
         )
 
         if result is None:
@@ -147,7 +150,7 @@ class RemediationService:
         self,
         proposal_id: str,
         rejected_by: str,
-        reason: str,
+        reason: str | None = None,
     ) -> RemediationProposal:
         proposal = self.remediations.get(proposal_id)
 
@@ -210,6 +213,8 @@ class RemediationService:
             )
 
         if proposal.execution_idempotency_key:
+            if proposal.execution_requested_by != executed_by:
+                raise PermissionError("Execution receipt belongs to a different verified actor")
             if (
                 proposal.execution_idempotency_key
                 != idempotency_key
@@ -277,36 +282,9 @@ class RemediationService:
                 executing.action
                 == RemediationAction.ACKNOWLEDGE_INCIDENT
             ):
-                acknowledged = self.incidents.acknowledge(
-                    incident_id=executing.incident_id,
-                    acknowledged_by=executed_by,
-                )
-
-                if acknowledged is None:
-                    raise RuntimeError(
-                        "incident disappeared during acknowledgement"
-                    )
-
-                result = {
-                    "action": executing.action.value,
-                    "status": "succeeded",
-                    "incident_id": executing.incident_id,
-                    "acknowledged_by": executed_by,
-                }
-
-                completed = self.remediations.mark_result(
-                    proposal_id,
-                    succeeded=True,
-                    result=result,
-                    error=None,
-                )
-
-                if completed is None:
-                    raise RuntimeError(
-                        "unable to persist remediation result"
-                    )
-
-                return completed
+                if executing.status != RemediationStatus.SUCCEEDED or not (executing.result or {}).get('atomic_acknowledgement'):
+                    raise PermissionError('Atomic operational acknowledgement receipt required')
+                return executing
 
             if (
                 executing.action

@@ -1,0 +1,114 @@
+# Reviewed release overlay must replace image digest and role ARN before applying.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-inference
+  namespace: cloudforge
+  annotations:
+    eks.amazonaws.com/role-arn: REPLACE_WITH_EXACT_INFERENCE_ROLE_ARN
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-inference
+  namespace: cloudforge
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: ai-inference}
+  template:
+    metadata:
+      labels: {app: ai-inference}
+    spec:
+      serviceAccountName: ai-inference
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: inference
+          image: REPLACE_WITH_REVIEWED_INFERENCE_IMAGE_DIGEST
+          ports: [{containerPort: 8443}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          env:
+            - {name: AI_WORKLOAD, value: inference}
+            - {name: AI_PROVIDER, value: gemini}
+            - {name: AI_MODEL, value: gemini-2.5-flash}
+            - {name: APP_ENV, value: production}
+            - {name: AI_BILLING_MODE, value: free_only}
+            - {name: AI_DISCLOSURE_APPROVED, value: 'false'}
+            - {name: AI_TERMS_APPROVED, value: 'false'}
+            - {name: AI_TIMEOUT_SECONDS, value: '3'}
+            - {name: AI_GEMINI_SECRET_ARN, value: REPLACE_WITH_EXACT_API_SECRET_ARN}
+            - {name: AWS_REGION, value: eu-west-1}
+            - {name: AWS_ROLE_ARN, value: REPLACE_WITH_EXACT_INFERENCE_ROLE_ARN}
+            - {name: AWS_WEB_IDENTITY_TOKEN_FILE, value: /var/run/aws-identity/token}
+            - {name: AWS_EC2_METADATA_DISABLED, value: 'true'}
+            - {name: AI_LEDGER_HOST, value: REPLACE_WITH_RDS_DNS}
+            - {name: AI_LEDGER_DATABASE, value: cloudforge}
+            - {name: PGSSLROOTCERT, value: /etc/cloudforge/db-ca/ca.crt}
+            - {name: AI_INTERNAL_KEY_FILE, value: /var/run/inference-auth/request-key}
+          volumeMounts:
+            - {name: aws-identity, mountPath: /var/run/aws-identity, readOnly: true}
+            - {name: inference-auth, mountPath: /var/run/inference-auth, readOnly: true}
+            - {name: inference-tls, mountPath: /var/run/inference-tls, readOnly: true}
+            - {name: db-ca, mountPath: /etc/cloudforge/db-ca, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+          readinessProbe:
+            httpGet: {scheme: HTTPS, path: /health, port: 8443}
+            timeoutSeconds: 2
+      volumes:
+        - name: aws-identity
+          projected:
+            sources:
+              - serviceAccountToken: {audience: sts.amazonaws.com, expirationSeconds: 3600, path: token}
+        - name: inference-auth
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: {secretProviderClass: ai-inference-auth}
+        - name: inference-tls
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: {secretProviderClass: ai-inference-tls}
+        - name: db-ca
+          configMap: {name: cloudforge-db-ca, defaultMode: 0444}
+        - name: tmp
+          emptyDir: {medium: Memory, sizeLimit: 8Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ai-inference, namespace: cloudforge}
+spec:
+  selector: {app: ai-inference}
+  ports: [{port: 8443, targetPort: 8443}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: ai-inference-boundary, namespace: cloudforge}
+spec:
+  podSelector: {matchLabels: {app: ai-inference}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: aiops-service}}
+      ports: [{protocol: TCP, port: 8443}]
+  # No egress until a reviewed FQDN-capable policy/proxy overlay is installed.
+  # Standard NetworkPolicy cannot safely express Google/AWS DNS allowlists.
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]

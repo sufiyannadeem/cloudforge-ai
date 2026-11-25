@@ -18,11 +18,12 @@ def _require_database_url() -> str:
 
 
 @contextmanager
-def get_connection(*, connect_timeout: int = 0) -> Iterator[Connection]:
+def get_connection(*, connect_timeout: int = 3) -> Iterator[Connection]:
     connection = psycopg.connect(
         _require_database_url(),
         row_factory=dict_row,
         connect_timeout=connect_timeout,
+        options="-c statement_timeout=5000 -c lock_timeout=2000",
     )
 
     try:

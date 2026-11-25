@@ -1,0 +1,26 @@
+# Strategic merge patch for the existing AIOps Deployment. Not a standalone workload.
+# The AIOps IAM role must gain ONLY the exact internal-auth secret, not the API/TLS secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: aiops-service, namespace: cloudforge}
+spec:
+  template:
+    spec:
+      containers:
+        - name: aiops-service
+          env:
+            - {name: AI_PROVIDER, value: gemini}
+            - {name: AI_INTERNAL_KEY_FILE, value: /var/run/inference-auth/request-key}
+            - {name: AI_EMBEDDING_MODE, value: concept-v1}
+            - {name: SSL_CERT_FILE, value: /etc/cloudforge/inference-ca/ca.crt}
+          volumeMounts:
+            - {name: inference-auth, mountPath: /var/run/inference-auth, readOnly: true}
+            - {name: inference-ca, mountPath: /etc/cloudforge/inference-ca, readOnly: true}
+      volumes:
+        - name: inference-auth
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: {secretProviderClass: ai-inference-auth}
+        - name: inference-ca
+          configMap: {name: cloudforge-inference-ca, defaultMode: 0444}

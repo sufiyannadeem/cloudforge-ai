@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import TrustedEvidencePanel from "@/components/incidents/TrustedEvidencePanel";
+import { useViewerSession } from "@/components/layout/ViewerSession";
 
 import {
   approveIncidentRemediation,
@@ -8,7 +10,11 @@ import {
   getIncidentRemediation,
   previewIncidentRemediation,
   rejectIncidentRemediation,
+  getRemediationHistory, requestRemediationAlternative,
+  type RemediationReviewEvent,
 } from "@/lib/incidents-api";
+
+import { canApproveRecommendation, canRejectRecommendation, canExecuteRecommendation } from "@/lib/remediation-review";
 
 import type {
   RemediationAction,
@@ -18,7 +24,7 @@ import type {
   RemediationStatus,
 } from "@/types/incidents";
 
-const ACTOR = "nadeem";
+
 
 function formatDate(value: string | null | undefined): string {
   if (!value) {
@@ -71,6 +77,8 @@ function statusClass(status: RemediationStatus): string {
     case "FAILED":
       return "border-rose-700/50 bg-rose-950/30 text-rose-300";
 
+    case "VERIFYING":
+    case "EXPIRED":
     case "REJECTED":
       return "border-[var(--cf-border)] bg-[var(--cf-surface-2)] text-[var(--cf-text-muted)]";
 
@@ -107,23 +115,16 @@ function policyLabel(
   return "Allowed";
 }
 
-function proposalCanApprove(
-  proposal: RemediationProposal,
-): boolean {
-  return proposal.status === "PENDING_APPROVAL";
-}
-
-function proposalCanExecute(
-  proposal: RemediationProposal,
-): boolean {
-  return proposal.status === "APPROVED";
-}
-
 export default function RemediationPanel({
   incidentId,
 }: {
   incidentId: string;
 }) {
+  const viewer = useViewerSession();
+  const ACTOR = viewer?.username ?? "";
+  const executionKeys = useRef<Record<string, string>>({});
+  const [history, setHistory] = useState<RemediationReviewEvent[] | null>(null);
+  const [alternativeMessage, setAlternativeMessage] = useState("");
   const [data, setData] =
     useState<RemediationResponse | null>(null);
 
@@ -149,7 +150,9 @@ export default function RemediationPanel({
       const result =
         await getIncidentRemediation(incidentId);
 
+      if (result.incident_id !== incidentId) throw new Error("Remediation scope mismatch");
       setData(result);
+      setHistory(null);
 
       const firstExecutableAction =
         result.available_actions.find(
@@ -160,6 +163,8 @@ export default function RemediationPanel({
         setSelectedAction(firstExecutableAction.action);
       }
     } catch (err) {
+      setData(null);
+      setHistory(null);
       setError(
         err instanceof Error
           ? err.message
@@ -225,6 +230,8 @@ export default function RemediationPanel({
         incidentId,
         proposal.id,
         ACTOR,
+        proposal.recommendation_version ?? 0,
+        proposal.action_fingerprint ?? "",
       );
 
       await loadRemediation();
@@ -244,13 +251,6 @@ export default function RemediationPanel({
   ) {
     const rejectionReason =
       rejectionReasons[proposal.id]?.trim();
-
-    if (!rejectionReason) {
-      setError(
-        "Enter a rejection reason before rejecting the proposal.",
-      );
-      return;
-    }
 
     try {
       setActionLoading(true);
@@ -288,10 +288,13 @@ export default function RemediationPanel({
       setActionLoading(true);
       setError("");
 
+      const key = `${proposal.id}:${proposal.recommendation_version}`;
+      executionKeys.current[key] ??= crypto.randomUUID();
       await executeIncidentRemediation(
         incidentId,
         proposal.id,
         ACTOR,
+        executionKeys.current[key],
       );
 
       await loadRemediation();
@@ -304,6 +307,24 @@ export default function RemediationPanel({
     } finally {
       setActionLoading(false);
     }
+  }
+
+  async function handleAlternative(proposal: RemediationProposal) {
+    try {
+      setActionLoading(true); setError("");
+      const result = await requestRemediationAlternative(incidentId, proposal.id);
+      setAlternativeMessage(result.guidance ?? (result.kind === "infrastructure_remediation" ? "A controlled infrastructure proposal requires fresh independent Platform Engineer approval and current trusted evidence." : "A materially different acknowledgement proposal requires fresh independent Platform Engineer approval; it does not repair infrastructure."));
+      await loadRemediation();
+    } catch (err) { setError(err instanceof Error ? err.message : "No safe alternative available."); }
+    finally { setActionLoading(false); }
+  }
+
+  async function loadHistory() {
+    try {
+      const result = await getRemediationHistory(incidentId);
+      if (result.incident_id !== incidentId) throw new Error("History scope mismatch");
+      setHistory(result.history);
+    } catch (err) { setError(err instanceof Error ? err.message : "Review history unavailable."); }
   }
 
   if (loading) {
@@ -330,7 +351,7 @@ export default function RemediationPanel({
         <p className="mt-2 max-w-4xl text-sm leading-6 text-[var(--cf-text-secondary)]">
           AI-assisted recommendations remain inside a
           deterministic policy boundary. Production-changing
-          actions require explicit human approval before
+          actions require explicit independent Platform Engineer approval before
           execution.
         </p>
       </div>
@@ -340,6 +361,14 @@ export default function RemediationPanel({
           {error}
         </div>
       )}
+
+      <TrustedEvidencePanel key={incidentId} incidentId={incidentId} />
+      {alternativeMessage && <p role="status" className="mb-4">{alternativeMessage}</p>}
+      <button type="button" onClick={() => void loadHistory()} disabled={actionLoading} className="mb-4 rounded border p-2">Load internal review history</button>
+      {history && <ol aria-label="Internal recommendation history">{history.map((event) => <li key={event.id}>
+        {event.event_type === "advisory_rejected" ? `Advisory ${event.effect ?? "effect"}` : `Version ${event.recommendation_version}`} · {event.event_type} · {event.actor} · {formatDate(event.created_at)}
+        {event.reason && <p>Internal rejection reason: {event.reason}</p>}
+      </li>)}</ol>}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.2fr]">
         <div className="rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] p-5">
@@ -530,11 +559,13 @@ export default function RemediationPanel({
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="font-medium text-[var(--cf-text-secondary)]">
-                      {actionLabel(proposal.action)}
+                      {actionLabel(proposal.action)} · {proposal.recommendation_kind ?? (proposal.action === "acknowledge_incident" ? "acknowledgement" : proposal.action === "no_action" ? "investigation" : "infrastructure remediation")}
+                      {proposal.execution_supported === false && " — advisory only; execution unsupported"}
                     </p>
 
                     <p className="mt-1 text-xs text-[var(--cf-text-muted)]">
-                      Proposal {proposal.id}
+                      Proposal {proposal.id} · Version {proposal.recommendation_version ?? "legacy"} · Scope {proposal.project_id ?? "unverified"} / {proposal.resource_scope ?? "unverified"}
+                      {proposal.alternative_of && <> · Alternative to {proposal.alternative_of}</>}
                     </p>
                   </div>
 
@@ -618,15 +649,20 @@ export default function RemediationPanel({
                   )}
                 </div>
 
-                {proposalCanApprove(proposal) && (
+                <details className="mt-4"><summary>Exact action and reviewed state</summary>
+                  <pre className="overflow-auto text-xs">{JSON.stringify({action: proposal.action,
+                    target_deployment_id: proposal.target_deployment_id, parameters: proposal.parameters ?? {},
+                    state: proposal.state_snapshot ?? "Legacy or unavailable; fresh recommendation required"}, null, 2)}</pre>
+                </details>
+                {canRejectRecommendation(proposal, viewer) && (
                   <div className="mt-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-4">
                     <p className="text-sm font-medium text-amber-300">
-                      Human approval required
+                      Independent Platform Engineer approval required
                     </p>
 
                     <p className="mt-1 text-xs leading-5 text-amber-200/70">
                       This action cannot execute until an
-                      operator explicitly approves it.
+                      independent Platform Engineer explicitly approves this exact version.
                     </p>
 
                     <div className="mt-4 flex flex-col gap-3">
@@ -646,7 +682,7 @@ export default function RemediationPanel({
                           )
                         }
                         rows={2}
-                        placeholder="Required only when rejecting."
+                        placeholder="Optional internal rejection reason. Never sent to AI."
                         className="w-full rounded-lg border border-[var(--cf-border)] bg-[var(--cf-surface-2)] px-3 py-2.5 text-sm text-[var(--cf-text-secondary)] placeholder:text-[var(--cf-text-muted)] outline-none focus:border-blue-500"
                       />
 
@@ -658,7 +694,7 @@ export default function RemediationPanel({
                               proposal,
                             )
                           }
-                          disabled={actionLoading}
+                          disabled={actionLoading || !canApproveRecommendation(proposal, viewer)}
                           className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-[var(--cf-text)] hover:bg-emerald-500 disabled:opacity-50"
                         >
                           Approve remediation
@@ -681,7 +717,7 @@ export default function RemediationPanel({
                   </div>
                 )}
 
-                {proposalCanExecute(proposal) && (
+                {canExecuteRecommendation(proposal, viewer) && (
                   <div className="mt-4 rounded-lg border border-blue-800/40 bg-blue-950/20 p-4">
                     <p className="text-sm font-medium text-blue-300">
                       Approved and ready to execute
@@ -703,11 +739,15 @@ export default function RemediationPanel({
                       disabled={actionLoading}
                       className="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-[var(--cf-text)] hover:bg-blue-500 disabled:opacity-50"
                     >
-                      Execute remediation
+                      {proposal.action === "acknowledge_incident" ? "Acknowledge after approval" : proposal.action === "no_action" ? "Record approved no-change decision" : "Queue approved deployment"}
                     </button>
                   </div>
                 )}
 
+                {proposal.status === "REJECTED" && <button type="button" disabled={actionLoading || !viewer}
+                  onClick={() => void handleAlternative(proposal)} className="mt-4 rounded border px-4 py-2">
+                  Request safe alternative or investigation
+                </button>}
                 {proposal.status === "SUCCEEDED" && (
                   <div className="mt-4 rounded-lg border border-emerald-700/40 bg-emerald-950/20 p-4">
                     <p className="text-sm font-medium text-emerald-300">

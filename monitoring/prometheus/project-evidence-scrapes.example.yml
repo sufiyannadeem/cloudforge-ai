@@ -1,0 +1,51 @@
+# Release overlay only: do not automatically enable discovery or probes.
+# Pin EKS API credentials, CA and a read-only pod-discovery identity outside AI.
+# The cluster label MUST equal deployment-service's configured trusted cluster.
+# project_id/resource_id from applications are dropped; UID comes only from API SD.
+scrape_configs:
+  - job_name: cloudforge-project-http
+    honor_labels: false
+    honor_timestamps: false
+    scheme: https
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [cf-REPLACE_WITH_APPROVED_PROJECT_UUID]
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_namespace], regex: 'cf-[a-f0-9-]{36}', action: keep}
+      - {source_labels: [__meta_kubernetes_pod_phase], regex: Running, action: keep}
+      - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: http, action: keep}
+      - {source_labels: [__meta_kubernetes_pod_uid], target_label: uid}
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {target_label: cluster, replacement: REPLACE_WITH_APPROVED_CLUSTER}
+    metric_relabel_configs:
+      - {source_labels: [__name__], regex: 'http_requests_total|http_request_duration_seconds_bucket', action: keep}
+      - {action: labeldrop, regex: 'project_id|resource_id|exported_.*'}
+      - {action: labelkeep, regex: '__name__|job|instance|cluster|namespace|uid|method|route|status|le'}
+  - job_name: cloudforge-project-probe
+    honor_labels: false
+    honor_timestamps: false
+    metrics_path: /probe
+    params: {module: [http_2xx]}
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: [cf-REPLACE_WITH_APPROVED_PROJECT_UUID]
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_namespace], regex: 'cf-[a-f0-9-]{36}', action: keep}
+      - {source_labels: [__meta_kubernetes_pod_phase], regex: Running, action: keep}
+      - {source_labels: [__meta_kubernetes_pod_container_port_name], regex: http, action: keep}
+      - {source_labels: [__meta_kubernetes_pod_container_port_number], regex: '8080', action: keep}
+      # Reject host-network/node-IP targets; destination is API-discovered pod IP only.
+      - {source_labels: [__meta_kubernetes_pod_ip], target_label: __meta_kubernetes_pod_host_ip, action: dropequal}
+      - {source_labels: [__meta_kubernetes_pod_uid], target_label: uid}
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {target_label: cluster, replacement: REPLACE_WITH_APPROVED_CLUSTER}
+      - {source_labels: [__address__], target_label: __param_target, replacement: 'http://$1/healthz'}
+      - {target_label: __address__, replacement: blackbox-exporter.monitoring.svc:9115}
+    metric_relabel_configs:
+      - {source_labels: [__name__], regex: probe_success, action: keep}
+      - {action: labeldrop, regex: 'project_id|resource_id|exported_.*'}
+# Optional trusted dependency/SLO evaluator inputs use job=cloudforge-project-sli,
+# immutable API-discovered uid/namespace/cluster and explicit freshness/coverage.
+# No evaluator deployment or synthetic SLO/dependency health is provided here.

@@ -53,7 +53,8 @@ export default function DriftHistory({ resourceId, scanAllowed, onPlan }: {
         <details key={scan.id}>
           <summary>{new Date(scan.scanned_at).toLocaleString()} · {scan.status === "unavailable" ? "Evidence unavailable" : scan.findings?.length ? `${scan.findings.length} findings` : "No changes observed"}</summary>
           {scan.findings?.map((finding, index) => (
-            <p key={index}>{finding.address ?? finding.type} · {finding.source === "provider_drift" ? "Provider drift" : "Desired configuration change"} · {finding.severity}. {finding.risk} {finding.recommendation}</p>
+            <div key={index}><p>{finding.address ?? finding.type} · {finding.source === "provider_drift" ? "Provider drift" : "Desired configuration change"} · {finding.severity}. {finding.risk} {finding.recommendation}</p>
+            {finding.comparisons?.length ? <table className="my-2 w-full text-left"><caption>Safe configuration comparison</caption><thead><tr><th>Field</th><th>{finding.source === "provider_drift" ? "Recorded" : "Observed"}</th><th>{finding.source === "provider_drift" ? "Observed" : "Desired"}</th></tr></thead><tbody>{finding.comparisons.map((change) => <tr key={change.field}><td>{change.field}</td><td>{String(change.before)}</td><td>{String(change.after)}</td></tr>)}</tbody></table> : <p className="text-xs">Attribute comparison unavailable or withheld. Raw state and sensitive values are never displayed.</p>}</div>
           ))}
         </details>
       ))}

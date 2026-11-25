@@ -112,8 +112,47 @@ async def authorize_requests(request: Request, call_next):
             return JSONResponse({"detail": "Telemetry authorization unavailable"}, status_code=503)
         if not claimed:
             return JSONResponse({"detail": "Invalid or replayed service identity"}, status_code=401)
+    if request.method == "POST" and "/remediation" in path:
+        import hashlib
+        expected_body = claims.get("body")
+        if not isinstance(expected_body, str) or len(expected_body) != 64:
+            return JSONResponse({"detail": "Body-bound review identity required"}, status_code=401)
+        import asyncio
+        payload = bytearray()
+        try:
+            async with asyncio.timeout(3):
+                async for chunk in request.stream():
+                    payload.extend(chunk)
+                    if len(payload) > 16384:
+                        return JSONResponse({"detail": "Review request too large"}, status_code=413)
+        except TimeoutError:
+            return JSONResponse({"detail": "Review request timed out"}, status_code=408)
+        request._body = bytes(payload)
+        if not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), expected_body):
+            return JSONResponse({"detail": "Review request body mismatch"}, status_code=401)
+    # Gate every incident intelligence read/analysis before loading evidence.
+    import re
+    match = re.fullmatch(r"/api/v1/(?:aiops/)?incidents/([^/]+)/(enrichment|knowledge|ai-analysis|analyze(?:/deterministic)?)", path)
+    detail = re.fullmatch(r"/api/v1/incidents/([^/]+)(?:/.*)?", path)
+    if detail and detail[1] == "stats":
+        detail = None
+    if match or detail:
+        from .project_evidence import authorize_incident
+        try:
+            request.state.incident_project = await run_in_threadpool(authorize_incident, (match or detail)[1], claims)
+        except HTTPException as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        if request.method == "POST" or (match and match[2] == "enrichment"):
+            try:
+                if not await run_in_threadpool(claim_telemetry_assertion, claims["nonce"], claims["exp"]):
+                    return JSONResponse({"detail": "Replayed service identity"}, status_code=401)
+            except Exception:
+                return JSONResponse({"detail": "Replay authorization unavailable"}, status_code=503)
     request.state.human_identity = claims
-    return await call_next(request)
+    response = await call_next(request)
+    if "/incidents" in path:
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 app.include_router(
@@ -193,6 +232,7 @@ def receive_alerts(
     response_model=IncidentListResponse,
 )
 def list_incidents(
+    request: Request,
     status: str | None = Query(
         default=None,
         description="Filter by incident status.",
@@ -242,6 +282,7 @@ def list_incidents(
 ) -> IncidentListResponse:
     try:
         incidents, total = incident_store.list_all(
+            claims=request.state.human_identity,
             status=status,
             priority=priority,
             impact=impact,
@@ -298,8 +339,8 @@ def get_incident_timeline(incident_id: str) -> dict:
     "/api/v1/incidents/stats",
     response_model=IncidentStatsResponse,
 )
-def get_incident_statistics() -> IncidentStatsResponse:
-    statistics = incident_store.get_statistics()
+def get_incident_statistics(request: Request) -> IncidentStatsResponse:
+    statistics = incident_store.get_statistics(claims=request.state.human_identity)
 
     return IncidentStatsResponse(**statistics)
 

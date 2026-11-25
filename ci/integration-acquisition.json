@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "status": "VERIFIED_INPUTS_PENDING_HUMAN_APPROVAL",
+  "reviewed_by": null,
+  "platform": "linux-amd64",
+  "postgres_image": "postgres:16-bookworm@sha256:d755a91aff87574a57060f86ecc0d55f83ccb51ceec6ec6f904c1210d018d998",
+  "artifacts": {
+    "prometheus": {
+      "version": "3.5.0",
+      "url": "https://github.com/prometheus/prometheus/releases/download/v3.5.0/prometheus-3.5.0.linux-amd64.tar.gz",
+      "sha256": "e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a",
+      "format": "tar.gz",
+      "limit_mib": 180
+    },
+    "kubeconform": {
+      "version": "0.6.7",
+      "url": "https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz",
+      "sha256": "95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73",
+      "format": "tar.gz",
+      "limit_mib": 30
+    },
+    "helm": {
+      "version": "3.20.0",
+      "url": "https://get.helm.sh/helm-v3.20.0-linux-amd64.tar.gz",
+      "sha256": "dbb4c8fc8e19d159d1a63dda8db655f9ffa4aac1b9a6b188b34a40957119b286",
+      "format": "tar.gz",
+      "limit_mib": 40
+    },
+    "kubectl": {
+      "version": "1.35.0",
+      "url": "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl",
+      "sha256": "a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989",
+      "format": "binary",
+      "limit_mib": 80
+    },
+    "terraform": {
+      "version": "1.17.2",
+      "url": "https://releases.hashicorp.com/terraform/1.17.2/terraform_1.17.2_linux_amd64.zip",
+      "sha256": "e6f16b2f0b137ee5729caa8c4e79a3bae4ee261acd198a1fcfa8584a6296605b",
+      "format": "zip",
+      "limit_mib": 60
+    },
+    "go": {
+      "version": "1.26.11",
+      "url": "https://go.dev/dl/go1.26.11.linux-amd64.tar.gz",
+      "sha256": "9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec",
+      "format": "tar.gz",
+      "limit_mib": 120
+    },
+    "actionlint": {
+      "version": "1.7.12",
+      "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+      "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
+      "format": "tar.gz",
+      "limit_mib": 5
+    }
+  },
+  "schemas": {
+    "kubernetes_version": "1.35.0",
+    "rollouts_version": "1.10.2",
+    "csi_version": "1.6.2",
+    "mode": "deterministic-official-sources-v1",
+    "schema_location": "{{.ResourceKind}}-{{.Group}}-{{.ResourceAPIVersion}}.json",
+    "sources": [
+      {
+        "name": "kubernetes-openapi",
+        "kind": "openapi",
+        "url": "https://raw.githubusercontent.com/kubernetes/kubernetes/66452049f3d692768c39c797b21b793dce80314e/api/openapi-spec/swagger.json",
+        "sha256": "483500149ee52ce5753d75f5639101d985bb4f5e902cc05b1ba7627465d62446",
+        "format": "binary",
+        "limit_mib": 6,
+        "version": "1.35.0"
+      },
+      {
+        "name": "rollouts-analysis",
+        "kind": "crd",
+        "url": "https://raw.githubusercontent.com/argoproj/argo-rollouts/be8a6221c6c9751cd14497f31a2cb3c33690375a/manifests/crds/analysis-template-crd.yaml",
+        "sha256": "bb41aa62329355c5ffb38031822b4515cc2f60c5a94fcae5df6099ddbf8c5a08",
+        "format": "binary",
+        "limit_mib": 6,
+        "version": "1.10.2"
+      },
+      {
+        "name": "rollouts-rollout",
+        "kind": "crd",
+        "url": "https://raw.githubusercontent.com/argoproj/argo-rollouts/be8a6221c6c9751cd14497f31a2cb3c33690375a/manifests/crds/rollout-crd.yaml",
+        "sha256": "1562decc7b3720c31cbe382eeb62b6fbfd236f8e81a1f98644a9774d1e7d7933",
+        "format": "binary",
+        "limit_mib": 6,
+        "version": "1.10.2"
+      },
+      {
+        "name": "csi-class",
+        "kind": "crd",
+        "url": "https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/10cd116be04e012b283c0811618b182b20741e89/config/crd/bases/secrets-store.csi.x-k8s.io_secretproviderclasses.yaml",
+        "sha256": "452b61776bb26a61da4bfd03ec34a660fe2ba9c1d3ab7e5d199ba42e9f735718",
+        "format": "binary",
+        "limit_mib": 6,
+        "version": "1.6.2"
+      },
+      {
+        "name": "csi-status",
+        "kind": "crd",
+        "url": "https://raw.githubusercontent.com/kubernetes-sigs/secrets-store-csi-driver/10cd116be04e012b283c0811618b182b20741e89/config/crd/bases/secrets-store.csi.x-k8s.io_secretproviderclasspodstatuses.yaml",
+        "sha256": "0e750af5383c82e98acb50987c48f0dc7590a22246a419c6a09b9ebb31115a46",
+        "format": "binary",
+        "limit_mib": 6,
+        "version": "1.6.2"
+      },
+      {
+        "name": "vendored-lbc",
+        "kind": "crd",
+        "path": "deploy/controllers/lbc-crds.yaml",
+        "sha256": "06b7ad402dd6714e2e2dacb6c3742c11ffa95b5fdc6f63e6ec16ce05616ae2e3",
+        "version": "2.14.1"
+      }
+    ],
+    "bundle_manifest_sha256": "a9a9ba9365ff72a5f1710e8c2d20b3da28a99501c94ac7c884e5c9f9bf35bea8"
+  },
+  "semantic": {
+    "delivery": "approval-gated-same-sha-actions-candidate",
+    "glibc_base": "python:3.12-slim-bookworm@sha256:1475c4f5b6bcb7d35e57661d6f5d7429ec4041275633c15f2b49350ac898276d",
+    "preparation": {
+      "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+      "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+      "files": {
+        "model.onnx": {
+          "version": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/onnx/model.onnx",
+          "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+          "format": "binary",
+          "limit_mib": 100
+        },
+        "tokenizer.json": {
+          "version": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+          "url": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer.json",
+          "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+          "format": "binary",
+          "limit_mib": 1
+        },
+        "LICENSE": {
+          "version": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "format": "binary",
+          "limit_mib": 1
+        }
+      },
+      "bootstrap_lock_sha256": "ea872f64d723fe7ecbd30b781bbeae65f74960d00fb6e11b445d16145e2c64f6",
+      "corpus_source_sha256": "aab8fbacf0357bfee0082d6da2a453aa2dd2833febb827e3712d53aacbff35ef"
+    },
+    "max_rss_mib": 1024,
+    "max_p95_ms": 8000
+  },
+  "terraform_provider": {
+    "name": "registry.terraform.io/hashicorp/aws",
+    "version": "6.66.0",
+    "linux_amd64_sha256": "156fe7164a3d26ef6b35734c43e99fb198df90575ed897d1182b8e930b8cd523",
+    "checksums_url": "https://releases.hashicorp.com/terraform-provider-aws/6.66.0/terraform-provider-aws_6.66.0_SHA256SUMS"
+  }
+}

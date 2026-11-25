@@ -1,0 +1,235 @@
+name: Approved Semantic Verification
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Prepare a synthetic candidate, or independently verify an approved candidate
+        type: choice
+        options: [verify, prepare]
+        default: verify
+      runner_profile:
+        description: Hosted synthetic candidate, or dedicated private read-only mounts
+        type: choice
+        options: [hosted, dedicated]
+        default: hosted
+      integration_run_id:
+        description: Successful integration workflow run for this exact source SHA
+        required: true
+        type: string
+      integration_run_attempt:
+        description: Exact integration run attempt
+        type: string
+        default: '1'
+      preparation_run_id:
+        description: Successful same-SHA preparation run (hosted verify only)
+        type: string
+        default: ''
+      preparation_run_attempt:
+        description: Exact preparation run attempt (hosted verify only)
+        type: string
+        default: '1'
+permissions:
+  contents: read
+env:
+  CHECKPOINT_DISABLE: '1'
+  AWS_EC2_METADATA_DISABLED: 'true'
+  AWS_SHARED_CREDENTIALS_FILE: /dev/null
+  AWS_CONFIG_FILE: /dev/null
+concurrency:
+  group: approved-semantic-${{ inputs.operation }}-${{ inputs.runner_profile }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      runner: ${{ steps.runner.outputs.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials and source mismatch
+        run: python3 scripts/ci/guard-verification-environment.py
+      - id: runner
+        env:
+          PROFILE: ${{ inputs.runner_profile }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          assert os.environ['PROFILE'] in {'hosted','dedicated'}
+          assert os.environ['OPERATION'] in {'prepare','verify'}
+          assert os.environ['OPERATION']!='prepare' or os.environ['PROFILE']=='hosted'
+          runner=['ubuntu-24.04'] if os.environ['PROFILE']=='hosted' else ['self-hosted','linux','x64','cloudforge-approved-rag']
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+              out.write('runner='+json.dumps(runner)+'\n')
+          PY
+  semantic-preparation:
+    if: inputs.operation == 'prepare'
+    needs: plan
+    runs-on: ubuntu-24.04
+    environment: semantic-preparation
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CI_ACQUISITION_LOCK_SHA256: ${{ vars.CI_ACQUISITION_LOCK_SHA256 }}
+      CI_ACQUISITION_APPROVED: ${{ vars.CI_ACQUISITION_APPROVED }}
+      SEMANTIC_PREPARATION_APPROVED: ${{ vars.SEMANTIC_PREPARATION_APPROVED }}
+      SEMANTIC_ARTIFACT_REVIEWER: ${{ vars.SEMANTIC_ARTIFACT_REVIEWER }}
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject credentials/source mismatch
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Require successful integration evidence at this exact source SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.integration_run_id }}
+          ATTEMPT: ${{ inputs.integration_run_attempt }}
+        run: python3 scripts/ci/require-same-sha.py --kind integration --run-id "$RUN_ID" --attempt "$ATTEMPT"
+      - name: Verify approval-bound bootstrap lock before CI-only installation
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, runpy
+          module=runpy.run_path('scripts/ci/acquire-integration-inputs.py')
+          lock=module['load'](pathlib.Path('ci/integration-acquisition.json'),semantic=True)
+          assert hashlib.sha256(pathlib.Path('ci/semantic-preparation.lock').read_bytes()).hexdigest()==lock['semantic']['preparation']['bootstrap_lock_sha256']
+          PY
+          python3.12 -m venv "$RUNNER_TEMP/semantic-bootstrap"
+          "$RUNNER_TEMP/semantic-bootstrap/bin/python" -m pip install --only-binary=:all: --require-hashes -r ci/semantic-preparation.lock
+      - name: Prepare pinned MiniLM, hash-locked wheels and synthetic embeddings (CI only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+          taskset -c "$cpu" "$RUNNER_TEMP/semantic-bootstrap/bin/python" scripts/ci/prepare-semantic-artifacts.py --output "$RUNNER_TEMP/semantic-prepared"
+      - name: Retain candidate only for independent review; no release publication
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: semantic-candidate-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/semantic-prepared/semantic-candidate.tar.gz
+            ${{ runner.temp }}/semantic-prepared/semantic-candidate.sha256
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+  semantic-verification:
+    if: inputs.operation == 'verify'
+    needs: plan
+    runs-on: ${{ fromJSON(needs.plan.outputs.runner) }}
+    environment: semantic-verification
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Reject ambient application/cloud credentials and source mismatch
+        run: python3 scripts/ci/guard-verification-environment.py
+      - name: Require successful integration evidence at this exact source SHA
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.integration_run_id }}
+          ATTEMPT: ${{ inputs.integration_run_attempt }}
+        run: python3 scripts/ci/require-same-sha.py --kind integration --run-id "$RUN_ID" --attempt "$ATTEMPT"
+      - name: Require successful same-SHA preparation run (hosted only)
+        if: inputs.runner_profile == 'hosted'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.preparation_run_id }}
+          ATTEMPT: ${{ inputs.preparation_run_attempt }}
+        run: python3 scripts/ci/require-same-sha.py --kind preparation --run-id "$RUN_ID" --attempt "$ATTEMPT"
+      - name: Read same-repository candidate artifact without a production secret
+        if: inputs.runner_profile == 'hosted'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: semantic-candidate-${{ github.sha }}-${{ inputs.preparation_run_id }}-${{ inputs.preparation_run_attempt }}
+          path: ${{ runner.temp }}/semantic-downloaded
+          run-id: ${{ inputs.preparation_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+      - name: Select independently hash-approved candidate, never automatic latest output
+        if: inputs.runner_profile == 'hosted'
+        env:
+          CI_ACQUISITION_LOCK_SHA256: ${{ vars.CI_ACQUISITION_LOCK_SHA256 }}
+          CI_ACQUISITION_APPROVED: ${{ vars.CI_ACQUISITION_APPROVED }}
+          SEMANTIC_CANDIDATE_SHA256: ${{ vars.SEMANTIC_CANDIDATE_SHA256 }}
+          PREPARATION_RUN_ID: ${{ inputs.preparation_run_id }}
+          PREPARATION_RUN_ATTEMPT: ${{ inputs.preparation_run_attempt }}
+        run: |
+          python3 scripts/ci/select-semantic-candidate.py --archive "$RUNNER_TEMP/semantic-downloaded/semantic-candidate.tar.gz" --output "$RUNNER_TEMP/semantic-selected"
+          python3.12 -m venv services/aiops-service/.venv
+      - name: Dedicated preapproved artifact mounts (no downloads)
+        if: inputs.runner_profile == 'dedicated'
+        env:
+          AIOPS_GLIBC_BASE: ${{ vars.AIOPS_GLIBC_BASE }}
+          RAG_WHEELHOUSE: ${{ vars.RAG_WHEELHOUSE }}
+          RAG_EMBEDDING_LOCK: ${{ vars.RAG_EMBEDDING_LOCK }}
+          RAG_EMBEDDING_LOCK_SHA256: ${{ vars.RAG_EMBEDDING_LOCK_SHA256 }}
+          AI_EMBEDDING_ARTIFACT_DIR: ${{ vars.AI_EMBEDDING_ARTIFACT_DIR }}
+          AI_EMBEDDING_MANIFEST_SHA256: ${{ vars.AI_EMBEDDING_MANIFEST_SHA256 }}
+          AI_KNOWLEDGE_DIR: ${{ vars.AI_KNOWLEDGE_DIR }}
+          AI_KNOWLEDGE_MANIFEST_SHA256: ${{ vars.AI_KNOWLEDGE_MANIFEST_SHA256 }}
+          AI_KNOWLEDGE_INDEX_FILE: ${{ vars.AI_KNOWLEDGE_INDEX_FILE }}
+          AI_KNOWLEDGE_INDEX_SHA256: ${{ vars.AI_KNOWLEDGE_INDEX_SHA256 }}
+          RAG_MAX_RSS_MIB: ${{ vars.RAG_MAX_RSS_MIB }}
+          RAG_MAX_P95_MS: ${{ vars.RAG_MAX_P95_MS }}
+        run: |
+          python3 - <<'PY'
+          import os
+          allowed=('AIOPS_GLIBC_BASE','RAG_WHEELHOUSE','RAG_EMBEDDING_LOCK','RAG_EMBEDDING_LOCK_SHA256',
+              'AI_EMBEDDING_ARTIFACT_DIR','AI_EMBEDDING_MANIFEST_SHA256','AI_KNOWLEDGE_DIR',
+              'AI_KNOWLEDGE_MANIFEST_SHA256','AI_KNOWLEDGE_INDEX_FILE','AI_KNOWLEDGE_INDEX_SHA256',
+              'RAG_MAX_RSS_MIB','RAG_MAX_P95_MS')
+          with open(os.environ['GITHUB_ENV'],'a') as out:
+              for key in allowed:
+                  value=os.environ.get(key,''); assert value and '\n' not in value and '\r' not in value, key
+                  out.write(key+'='+value+'\n')
+              out.write('AI_EMBEDDING_MODE=pretrained-onnx\n')
+          PY
+      - name: Verify actual offline wheel resolution and reviewed lock hashes
+        run: services/aiops-service/.venv/bin/python scripts/verify-rag-release.py packaging
+      - name: Install only verified local wheels (hosted only)
+        if: inputs.runner_profile == 'hosted'
+        run: |
+          services/aiops-service/.venv/bin/python -m pip install --no-index --find-links "$RAG_WHEELHOUSE" --only-binary=:all: --require-hashes -r services/aiops-service/requirements.lock -r "$RAG_EMBEDDING_LOCK"
+      - name: Real local pretrained quality and bounded CPU/resource measurement; no provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          cpu=$(python3 -c 'import os; print(min(os.sched_getaffinity(0)))')
+          ulimit -v 2097152
+          taskset -c "$cpu" timeout 180s services/aiops-service/.venv/bin/python scripts/verify-rag-release.py benchmark
+  semantic-gate:
+    name: ${{ inputs.operation == 'verify' && 'semantic-gate' || 'candidate-preparation-only' }}
+    if: always()
+    needs: [plan, semantic-preparation, semantic-verification]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Preparation is never a release semantic verification success
+        env:
+          OPERATION: ${{ inputs.operation }}
+          RESULTS: ${{ toJson(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results=json.loads(os.environ['RESULTS'])
+          assert set(results)=={'plan','semantic-preparation','semantic-verification'}
+          if os.environ['OPERATION']=='prepare':
+              assert results['plan']['result']=='success' and results['semantic-preparation']['result']=='success'
+              print('Candidate preparation only; this emits candidate-preparation-only, never the required semantic-gate check.')
+              raise SystemExit(0)
+          assert results['plan']['result']=='success' and results['semantic-verification']['result']=='success'
+          assert results['semantic-preparation']['result']=='skipped'
+          print('Semantic verification passed for the exact integration/source SHA; no publish/deploy authorization.')
+          PY

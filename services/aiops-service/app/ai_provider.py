@@ -87,6 +87,10 @@ class AIProvider:
         does not require an API key in the application.
         """
 
+        if self.provider == "gemini":
+            from .inference_security import external_enabled
+            return external_enabled() if os.getenv("AI_WORKLOAD") == "inference" else bool(os.getenv("AI_INTERNAL_KEY_FILE"))
+
         if self.provider == "mock":
             return True
 
@@ -109,6 +113,15 @@ class AIProvider:
         Execute the configured AI provider.
         """
 
+        if os.getenv("APP_ENV") == "production" and self.provider in {"bedrock", "openai_compatible"}:
+            return AIProviderResult("blocked", self.provider, self.model or None, None,
+                                    "External disclosure contract required")
+        if self.provider == "gemini":
+            if os.getenv("AI_WORKLOAD") != "inference":
+                from .inference_client import infer_aggregates
+                return infer_aggregates(user_prompt)
+            from .gemini_provider import analyze_gemini
+            return analyze_gemini(self, user_prompt)
         if self.provider == "disabled":
             return AIProviderResult(
                 status="disabled",
