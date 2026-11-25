@@ -87,10 +87,45 @@ def test_real_effective_acl_boundaries(release_database):
             assert not db.execute("SELECT has_table_privilege('cf_aiops',%s,'UPDATE,DELETE,TRUNCATE') AS p",(table,)).fetchone()['p']
         assert db.execute("SELECT has_column_privilege('cf_deployment','aiops_advisory_rejections','effect','SELECT') AS p").fetchone()['p']
         assert not db.execute("SELECT has_column_privilege('cf_deployment','aiops_advisory_rejections','reason','SELECT') AS p").fetchone()['p']
+        _assert_mixed_relation_acl_guard(db)
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with connect('cf_inference') as db:db.execute('SELECT * FROM aiops_incidents')
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         with connect('cf_deployment') as db:db.execute('SELECT reason FROM aiops_advisory_rejections')
+
+
+def _assert_mixed_relation_acl_guard(db):
+    """Exercise the actual production guard, including non-public legacy grants."""
+    source=(ROOT/'deploy/postgres/003_inference_grants.sql').read_text()
+    start=source.index('DO $$ BEGIN',source.index('-- Fail rather'))
+    guard=source[start:source.index('-- No INSERT',start)]
+    db.execute('CREATE SCHEMA acl_guard_probe')
+    try:
+        db.execute('CREATE TABLE acl_guard_probe.data(id integer, payload text)')
+        db.execute('CREATE INDEX acl_guard_probe_index ON acl_guard_probe.data(id)')
+        db.execute('CREATE SEQUENCE acl_guard_probe.counter')
+        db.execute('CREATE VIEW acl_guard_probe.visible AS SELECT 1 AS id')
+        db.execute('CREATE MATERIALIZED VIEW acl_guard_probe.cached AS SELECT 1 AS id')
+        db.execute('CREATE TABLE acl_guard_probe.partitioned(id integer) PARTITION BY RANGE(id)')
+        db.execute('CREATE TYPE acl_guard_probe.composite AS (id integer)')
+        kinds={row['relkind'] for row in db.execute("""SELECT c.relkind FROM pg_class c
+            JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='acl_guard_probe'""")}
+        assert {'r','i','S','v','m','p','c'}<=kinds
+        db.execute(guard)  # No grants: mixed kinds must pass, never WrongObjectType.
+        grants=(
+            'GRANT SELECT ON TABLE acl_guard_probe.data TO {}',
+            'GRANT SELECT(payload) ON TABLE acl_guard_probe.data TO {}',
+            'GRANT USAGE ON SEQUENCE acl_guard_probe.counter TO {}',
+        )
+        for principal in ('cf_inference','PUBLIC'):
+            for grant in grants:
+                with pytest.raises(psycopg.errors.RaiseException,match='Inference retains data'):
+                    with db.transaction():  # Roll back the unauthorized grant after rejection.
+                        db.execute(grant.format(principal))
+                        db.execute(guard)
+                db.execute(guard)  # Rollback must restore the clean boundary.
+    finally:
+        db.execute('DROP SCHEMA acl_guard_probe CASCADE')
 
 
 @pytest.fixture

@@ -38,17 +38,23 @@ GRANT SELECT(id,created_by) ON public.projects TO cf_aiops;
 GRANT SELECT(project_id,username,level) ON public.project_members TO cf_aiops;
 GRANT SELECT(username,role,active) ON public.auth_users TO cf_aiops;
 -- Fail rather than inherit unexpected PUBLIC privileges or DDL authority.
+-- CASE guards the privilege calls themselves: WHERE/AND order is not guaranteed
+-- and pg_class contains tables, sequences, indexes and other relation kinds.
 DO $$ BEGIN
  IF has_database_privilege('cf_inference',current_database(),'CREATE,TEMP')
  OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
            AND has_schema_privilege('cf_inference',n.oid,'CREATE'))
  OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-           WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','v','m','f')
-           AND (has_table_privilege('cf_inference',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-                OR has_any_column_privilege('cf_inference',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
+           WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+           AND CASE WHEN c.relkind IN ('r','p','v','m','f') THEN
+                (has_table_privilege('cf_inference',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+                 OR has_any_column_privilege('cf_inference',c.oid,'SELECT,INSERT,UPDATE,REFERENCES'))
+               ELSE false END)
  OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-           WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND c.relkind='S'
-           AND has_sequence_privilege('cf_inference',c.oid,'USAGE,SELECT,UPDATE'))
+           WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+           AND CASE WHEN c.relkind='S' THEN
+                 has_sequence_privilege('cf_inference',c.oid,'USAGE,SELECT,UPDATE')
+               ELSE false END)
  OR EXISTS(SELECT 1 FROM pg_proc f JOIN pg_namespace n ON n.oid=f.pronamespace
            WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema' AND f.prosecdef
            AND f.oid<>'public.cloudforge_reserve_inference(text,text,bigint)'::regprocedure

@@ -120,7 +120,7 @@ def test_terraform_validate_bootstrap_and_dev(tmp_path):
     env = dict(os.environ, TF_CLI_CONFIG_FILE=str(config))
     for directory in ["infrastructure/terraform/bootstrap", "infrastructure/terraform/environments/dev"]:
         res_init = subprocess.run(
-            ["terraform", "init", "-backend=false", "-lockfile=readonly"],
+            ["terraform", "init", "-backend=false", "-lockfile=readonly", "-input=false", "-get=false"],
             cwd=REPO_ROOT / directory, capture_output=True, text=True, env=env, timeout=60,
         )
         assert res_init.returncode == 0, f"Offline Terraform init failed in {directory}:\n{res_init.stderr}"
