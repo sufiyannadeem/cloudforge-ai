@@ -6,8 +6,21 @@ metadata: {name: aiops-service, namespace: cloudforge}
 spec:
   template:
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: aiops-service
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
           env:
             - {name: AI_PROVIDER, value: gemini}
             - {name: AI_INTERNAL_KEY_FILE, value: /var/run/inference-auth/request-key}
