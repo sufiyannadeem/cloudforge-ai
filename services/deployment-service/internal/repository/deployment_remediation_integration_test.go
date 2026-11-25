@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/migration"
 	"github.com/sufiyannadeem/cloudforge-ai-deployment-service/internal/model"
@@ -119,14 +120,35 @@ func TestClaimRemediationApproval(t *testing.T) {
 		t.Fatalf("missing approval accepted: %v", err)
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	insert := func(id string) {
-		t.Helper()
-		_, err := pool.Exec(ctx, `INSERT INTO aiops_remediation_proposals(id,incident_id,target_deployment_id,approved_environment,dispatch_token_hash,
+	const insertSQL = `INSERT INTO aiops_remediation_proposals(id,incident_id,target_deployment_id,approved_environment,dispatch_token_hash,
   action,status,policy_decision,policy_reason,proposed_by,approved_by,approved_role,execution_requested_by,execution_idempotency_key,
   approved_at,expires_at,recommendation_version,project_id,resource_scope,action_fingerprint,state_snapshot)
-  SELECT $1,$2,$3,'staging',$4,'rerun_deployment','EXECUTING','requires_approval','Controlled action','proposer','operator','platform-engineer','operator','claimed',
-  clock_timestamp(),clock_timestamp()+interval '5 minutes',COALESCE(MAX(recommendation_version),0)+1,$5,$3,repeat('a',64),public.cloudforge_remediation_current_state($2,$3)
-  FROM aiops_remediation_proposals`, id, incident, target.ID.String(), digest, target.ProjectID)
+  SELECT $1::text,$2::text,$3::text,'staging',$4::text,'rerun_deployment','EXECUTING','requires_approval','Controlled action','proposer','operator','platform-engineer','operator','claimed',
+  clock_timestamp(),clock_timestamp()+interval '5 minutes',COALESCE(MAX(recommendation_version),0)+1,$5::uuid,$3::text,repeat('a',64),public.cloudforge_remediation_current_state($2::text,$3::text)
+  FROM aiops_remediation_proposals`
+	t.Run("fixture_insert_parameter_types", func(t *testing.T) {
+		conn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+		description, err := conn.Conn().Prepare(ctx, "remediation_fixture_insert", insertSQL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := []uint32{pgtype.TextOID, pgtype.TextOID, pgtype.TextOID, pgtype.TextOID, pgtype.UUIDOID}
+		if len(description.ParamOIDs) != len(expected) {
+			t.Fatalf("unexpected parameter count: %v", description.ParamOIDs)
+		}
+		for index, oid := range expected {
+			if description.ParamOIDs[index] != oid {
+				t.Fatalf("parameter %d: expected OID %d, got %d", index+1, oid, description.ParamOIDs[index])
+			}
+		}
+	})
+	insert := func(id string) {
+		t.Helper()
+		_, err := pool.Exec(ctx, insertSQL, id, incident, target.ID.String(), digest, target.ProjectID)
 		if err != nil {
 			t.Fatal(err)
 		}
